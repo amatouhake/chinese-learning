@@ -429,6 +429,7 @@ function validateImportInput(input: V1ImportInput): void {
   if (!Number.isSafeInteger(input.createdAt ?? 0) || (input.createdAt ?? 0) < 0) {
     throw new Error("createdAt must be a non-negative integer");
   }
+  const lexemeIdentities = new Set<string>();
   for (const lexeme of input.lexemes) {
     if (!lexeme.simplified.trim() || lexeme.forms.length === 0) {
       throw new Error("every source lexeme needs an identity and at least one reading form");
@@ -436,6 +437,10 @@ function validateImportInput(input: V1ImportInput): void {
     if (!Number.isInteger(lexeme.hskLevel) || lexeme.hskLevel < 1) {
       throw new Error("every source lexeme needs a positive HSK level");
     }
+    if (lexemeIdentities.has(lexeme.simplified)) {
+      throw new Error(`duplicate lexeme identity: ${lexeme.simplified}`);
+    }
+    lexemeIdentities.add(lexeme.simplified);
   }
 
   const enrichmentIdentities = new Set<string>();

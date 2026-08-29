@@ -8,6 +8,14 @@ import {
   type V1SourceLexeme,
 } from "../src/db/v1-import";
 
+const SUPPORTED_OPTIONS = new Set([
+  "--vocabulary-root",
+  "--v1-root",
+  "--output",
+  "--levels",
+  "--limit",
+]);
+
 if (import.meta.main) {
   await main();
 }
@@ -64,6 +72,12 @@ function parseArguments(arguments_: string[]): CliOptions {
     const value = arguments_[index + 1];
     if (!key?.startsWith("--") || value === undefined) {
       throw usageError();
+    }
+    if (!SUPPORTED_OPTIONS.has(key)) {
+      throw usageError(`unsupported import option: ${key}`);
+    }
+    if (values.has(key)) {
+      throw usageError(`duplicate import option: ${key}`);
     }
     values.set(key, value);
   }
@@ -194,9 +208,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function usageError(): Error {
+function usageError(reason?: string): Error {
   return new Error(
-    "Usage: bun run import:v1 -- --vocabulary-root <checkout> --v1-root <checkout> " +
+    (reason === undefined ? "" : `${reason}\n`) +
+      "Usage: bun run import:v1 -- --vocabulary-root <checkout> --v1-root <checkout> " +
       "[--output .generated/v1-import.sql] [--levels 1,2,3] [--limit N]",
   );
 }

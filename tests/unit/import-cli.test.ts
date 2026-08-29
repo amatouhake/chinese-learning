@@ -53,6 +53,36 @@ test("v1 import rejects a modified contributing source file before writing outpu
   }
 });
 
+test("v1 import rejects unsupported options before writing output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chinese-learning-import-option-"));
+  const output = join(root, "generated/import.sql");
+
+  try {
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        "run",
+        "scripts/import-v1.ts",
+        "--vocabulary-root",
+        root,
+        "--v1-root",
+        root,
+        "--limt",
+        "10",
+        "--output",
+        output,
+      ],
+      { cwd: projectRoot },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(result.stderr)).toContain("unsupported import option: --limt");
+    await expect(stat(output)).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function initializeGitCheckout(directory: string): void {
   runGit(directory, "init", "--quiet");
   runGit(directory, "config", "user.name", "Import Test");
