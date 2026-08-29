@@ -10,6 +10,7 @@ import {
   createFsrsParameters,
   replayFsrsHistory,
 } from "../../src/domain/fsrs";
+import { compareCanonicalReviews } from "../../src/domain/ordering";
 import type {
   AttemptInput,
   CanonicalFsrsReview,
@@ -391,6 +392,41 @@ describe("D1 learning foundation", () => {
     expect(order.results.map((row) => row.event_id)).toEqual(["late-A", "late-C", "late-B"]);
     expect(project(await stateFor(fixture.cardId))).toEqual(
       project(await stateFor(baseline.cardId)),
+    );
+  });
+
+  test("Unicode review tie-breaks match D1 BINARY order", async () => {
+    const fixture = await seedScheduledCard("unicode-order");
+    const occurredAt = "2026-08-29T10:00:00Z";
+    const astral = scheduledInput(fixture, "unicode-astral", occurredAt, 1, {
+      deviceId: "\u{10000}",
+      rating: 1,
+    });
+    const privateUseBmp = scheduledInput(fixture, "unicode-bmp", occurredAt, 1, {
+      deviceId: "\uE000",
+      rating: 4,
+    });
+
+    await ingestAttempt(env.DB, astral, { now: () => timestamp("10:01") });
+    await ingestAttempt(env.DB, privateUseBmp, { now: () => timestamp("10:02") });
+
+    const sqlOrder = await env.DB.prepare(
+      `SELECT event_id FROM attempts
+         WHERE card_id = ?
+         ORDER BY occurred_at, device_id, device_seq, event_id`,
+    )
+      .bind(fixture.cardId)
+      .all<{ event_id: string }>();
+    const reviews = [canonical(astral), canonical(privateUseBmp)];
+    const domainOrder = [...reviews].sort(compareCanonicalReviews).map((review) => review.eventId);
+
+    expect(sqlOrder.results.map((row) => row.event_id)).toEqual([
+      privateUseBmp.eventId,
+      astral.eventId,
+    ]);
+    expect(domainOrder).toEqual(sqlOrder.results.map((row) => row.event_id));
+    expect(project(await stateFor(fixture.cardId))).toEqual(
+      replayFsrsHistory(reviews, new Map([[fixture.config.id, fixture.config]])),
     );
   });
 

@@ -23,6 +23,25 @@ describe("canonical FSRS replay", () => {
     ]);
   });
 
+  test("uses SQLite BINARY UTF-8 order for Unicode identity tie-breaks", () => {
+    const base: CanonicalFsrsReview = {
+      eventId: "shared-event",
+      cardId: "card-1",
+      deviceId: "\u{10000}",
+      deviceSeq: 1,
+      occurredAt: Date.parse("2026-08-29T10:00:00Z"),
+      rating: 1,
+      schedulerConfigId: configX.id,
+    };
+    const astral = base;
+    const privateUseBmp = { ...base, deviceId: "\uE000", rating: 4 as const };
+
+    expect(astral.deviceId < privateUseBmp.deviceId).toBe(true);
+    expect(
+      [astral, privateUseBmp].sort(compareCanonicalReviews).map((review) => review.deviceId),
+    ).toEqual([privateUseBmp.deviceId, astral.deviceId]);
+  });
+
   test("rebuilds the same state from the same immutable inputs in any arrival order", () => {
     const [a, b, c] = reviews();
     const configs = new Map([

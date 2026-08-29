@@ -1,6 +1,7 @@
 import { InvalidInputError } from "./errors";
 import type { CanonicalFsrsReview } from "./types";
 
+const UTF8_ENCODER = new TextEncoder();
 const ISO_INSTANT =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
@@ -70,7 +71,16 @@ export function semanticOrderKey(review: CanonicalFsrsReview): string {
 }
 
 function compareText(left: string, right: string): number {
-  if (left < right) return -1;
-  if (left > right) return 1;
+  const leftBytes = UTF8_ENCODER.encode(left);
+  const rightBytes = UTF8_ENCODER.encode(right);
+  const sharedLength = Math.min(leftBytes.length, rightBytes.length);
+
+  for (let index = 0; index < sharedLength; index += 1) {
+    const difference = (leftBytes[index] ?? 0) - (rightBytes[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+
+  if (leftBytes.length < rightBytes.length) return -1;
+  if (leftBytes.length > rightBytes.length) return 1;
   return 0;
 }
