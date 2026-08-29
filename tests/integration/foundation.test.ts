@@ -285,6 +285,178 @@ describe("D1 learning foundation", () => {
     ).rejects.toThrow("retired reading cannot be preferred");
   });
 
+  test("a revised import replaces its HSK level link without touching other tags", async () => {
+    const [lexeme] = scopedLexemes("level-move");
+    if (!lexeme) throw new Error("missing HSK level test fixture");
+    const initial = {
+      lexemes: [lexeme],
+      enrichments: [],
+      vocabularyVersion: "level-move-vocabulary-commit-a",
+      v1Version: "level-move-v1-commit",
+      createdAt: timestamp("09:00"),
+    } satisfies V1ImportInput;
+    const revised = {
+      ...initial,
+      lexemes: [{ ...lexeme, hskLevel: 2 }],
+      vocabularyVersion: "level-move-vocabulary-commit-b",
+      createdAt: timestamp("10:00"),
+    } satisfies V1ImportInput;
+    const initialIdentity = await deriveV1ImportIdentity(initial);
+    const revisedIdentity = await deriveV1ImportIdentity(revised);
+    const lexemeId = `lexeme:complete-hsk:${encodeURIComponent(lexeme.simplified)}`;
+
+    await applyImport(initial);
+    const initialRevision = await scalar(
+      "SELECT revision FROM content_revisions WHERE source_version = ?",
+      initialIdentity.sourceVersion,
+    );
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO tags (id, kind, label, source, content_revision)
+         VALUES ('tag:test:level-move', 'test', 'level-move', 'integration-test', ?)`,
+      ).bind(initialRevision),
+      env.DB.prepare(
+        `INSERT INTO lexeme_tags (lexeme_id, tag_id, content_revision)
+         VALUES (?, 'tag:test:level-move', ?)`,
+      ).bind(lexemeId, initialRevision),
+    ]);
+
+    await applyImport(revised);
+    const revisedRevision = await scalar(
+      "SELECT revision FROM content_revisions WHERE source_version = ?",
+      revisedIdentity.sourceVersion,
+    );
+    const hskTags = await env.DB.prepare(
+      `SELECT t.label
+         FROM lexeme_tags lt
+         JOIN tags t ON t.id = lt.tag_id
+         WHERE lt.lexeme_id = ? AND t.kind = 'hsk-2.0'
+         ORDER BY t.label`,
+    )
+      .bind(lexemeId)
+      .all<{ label: string }>();
+
+    expect(hskTags.results).toEqual([{ label: "level-2" }]);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM lexeme_tags WHERE lexeme_id = ? AND tag_id = 'tag:test:level-move'",
+        lexemeId,
+      ),
+    ).toBe(1);
+    expect(
+      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+    ).toBe(revisedRevision);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM server_changes WHERE change_id IN (?, ?)",
+        initialIdentity.changeId,
+        revisedIdentity.changeId,
+      ),
+    ).toBe(2);
+
+    const revisedCursor = await scalar("SELECT MAX(seq) FROM server_changes");
+    await applyImport(initial);
+    expect(await scalar("SELECT MAX(seq) FROM server_changes")).toBe(revisedCursor);
+    expect(
+      await scalar(
+        `SELECT COUNT(*) FROM lexeme_tags lt
+           JOIN tags t ON t.id = lt.tag_id
+           WHERE lt.lexeme_id = ? AND t.kind = 'hsk-2.0' AND t.label = 'level-2'`,
+        lexemeId,
+      ),
+    ).toBe(1);
+  });
+
+  test("a revised import retires an omitted generated example and can reactivate it", async () => {
+    const [lexeme] = scopedLexemes("example-lifecycle");
+    if (!lexeme) throw new Error("missing example lifecycle test fixture");
+    const enrichment = {
+      simplified: lexeme.simplified,
+      meaning_ja: "例の意味",
+      example_zh: "这是一个旧例子。",
+      example_pinyin: "Zhè shì yí ge jiù lìzi.",
+      example_en: "This is an old example.",
+      example_ja: "これは古い例です。",
+    };
+    const initial = {
+      lexemes: [lexeme],
+      enrichments: [enrichment],
+      vocabularyVersion: "example-lifecycle-vocabulary-commit",
+      v1Version: "example-lifecycle-v1-commit-a",
+      createdAt: timestamp("09:00"),
+    } satisfies V1ImportInput;
+    const omitted = {
+      ...initial,
+      enrichments: [{ simplified: lexeme.simplified, meaning_ja: enrichment.meaning_ja }],
+      v1Version: "example-lifecycle-v1-commit-b",
+      createdAt: timestamp("10:00"),
+    } satisfies V1ImportInput;
+    const restored = {
+      ...initial,
+      enrichments: [{ ...enrichment, example_zh: "这是一个新例子。" }],
+      v1Version: "example-lifecycle-v1-commit-c",
+      createdAt: timestamp("11:00"),
+    } satisfies V1ImportInput;
+    const initialIdentity = await deriveV1ImportIdentity(initial);
+    const omittedIdentity = await deriveV1ImportIdentity(omitted);
+    const restoredIdentity = await deriveV1ImportIdentity(restored);
+    const sentenceId = `sentence:v1:${encodeURIComponent(lexeme.simplified)}`;
+
+    await applyImport(initial);
+    expect(await scalar("SELECT COUNT(*) FROM sentences WHERE id = ?", sentenceId)).toBe(1);
+    expect(
+      await scalar("SELECT COUNT(*) FROM sentence_lexemes WHERE sentence_id = ?", sentenceId),
+    ).toBe(1);
+
+    await applyImport(omitted);
+    const omittedRevision = await scalar(
+      "SELECT revision FROM content_revisions WHERE source_version = ?",
+      omittedIdentity.sourceVersion,
+    );
+    const retired = await env.DB.prepare(
+      "SELECT retired_at, content_revision FROM sentences WHERE id = ?",
+    )
+      .bind(sentenceId)
+      .first<{ retired_at: number | null; content_revision: number }>();
+    expect(retired).toEqual({
+      retired_at: timestamp("10:00"),
+      content_revision: omittedRevision,
+    });
+    expect(
+      await scalar("SELECT COUNT(*) FROM sentence_lexemes WHERE sentence_id = ?", sentenceId),
+    ).toBe(0);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM server_changes WHERE change_id IN (?, ?)",
+        initialIdentity.changeId,
+        omittedIdentity.changeId,
+      ),
+    ).toBe(2);
+
+    const omittedCursor = await scalar("SELECT MAX(seq) FROM server_changes");
+    await applyImport(initial);
+    expect(await scalar("SELECT MAX(seq) FROM server_changes")).toBe(omittedCursor);
+    expect(await scalar("SELECT retired_at FROM sentences WHERE id = ?", sentenceId)).toBe(
+      timestamp("10:00"),
+    );
+
+    await applyImport(restored);
+    expect(
+      await env.DB.prepare("SELECT chinese, retired_at FROM sentences WHERE id = ?")
+        .bind(sentenceId)
+        .first<{ chinese: string; retired_at: number | null }>(),
+    ).toEqual({ chinese: "这是一个新例子。", retired_at: null });
+    expect(
+      await scalar("SELECT COUNT(*) FROM sentence_lexemes WHERE sentence_id = ?", sentenceId),
+    ).toBe(1);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM server_changes WHERE change_id = ?",
+        restoredIdentity.changeId,
+      ),
+    ).toBe(1);
+  });
+
   test("normal scheduling persists an immutable attempt, 1:1 review, and card state", async () => {
     const fixture = await seedScheduledCard("normal");
     const input = scheduledInput(fixture, "normal-event", "2026-08-29T10:00:00Z", 1);

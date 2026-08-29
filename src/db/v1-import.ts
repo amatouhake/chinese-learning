@@ -111,6 +111,8 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
     const preferredTraditional = lexeme.forms[0]?.traditional ?? lexeme.simplified;
     const readings = uniqueReadings(lexeme, lexemeId);
     const currentReadingIds = readings.map((reading) => sqlText(reading.id)).join(", ");
+    const hskTagId = `tag:hsk-2.0:${lexeme.hskLevel}`;
+    const sentenceId = `sentence:v1:${encodeIdPart(lexeme.simplified)}`;
 
     statements.push(`INSERT INTO lexemes
       (id, simplified, traditional, meanings_json, pos_json, frequency_rank,
@@ -189,20 +191,29 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
         AND id NOT IN (${currentReadingIds})
         AND ${importAllowed};`);
 
+    statements.push(`DELETE FROM lexeme_tags
+      WHERE lexeme_id = ${sqlText(lexemeId)}
+        AND tag_id IN (
+          SELECT id FROM tags
+          WHERE kind = 'hsk-2.0'
+            AND source = 'complete-hsk-vocabulary'
+            AND id <> ${sqlText(hskTagId)}
+        )
+        AND ${importAllowed};`);
+
     statements.push(`INSERT INTO lexeme_tags (lexeme_id, tag_id, content_revision)
       SELECT
         ${sqlText(lexemeId)},
-        ${sqlText(`tag:hsk-2.0:${lexeme.hskLevel}`)},
+        ${sqlText(hskTagId)},
         ${revision}
       WHERE ${importAllowed}
       ON CONFLICT(lexeme_id, tag_id) DO UPDATE SET
         content_revision = excluded.content_revision;`);
 
     if (enrichment?.example_zh) {
-      const sentenceId = `sentence:v1:${encodeIdPart(lexeme.simplified)}`;
       statements.push(`INSERT INTO sentences
         (id, chinese, pinyin, meaning_ja, meaning_en, source, source_ref,
-         metadata_json, content_revision, created_at)
+         metadata_json, content_revision, created_at, retired_at)
        SELECT
          ${sqlText(sentenceId)},
          ${sqlText(enrichment.example_zh)},
@@ -213,7 +224,8 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          'https://github.com/amatouhake/why-learn-languages-when-we-have-llms-lol',
          ${sqlText(JSON.stringify({ generatedBy: "LLM", reviewStatus: "unreviewed" }))},
          ${revision},
-         ${createdAt}
+         ${createdAt},
+         NULL
        WHERE ${importAllowed}
        ON CONFLICT(id) DO UPDATE SET
          chinese = excluded.chinese,
@@ -221,7 +233,8 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          meaning_ja = excluded.meaning_ja,
          meaning_en = excluded.meaning_en,
          metadata_json = excluded.metadata_json,
-         content_revision = excluded.content_revision;`);
+         content_revision = excluded.content_revision,
+         retired_at = NULL;`);
       statements.push(`INSERT INTO sentence_lexemes
         (sentence_id, lexeme_id, lexeme_reading_id, position, role, content_revision)
        SELECT
@@ -236,6 +249,30 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          lexeme_reading_id = excluded.lexeme_reading_id,
          role = excluded.role,
          content_revision = excluded.content_revision;`);
+    } else {
+      statements.push(`DELETE FROM sentence_lexemes
+        WHERE sentence_id = ${sqlText(sentenceId)}
+          AND EXISTS (
+            SELECT 1 FROM sentences
+            WHERE id = ${sqlText(sentenceId)}
+              AND source = 'why-learn-languages-when-we-have-llms-lol'
+          )
+          AND ${importAllowed};`);
+      statements.push(`DELETE FROM sentence_grammar_topics
+        WHERE sentence_id = ${sqlText(sentenceId)}
+          AND EXISTS (
+            SELECT 1 FROM sentences
+            WHERE id = ${sqlText(sentenceId)}
+              AND source = 'why-learn-languages-when-we-have-llms-lol'
+          )
+          AND ${importAllowed};`);
+      statements.push(`UPDATE sentences
+        SET
+          retired_at = MAX(created_at, ${createdAt}),
+          content_revision = ${revision}
+        WHERE id = ${sqlText(sentenceId)}
+          AND source = 'why-learn-languages-when-we-have-llms-lol'
+          AND ${importAllowed};`);
     }
 
     for (const activityType of ["hanzi_to_meaning", "meaning_to_hanzi"] as const) {

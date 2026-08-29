@@ -95,7 +95,9 @@ Once revision B supersedes revision A, rerunning A is a content no-op: it cannot
 move `learner_settings.current_content_revision` backward without a new cursor. Within a lexeme,
 source readings absent from the newer normalized content are demoted and retired rather than left
 active or destructively deleted; current readings are reactivated if they return in a later valid
-revision.
+revision. Import-owned HSK level links are replaced when a lexeme moves level, and generated example
+sentences omitted by a newer revision are retired with their active relations removed. An example
+is reactivated if a later valid revision restores it.
 
 ```sh
 bun run import:v1 -- \
