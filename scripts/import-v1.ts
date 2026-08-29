@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -114,16 +115,29 @@ export function assertCleanImportedPaths(
   revision: string,
 ): void {
   for (const relativePath of relativePaths) {
-    const tracked = Bun.spawnSync([
+    const committed = Bun.spawnSync([
       "git",
       "-C",
       directory,
-      "cat-file",
-      "-e",
+      "show",
       `${revision}:${relativePath}`,
     ]);
-    if (tracked.exitCode !== 0) {
+    if (committed.exitCode !== 0) {
       throw new Error(`source path is not tracked at ${revision} in ${directory}: ${relativePath}`);
+    }
+
+    let worktreeBytes: Uint8Array;
+    try {
+      worktreeBytes = readFileSync(join(directory, relativePath));
+    } catch {
+      throw new Error(
+        `refusing to attribute modified imported source paths to ${revision} in ${directory}:\n${relativePath} (cannot read worktree bytes)`,
+      );
+    }
+    if (!equalBytes(committed.stdout, worktreeBytes)) {
+      throw new Error(
+        `refusing to attribute modified imported source paths to ${revision} in ${directory}:\n${relativePath} (worktree bytes differ from the recorded commit)`,
+      );
     }
   }
 
@@ -147,6 +161,11 @@ export function assertCleanImportedPaths(
       `refusing to attribute modified imported source paths to ${revision} in ${directory}:\n${dirtyPaths}`,
     );
   }
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  return left.every((byte, index) => byte === right[index]);
 }
 
 function parseSourceLexemes(value: unknown, hskLevel: number): V1SourceLexeme[] {

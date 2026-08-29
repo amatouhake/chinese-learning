@@ -804,7 +804,7 @@ describe("D1 learning foundation", () => {
     ).toBe(1);
   });
 
-  test("study sessions accept attempts only from their owning device", async () => {
+  test("study session device ownership is enforced and preserved", async () => {
     const fixture = await seedScheduledCard("session-device");
     const sessionId = "session-device-session";
     await env.DB.prepare(
@@ -866,6 +866,17 @@ describe("D1 learning foundation", () => {
         .bind(matching.eventId)
         .first<{ device_id: string; study_session_id: string }>(),
     ).toEqual({ device_id: matching.deviceId, study_session_id: sessionId });
+
+    await expect(
+      env.DB.prepare("UPDATE study_sessions SET device_id = 'session-device-b' WHERE id = ?")
+        .bind(sessionId)
+        .run(),
+    ).rejects.toThrow("linked study session device is immutable");
+    expect(
+      await env.DB.prepare("SELECT device_id FROM study_sessions WHERE id = ?")
+        .bind(sessionId)
+        .first<{ device_id: string }>(),
+    ).toEqual({ device_id: matching.deviceId });
   });
 
   test("D1 batch rollback leaves no partial attempt, review, state, cursor, or guard", async () => {

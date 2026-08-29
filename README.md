@@ -118,9 +118,10 @@ bunx wrangler d1 execute chinese-learning --local --file .generated/v1-import.sq
 ```
 
 Use pinned source checkouts for repeatable output. Every contributing JSON path must be tracked at
-the recorded `HEAD`; the importer then refuses paths that are modified, deleted, staged differently,
-or untracked, including ignored untracked files. Unrelated checkout edits do not affect provenance
-validation. After migrations and import, new
+the recorded `HEAD`; the importer compares its exact worktree bytes with the recorded commit and
+then refuses paths that are modified, deleted, staged differently, or untracked, including changes
+hidden by Git ignore, assume-unchanged, or skip-worktree flags. Unrelated checkout edits do not
+affect provenance validation. After migrations and import, new
 scheduled cards use the bootstrap scheduler ID documented above. A two-lexeme fixture proves this
 fresh setup against D1 without making full content migration part of the test suite. See
 [Third-party notices](docs/THIRD_PARTY_NOTICES.md) for provenance and licensing boundaries.

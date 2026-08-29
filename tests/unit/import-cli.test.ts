@@ -125,6 +125,56 @@ test("v1 import rejects an ignored untracked contributing source file", async ()
   }
 });
 
+test("v1 import compares source bytes hidden by assume-unchanged", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chinese-learning-import-index-flag-"));
+  const vocabularyRoot = join(root, "vocabulary");
+  const v1Root = join(root, "v1");
+  const relativeVocabularyPath = "wordlists/exclusive/old/1.json";
+  const vocabularyPath = join(vocabularyRoot, relativeVocabularyPath);
+  const enrichmentPath = join(v1Root, "data/llm_generated.json");
+  const output = join(root, "generated/import.sql");
+
+  try {
+    await mkdir(dirname(vocabularyPath), { recursive: true });
+    await mkdir(dirname(enrichmentPath), { recursive: true });
+    await writeFile(vocabularyPath, JSON.stringify([sourceLexeme("原")]));
+    await writeFile(enrichmentPath, "[]");
+    initializeGitCheckout(vocabularyRoot);
+    initializeGitCheckout(v1Root);
+
+    runGit(vocabularyRoot, "update-index", "--assume-unchanged", relativeVocabularyPath);
+    await writeFile(vocabularyPath, JSON.stringify([sourceLexeme("改")]));
+    expect(
+      gitOutput(vocabularyRoot, "status", "--porcelain=v1", "--", relativeVocabularyPath),
+    ).toBe("");
+
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        "run",
+        "scripts/import-v1.ts",
+        "--vocabulary-root",
+        vocabularyRoot,
+        "--v1-root",
+        v1Root,
+        "--levels",
+        "1",
+        "--output",
+        output,
+      ],
+      { cwd: projectRoot },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(result.stderr)).toContain(
+      "worktree bytes differ from the recorded commit",
+    );
+    await expect(stat(output)).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function initializeGitCheckout(directory: string): void {
   runGit(directory, "init", "--quiet");
   runGit(directory, "config", "user.name", "Import Test");
@@ -138,6 +188,14 @@ function runGit(directory: string, ...arguments_: string[]): void {
   if (result.exitCode !== 0) {
     throw new Error(new TextDecoder().decode(result.stderr));
   }
+}
+
+function gitOutput(directory: string, ...arguments_: string[]): string {
+  const result = Bun.spawnSync(["git", "-C", directory, ...arguments_]);
+  if (result.exitCode !== 0) {
+    throw new Error(new TextDecoder().decode(result.stderr));
+  }
+  return new TextDecoder().decode(result.stdout).trim();
 }
 
 function sourceLexeme(simplified: string): Record<string, unknown> {
