@@ -1,0 +1,40 @@
+{
+  "name": "chinese-learning",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": "1.4.x"
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:worker": "bun run build:web && wrangler dev",
+    "build:web": "vite build",
+    "build:worker": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "build": "bun run build:web && bun run build:worker",
+    "cf-types": "wrangler types --env-interface CloudflareBindings",
+    "cf-types:check": "wrangler types --env-interface CloudflareBindings --check",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "hono": "^4.13.5",
+    "ts-fsrs": "^5.4.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.2",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@types/bun": "^1.4.0",
+    "@types/node": "^26.4.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.57.0",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.127.1"
+  }
+}

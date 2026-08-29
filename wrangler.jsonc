@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "chinese-learning",
+  "main": "./src/worker/index.ts",
+  "compatibility_date": "2026-08-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/mcp"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "chinese-learning",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "./migrations",
+    },
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1,
+    },
+  },
+}

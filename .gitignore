@@ -6,8 +6,12 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# database
+# Local D1 / SQLite state
+.wrangler/
 *.sqlite
+*.sqlite-*
+*.db
+*.db-*
 
 # package-json
 package-json.lock
@@ -79,7 +83,17 @@ typings/
 
 # dotenv environment variables file
 .env
+.env.*
+!.env.example
 .env.test
+.dev.vars
+.dev.vars.*
+
+# Private learning data and local exports
+private-data/
+exports/private/
+*.learning-export.*
+*.learning-history.*
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -90,6 +104,16 @@ typings/
 # Nuxt.js build / generate output
 .nuxt
 dist
+
+# Test and tool output
+test-results/
+playwright-report/
+.vite/
+
+# This project uses Bun exclusively
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
 
 # Gatsby files
 .cache/
