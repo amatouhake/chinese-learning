@@ -709,6 +709,27 @@ describe("D1 learning foundation", () => {
     await expect(
       env.DB.prepare("DELETE FROM scheduler_configs WHERE id = ?").bind(fixture.config.id).run(),
     ).rejects.toThrow("scheduler configs cannot be deleted");
+    await expect(
+      env.DB.prepare(
+        `INSERT OR REPLACE INTO scheduler_configs
+          (id, algorithm, implementation, implementation_version, parameters_json,
+           desired_retention, is_current, created_at)
+         VALUES (?, 'changed-algorithm', 'changed-implementation', '0.0.0', ?, 0.7, 0, ?)`,
+      )
+        .bind(fixture.config.id, JSON.stringify(fixture.config.parameters), timestamp("09:00"))
+        .run(),
+    ).rejects.toThrow("scheduler config IDs cannot be reinserted");
+
+    const preserved = await env.DB.prepare(
+      "SELECT algorithm, desired_retention, is_current FROM scheduler_configs WHERE id = ?",
+    )
+      .bind(fixture.config.id)
+      .first<{ algorithm: string; desired_retention: number; is_current: number }>();
+    expect(preserved).toEqual({
+      algorithm: fixture.config.algorithm,
+      desired_retention: fixture.config.desiredRetention,
+      is_current: 1,
+    });
 
     await env.DB.prepare("UPDATE scheduler_configs SET is_current = 0 WHERE id = ?")
       .bind(fixture.config.id)
@@ -719,6 +740,70 @@ describe("D1 learning foundation", () => {
     expect(
       await scalar("SELECT is_current FROM scheduler_configs WHERE id = ?", fixture.config.id),
     ).toBe(1);
+  });
+
+  test("study sessions accept attempts only from their owning device", async () => {
+    const fixture = await seedScheduledCard("session-device");
+    const sessionId = "session-device-session";
+    await env.DB.prepare(
+      `INSERT INTO study_sessions (id, device_id, mode, started_at)
+       VALUES (?, 'session-device-a', 'reflex', ?)`,
+    )
+      .bind(sessionId, timestamp("09:00"))
+      .run();
+
+    const directEventId = "session-device-direct-mismatch";
+    const directChangeId = `attempt:${directEventId}`;
+    await expect(
+      env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO server_changes
+            (change_id, entity_type, entity_id, operation, changed_at)
+           VALUES (?, 'attempt', ?, 'upsert', ?)`,
+        ).bind(directChangeId, directEventId, timestamp("10:01")),
+        env.DB.prepare(
+          `INSERT INTO attempts
+            (event_id, device_id, device_seq, occurred_at, received_at, card_id,
+             study_session_id, mode, activity_type, server_seq)
+           VALUES (?, 'session-device-b', 1, ?, ?, ?, ?, 'reflex', 'hanzi_to_meaning',
+             (SELECT seq FROM server_changes WHERE change_id = ?))`,
+        ).bind(
+          directEventId,
+          timestamp("10:00"),
+          timestamp("10:01"),
+          fixture.cardId,
+          sessionId,
+          directChangeId,
+        ),
+      ]),
+    ).rejects.toThrow("attempt device must match study session device");
+    expect(await changeCountFor(directEventId)).toBe(0);
+
+    const mismatch: AttemptInput = {
+      ...scheduledInput(fixture, "session-device-http-mismatch", "2026-08-29T10:00:00Z", 1, {
+        deviceId: "session-device-b",
+      }),
+      studySessionId: sessionId,
+      mode: "reflex",
+      fsrsReview: undefined,
+    };
+    const mismatchResponse = await postAttempt(mismatch);
+    expect(mismatchResponse.status).toBe(409);
+    await expect(mismatchResponse.json()).resolves.toMatchObject({ code: "conflict" });
+    expect(await count("attempts", "event_id", mismatch.eventId)).toBe(0);
+
+    const matching: AttemptInput = {
+      ...mismatch,
+      eventId: "session-device-http-match",
+      deviceId: "session-device-a",
+    };
+    const matchingResponse = await postAttempt(matching);
+    expect(matchingResponse.status).toBe(201);
+    expect(
+      await env.DB.prepare("SELECT device_id, study_session_id FROM attempts WHERE event_id = ?")
+        .bind(matching.eventId)
+        .first<{ device_id: string; study_session_id: string }>(),
+    ).toEqual({ device_id: matching.deviceId, study_session_id: sessionId });
   });
 
   test("D1 batch rollback leaves no partial attempt, review, state, cursor, or guard", async () => {

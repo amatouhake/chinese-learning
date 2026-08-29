@@ -69,12 +69,15 @@ migration. A scheduled attempt must still carry this exact ID (or another existi
 configuration ID); ingestion never substitutes whichever configuration is currently selected.
 Every persisted scheduler configuration is append-only immediately, so an ID already issued to an
 offline client cannot change or disappear before its first review synchronizes. Selecting a current
-configuration may change; optimizing scheduler semantics requires a new configuration ID.
+configuration may change; optimizing scheduler semantics requires a new configuration ID. Duplicate
+ID inserts, including SQLite replacement writes, are rejected before conflict handling can replace
+an existing row.
 
 `attempts` is canonical append-only activity history. Only an attempt carrying an intentional FSRS
 review gets a 1:1 `fsrs_reviews` row. Canonical replay order is `occurred_at`, then binary
 `device_id`, `device_seq`, and `event_id`; server receive order never replaces semantic order.
-`card_state` is replaceable derived state with an incrementing version.
+`card_state` is replaceable derived state with an incrementing version. Attempts associated with a
+study session must carry that session's owning device identity.
 
 Each scheduled ingestion builds the complete per-card state from immutable history, then submits
 the attempt, review, server change rows, and version-guarded card-state replacement in one D1

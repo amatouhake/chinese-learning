@@ -118,7 +118,7 @@ export async function ingestAttempt(
     const existing = await findAttempt(db, input.eventId);
     if (existing) return duplicateResult(db, existing, input, occurredAt);
     await assertDeviceSequenceAvailable(db, input);
-    await assertStudySessionExists(db, input.studySessionId);
+    await assertStudySessionOwnedByDevice(db, input.studySessionId, input.deviceId);
 
     const card = await db
       .prepare("SELECT id, activity_type, scheduler_eligible FROM cards WHERE id = ?")
@@ -591,16 +591,20 @@ async function assertDeviceSequenceAvailable(db: D1Database, input: AttemptInput
   }
 }
 
-async function assertStudySessionExists(
+async function assertStudySessionOwnedByDevice(
   db: D1Database,
   studySessionId: string | undefined,
+  deviceId: string,
 ): Promise<void> {
   if (studySessionId === undefined) return;
   const session = await db
-    .prepare("SELECT id FROM study_sessions WHERE id = ?")
+    .prepare("SELECT id, device_id FROM study_sessions WHERE id = ?")
     .bind(studySessionId)
-    .first<{ id: string }>();
+    .first<{ id: string; device_id: string }>();
   if (!session) throw new ReferenceNotFoundError("study session", studySessionId);
+  if (session.device_id !== deviceId) {
+    throw new ConflictError(`study session ${studySessionId} belongs to another device`);
+  }
 }
 
 function requireRating(value: number): 1 | 2 | 3 | 4 {
