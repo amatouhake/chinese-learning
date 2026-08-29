@@ -13,6 +13,7 @@ import type { CanonicalFsrsReview, FsrsCardProjection, SchedulerConfig } from ".
 export const FSRS_ALGORITHM = "fsrs-6";
 export const FSRS_IMPLEMENTATION = "ts-fsrs";
 export const FSRS_IMPLEMENTATION_VERSION = "5.4.1";
+export const DEFAULT_SCHEDULER_CONFIG_ID = "fsrs-6:ts-fsrs@5.4.1:default:0.90:v1";
 
 export function createFsrsParameters(
   desiredRetention: number,

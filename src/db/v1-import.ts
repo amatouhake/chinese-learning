@@ -34,17 +34,34 @@ export interface V1ImportInput {
 
 const IMPORT_SOURCE = "complete-hsk-vocabulary + chinese-learning-v1-enrichment";
 
-export function buildV1ImportSql(input: V1ImportInput): string {
-  return `${buildV1ImportStatements(input).join("\n\n")}\n`;
+export interface V1ImportIdentity {
+  contentDigest: string;
+  sourceVersion: string;
+  changeId: string;
 }
 
-export function buildV1ImportStatements(input: V1ImportInput): string[] {
+export async function buildV1ImportSql(input: V1ImportInput): Promise<string> {
+  return `${(await buildV1ImportStatements(input)).join("\n\n")}\n`;
+}
+
+export async function deriveV1ImportIdentity(input: V1ImportInput): Promise<V1ImportIdentity> {
   validateImportInput(input);
+  const contentDigest = await sha256(canonicalImportedContent(input));
+  return {
+    contentDigest,
+    sourceVersion:
+      `complete-hsk-vocabulary@${input.vocabularyVersion};` +
+      `v1@${input.v1Version};content-sha256:${contentDigest}`,
+    changeId: `content-import:sha256:${contentDigest}`,
+  };
+}
+
+export async function buildV1ImportStatements(input: V1ImportInput): Promise<string[]> {
+  const identity = await deriveV1ImportIdentity(input);
   const createdAt = input.createdAt ?? 0;
-  const sourceVersion = `complete-hsk-vocabulary@${input.vocabularyVersion};v1@${input.v1Version}`;
   const revision = `(SELECT revision FROM content_revisions WHERE source = ${sqlText(
     IMPORT_SOURCE,
-  )} AND source_version = ${sqlText(sourceVersion)})`;
+  )} AND source_version = ${sqlText(identity.sourceVersion)})`;
   const enrichmentBySimplified = new Map(
     input.enrichments.map((enrichment) => [enrichment.simplified, enrichment]),
   );
@@ -54,8 +71,10 @@ export function buildV1ImportStatements(input: V1ImportInput): string[] {
       (source, source_version, description, created_at)
      VALUES (
        ${sqlText(IMPORT_SOURCE)},
-       ${sqlText(sourceVersion)},
-       'HSK 2.0 Level 1-3 vocabulary with v1 LLM enrichment',
+       ${sqlText(identity.sourceVersion)},
+       ${sqlText(
+         `HSK 2.0 vocabulary with v1 LLM enrichment; ${input.lexemes.length} lexemes; content sha256 ${identity.contentDigest}`,
+       )},
        ${createdAt}
      );`,
   ];
@@ -115,7 +134,7 @@ export function buildV1ImportStatements(input: V1ImportInput): string[] {
        content_revision = excluded.content_revision,
        updated_at = excluded.updated_at;`);
 
-    for (const [index, reading] of readings.entries()) {
+    for (const reading of readings) {
       statements.push(`INSERT INTO lexeme_readings
         (id, lexeme_id, pinyin, numeric_pinyin, normalized_syllables_json,
          is_preferred, form_scope, sense_scope, source, source_ref,
@@ -126,7 +145,7 @@ export function buildV1ImportStatements(input: V1ImportInput): string[] {
          ${sqlText(reading.form.transcriptions.pinyin)},
          ${sqlText(reading.form.transcriptions.numeric)},
          ${sqlText(JSON.stringify(normalizeNumericPinyin(reading.form.transcriptions.numeric)))},
-         ${index === 0 ? 1 : 0},
+         0,
          ${sqlText(reading.form.traditional ?? lexeme.simplified)},
          ${sqlText(JSON.stringify(reading.form.meanings))},
          'complete-hsk-vocabulary',
@@ -139,13 +158,16 @@ export function buildV1ImportStatements(input: V1ImportInput): string[] {
          pinyin = excluded.pinyin,
          numeric_pinyin = excluded.numeric_pinyin,
          normalized_syllables_json = excluded.normalized_syllables_json,
-         is_preferred = excluded.is_preferred,
          form_scope = excluded.form_scope,
          sense_scope = excluded.sense_scope,
          source = excluded.source,
          source_ref = excluded.source_ref,
          content_revision = excluded.content_revision;`);
     }
+
+    statements.push(`UPDATE lexeme_readings
+      SET is_preferred = 1
+      WHERE id = ${sqlText(readings[0]?.id)};`);
 
     statements.push(`INSERT INTO lexeme_tags (lexeme_id, tag_id, content_revision)
       VALUES (
@@ -219,11 +241,10 @@ export function buildV1ImportStatements(input: V1ImportInput): string[] {
     }
   }
 
-  const importChangeId = `content-import:${input.vocabularyVersion}:${input.v1Version}`;
   statements.push(`INSERT OR IGNORE INTO server_changes
     (change_id, entity_type, entity_id, operation, content_revision, changed_at)
    VALUES (
-     ${sqlText(importChangeId)},
+     ${sqlText(identity.changeId)},
      'content',
      'content-revision:' || CAST(${revision} AS TEXT),
      'upsert',
@@ -235,6 +256,73 @@ export function buildV1ImportStatements(input: V1ImportInput): string[] {
     WHERE singleton = 1;`);
 
   return statements;
+}
+
+function canonicalImportedContent(input: V1ImportInput): string {
+  const selectedLexemes = new Set(input.lexemes.map((lexeme) => lexeme.simplified));
+  const lexemes = input.lexemes
+    .map((lexeme) => ({
+      simplified: lexeme.simplified,
+      frequency: lexeme.frequency,
+      pos: lexeme.pos,
+      hskLevel: lexeme.hskLevel,
+      forms: lexeme.forms.map((form) => ({
+        traditional: form.traditional,
+        transcriptions: {
+          pinyin: form.transcriptions.pinyin,
+          numeric: form.transcriptions.numeric,
+        },
+        meanings: form.meanings,
+      })),
+    }))
+    .sort((left, right) => compareCanonicalJson(left, right));
+  const enrichments = input.enrichments
+    .filter((enrichment) => selectedLexemes.has(enrichment.simplified))
+    .map((enrichment) => ({
+      simplified: enrichment.simplified,
+      meaning_ja: enrichment.meaning_ja,
+      example_zh: enrichment.example_zh,
+      example_pinyin: enrichment.example_pinyin,
+      example_en: enrichment.example_en,
+      example_ja: enrichment.example_ja,
+    }))
+    .sort((left, right) => compareCanonicalJson(left, right));
+
+  return canonicalJson({
+    vocabularyVersion: input.vocabularyVersion,
+    v1Version: input.v1Version,
+    lexemes,
+    enrichments,
+  });
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .filter((key) => record[key] !== undefined)
+      .map((key) => [key, sortJson(record[key])]),
+  );
+}
+
+function compareCanonicalJson(left: unknown, right: unknown): number {
+  const leftJson = canonicalJson(left);
+  const rightJson = canonicalJson(right);
+  if (leftJson < rightJson) return -1;
+  if (leftJson > rightJson) return 1;
+  return 0;
 }
 
 export function normalizeNumericPinyin(

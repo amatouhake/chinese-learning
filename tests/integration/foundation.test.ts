@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import {
+  DEFAULT_SCHEDULER_CONFIG_ID,
   FSRS_ALGORITHM,
   FSRS_IMPLEMENTATION,
   FSRS_IMPLEMENTATION_VERSION,
@@ -15,24 +16,26 @@ import type {
   FsrsCardProjection,
   SchedulerConfig,
 } from "../../src/domain/types";
-import { buildV1ImportStatements } from "../../src/db/v1-import";
+import {
+  buildV1ImportStatements,
+  deriveV1ImportIdentity,
+  type V1ImportInput,
+  type V1SourceLexeme,
+} from "../../src/db/v1-import";
 import v1EnrichmentFixture from "../fixtures/v1-reference/data/llm_generated.json";
 import vocabularyFixture from "../fixtures/v1-reference/wordlists/exclusive/old/1.json";
 
 describe("D1 learning foundation", () => {
-  test("representative v1 content imports with multiple readings and provenance", async () => {
-    const statements = buildV1ImportStatements({
+  test("fresh migrations and representative import provide a usable default scheduler", async () => {
+    const importInput: V1ImportInput = {
       lexemes: vocabularyFixture.map((lexeme) => ({ ...lexeme, hskLevel: 1 })),
       enrichments: v1EnrichmentFixture,
       vocabularyVersion: "fixture-vocabulary-commit",
       v1Version: "fixture-v1-commit",
-    });
+    };
+    const identity = await deriveV1ImportIdentity(importInput);
 
-    await env.DB.batch(
-      statements
-        .filter((statement) => !statement.startsWith("PRAGMA"))
-        .map((statement) => env.DB.prepare(statement)),
-    );
+    await applyImport(importInput);
 
     const imported = await env.DB.prepare(
       `SELECT l.simplified, COUNT(r.id) AS reading_count,
@@ -48,10 +51,154 @@ describe("D1 learning foundation", () => {
       await scalar("SELECT COUNT(*) FROM cards WHERE id LIKE 'card:lexeme:complete-hsk:%'"),
     ).toBe(4);
     expect(
+      await scalar("SELECT COUNT(*) FROM server_changes WHERE change_id = ?", identity.changeId),
+    ).toBe(1);
+
+    const config = await env.DB.prepare(
+      `SELECT id, algorithm, implementation, implementation_version,
+          parameters_json, desired_retention, is_current
+         FROM scheduler_configs WHERE id = ?`,
+    )
+      .bind(DEFAULT_SCHEDULER_CONFIG_ID)
+      .first<{
+        id: string;
+        algorithm: string;
+        implementation: string;
+        implementation_version: string;
+        parameters_json: string;
+        desired_retention: number;
+        is_current: number;
+      }>();
+    expect(config).toMatchObject({
+      id: DEFAULT_SCHEDULER_CONFIG_ID,
+      algorithm: FSRS_ALGORITHM,
+      implementation: FSRS_IMPLEMENTATION,
+      implementation_version: FSRS_IMPLEMENTATION_VERSION,
+      desired_retention: 0.9,
+      is_current: 1,
+    });
+    expect(JSON.parse(config?.parameters_json ?? "null")).toEqual(createFsrsParameters(0.9));
+
+    const cardId = "card:lexeme:complete-hsk:%E5%A4%A7:hanzi_to_meaning";
+    const attempt: AttemptInput = {
+      eventId: "fresh-bootstrap-review",
+      deviceId: "fresh-bootstrap-device",
+      deviceSeq: 1,
+      occurredAt: "2026-08-29T10:00:00Z",
+      cardId,
+      mode: "study",
+      activityType: "hanzi_to_meaning",
+      correct: true,
+      fsrsReview: { rating: 3, schedulerConfigId: DEFAULT_SCHEDULER_CONFIG_ID },
+    };
+    const result = await ingestAttempt(env.DB, attempt, { now: () => timestamp("10:01") });
+    expect(result).toMatchObject({ disposition: "inserted", reviewCreated: true });
+    expect(await count("attempts", "event_id", attempt.eventId)).toBe(1);
+    expect(await count("fsrs_reviews", "attempt_id", attempt.eventId)).toBe(1);
+  });
+
+  test("content-addressed import revisions distinguish partial and full scope", async () => {
+    const lexemes = scopedLexemes("scope");
+    const base = {
+      enrichments: [],
+      vocabularyVersion: "scope-vocabulary-commit",
+      v1Version: "scope-v1-commit",
+      createdAt: timestamp("09:00"),
+    } satisfies Omit<V1ImportInput, "lexemes">;
+    const partial = { ...base, lexemes: lexemes.slice(0, 1) };
+    const full = { ...base, lexemes };
+    const partialIdentity = await deriveV1ImportIdentity(partial);
+    const samePartialIdentity = await deriveV1ImportIdentity({ ...partial });
+    const fullIdentity = await deriveV1ImportIdentity(full);
+
+    expect(samePartialIdentity).toEqual(partialIdentity);
+    expect(fullIdentity.contentDigest).not.toBe(partialIdentity.contentDigest);
+
+    await applyImport(partial);
+    const partialCursor = (await scalar("SELECT MAX(seq) FROM server_changes")) ?? 0;
+    const revisionCountAfterPartial = await scalar(
+      "SELECT COUNT(*) FROM content_revisions WHERE source_version LIKE 'complete-hsk-vocabulary@scope-vocabulary-commit;%'",
+    );
+    await applyImport(partial);
+    expect(
       await scalar(
-        "SELECT COUNT(*) FROM server_changes WHERE change_id = 'content-import:fixture-vocabulary-commit:fixture-v1-commit'",
+        "SELECT COUNT(*) FROM content_revisions WHERE source_version LIKE 'complete-hsk-vocabulary@scope-vocabulary-commit;%'",
+      ),
+    ).toBe(revisionCountAfterPartial);
+    expect(await scalar("SELECT MAX(seq) FROM server_changes")).toBe(partialCursor);
+
+    await applyImport(full);
+    const fullCursor = (await scalar("SELECT MAX(seq) FROM server_changes")) ?? 0;
+    expect(fullCursor).toBeGreaterThan(partialCursor);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM server_changes WHERE change_id = ?",
+        fullIdentity.changeId,
       ),
     ).toBe(1);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM server_changes WHERE seq > ? AND change_id = ?",
+        partialCursor,
+        fullIdentity.changeId,
+      ),
+    ).toBe(1);
+  });
+
+  test("a revised import atomically changes the one preferred reading", async () => {
+    const [lexeme] = scopedLexemes("preferred");
+    if (!lexeme) throw new Error("missing preferred-reading test fixture");
+    const first = {
+      lexemes: [lexeme],
+      enrichments: [],
+      vocabularyVersion: "preferred-vocabulary-commit-a",
+      v1Version: "preferred-v1-commit",
+      createdAt: timestamp("09:00"),
+    } satisfies V1ImportInput;
+    const revised = {
+      ...first,
+      vocabularyVersion: "preferred-vocabulary-commit-b",
+      lexemes: [{ ...lexeme, forms: [...lexeme.forms].reverse() }],
+    } satisfies V1ImportInput;
+    const firstIdentity = await deriveV1ImportIdentity(first);
+    const revisedIdentity = await deriveV1ImportIdentity(revised);
+
+    await applyImport(first);
+    await applyImport(revised);
+
+    const readings = await env.DB.prepare(
+      `SELECT numeric_pinyin, is_preferred
+         FROM lexeme_readings
+         WHERE lexeme_id = ?
+         ORDER BY numeric_pinyin`,
+    )
+      .bind(`lexeme:complete-hsk:${encodeURIComponent(lexeme.simplified)}`)
+      .all<{ numeric_pinyin: string; is_preferred: number }>();
+    expect(readings.results.filter((reading) => reading.is_preferred === 1)).toEqual([
+      { numeric_pinyin: "preferred2", is_preferred: 1 },
+    ]);
+    expect(revisedIdentity.changeId).not.toBe(firstIdentity.changeId);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM server_changes WHERE change_id IN (?, ?)",
+        firstIdentity.changeId,
+        revisedIdentity.changeId,
+      ),
+    ).toBe(2);
+    const revisedRevision = await scalar(
+      "SELECT revision FROM content_revisions WHERE source_version = ?",
+      revisedIdentity.sourceVersion,
+    );
+    expect(revisedRevision).not.toBeNull();
+    expect(
+      await scalar(
+        "SELECT content_revision FROM server_changes WHERE change_id = ?",
+        revisedIdentity.changeId,
+      ),
+    ).toBe(revisedRevision);
+    expect(
+      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+    ).toBe(revisedRevision);
   });
 
   test("normal scheduling persists an immutable attempt, 1:1 review, and card state", async () => {
@@ -479,8 +626,34 @@ async function changeCountFor(fragment: string): Promise<number> {
   );
 }
 
-async function scalar(sql: string, value?: string): Promise<number | null> {
-  const statement = value === undefined ? env.DB.prepare(sql) : env.DB.prepare(sql).bind(value);
+async function applyImport(input: V1ImportInput): Promise<void> {
+  const statements = await buildV1ImportStatements(input);
+  await env.DB.batch(
+    statements
+      .filter((statement) => !statement.startsWith("PRAGMA"))
+      .map((statement) => env.DB.prepare(statement)),
+  );
+}
+
+function scopedLexemes(prefix: string): V1SourceLexeme[] {
+  return [1, 2].map((number) => ({
+    simplified: `测${prefix}${number}`,
+    frequency: 100 + number,
+    pos: ["verb"],
+    hskLevel: 1,
+    forms: [1, 2].map((reading) => ({
+      traditional: `測${prefix}${number}`,
+      transcriptions: {
+        pinyin: `${prefix} ${reading}`,
+        numeric: `${prefix}${reading}`,
+      },
+      meanings: [`${prefix} meaning ${reading}`],
+    })),
+  }));
+}
+
+async function scalar(sql: string, ...values: Array<string | number>): Promise<number | null> {
+  const statement = values.length === 0 ? env.DB.prepare(sql) : env.DB.prepare(sql).bind(...values);
   const result = await statement.first<Record<string, number>>();
   return result ? (Object.values(result)[0] ?? null) : null;
 }

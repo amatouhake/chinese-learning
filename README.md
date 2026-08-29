@@ -55,6 +55,12 @@ sentences and their lexeme/grammar relations, grammar topics, and content revisi
 uses activity cards, card state, study sessions, grammar topic state, attempts, FSRS reviews, and
 immutable scheduler configurations.
 
+Fresh migrations bootstrap the current scheduler as
+`fsrs-6:ts-fsrs@5.4.1:default:0.90:v1`. Its complete deterministic `ts-fsrs` 5.4.1 parameter set
+(including disabled fuzz), desired retention, and implementation identity are persisted by the
+migration. A scheduled attempt must still carry this exact ID (or another existing immutable
+configuration ID); ingestion never substitutes whichever configuration is currently selected.
+
 `attempts` is canonical append-only activity history. Only an attempt carrying an intentional FSRS
 review gets a 1:1 `fsrs_reviews` row. Canonical replay order is `occurred_at`, then binary
 `device_id`, `device_seq`, and `event_id`; server receive order never replaces semantic order.
@@ -72,9 +78,11 @@ complete client pull/cache UX is not implemented yet.
 ## V1 content import
 
 The repository does not vendor the full 595-word dataset or audio. A deterministic importer reads
-explicit Git checkouts, records both commit hashes in the content revision, separates readings from
-lexemes, creates representative sentences and two initial vocabulary card directions, and emits an
-idempotent SQL file.
+explicit Git checkouts, records both commit hashes plus a SHA-256 digest of the selected normalized
+content in the content revision, separates readings from lexemes, creates representative sentences
+and two initial vocabulary card directions, and emits an idempotent SQL file. Consequently, a
+partial `--levels`/`--limit` import and a later expanded import produce distinct pull-sync changes,
+while an identical rerun does not.
 
 ```sh
 bun run import:v1 -- \
@@ -85,8 +93,11 @@ bun run import:v1 -- \
 bunx wrangler d1 execute chinese-learning --local --file .generated/v1-import.sql
 ```
 
-Use pinned source checkouts for repeatable output. A two-lexeme fixture proves the importer against
-D1 without making full content migration part of the test suite. See
+Use pinned source checkouts for repeatable output. The importer refuses to read a contributing JSON
+path that is modified, deleted, staged differently, or untracked relative to the recorded `HEAD`;
+unrelated checkout edits do not affect provenance validation. After migrations and import, new
+scheduled cards use the bootstrap scheduler ID documented above. A two-lexeme fixture proves this
+fresh setup against D1 without making full content migration part of the test suite. See
 [Third-party notices](docs/THIRD_PARTY_NOTICES.md) for provenance and licensing boundaries.
 
 ## License

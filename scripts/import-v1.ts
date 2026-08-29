@@ -16,18 +16,21 @@ async function main(): Promise<void> {
   const options = parseArguments(Bun.argv.slice(2));
   const vocabularyVersion = gitHead(options.vocabularyRoot);
   const v1Version = gitHead(options.v1Root);
+  const vocabularyPaths = options.levels.map((level) => `wordlists/exclusive/old/${level}.json`);
+  const enrichmentPath = "data/llm_generated.json";
+
+  assertCleanImportedPaths(options.vocabularyRoot, vocabularyPaths, vocabularyVersion);
+  assertCleanImportedPaths(options.v1Root, [enrichmentPath], v1Version);
   const lexemes: V1SourceLexeme[] = [];
 
-  for (const level of options.levels) {
-    const path = join(options.vocabularyRoot, "wordlists", "exclusive", "old", `${level}.json`);
+  for (const [index, level] of options.levels.entries()) {
+    const path = join(options.vocabularyRoot, vocabularyPaths[index] ?? "");
     const entries = parseSourceLexemes(await Bun.file(path).json(), level);
     lexemes.push(...entries);
   }
   const selectedLexemes = options.limit === undefined ? lexemes : lexemes.slice(0, options.limit);
-  const enrichments = parseEnrichments(
-    await Bun.file(join(options.v1Root, "data", "llm_generated.json")).json(),
-  );
-  const sql = buildV1ImportSql({
+  const enrichments = parseEnrichments(await Bun.file(join(options.v1Root, enrichmentPath)).json());
+  const sql = await buildV1ImportSql({
     lexemes: selectedLexemes,
     enrichments,
     vocabularyVersion,
@@ -89,6 +92,33 @@ function gitHead(directory: string): string {
     throw new Error(`source directory is not a readable Git checkout: ${directory}`);
   }
   return new TextDecoder().decode(result.stdout).trim();
+}
+
+export function assertCleanImportedPaths(
+  directory: string,
+  relativePaths: string[],
+  revision: string,
+): void {
+  const result = Bun.spawnSync([
+    "git",
+    "-C",
+    directory,
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--",
+    ...relativePaths,
+  ]);
+  if (result.exitCode !== 0) {
+    throw new Error(`could not verify imported source paths in Git checkout: ${directory}`);
+  }
+
+  const dirtyPaths = new TextDecoder().decode(result.stdout).trim();
+  if (dirtyPaths) {
+    throw new Error(
+      `refusing to attribute modified imported source paths to ${revision} in ${directory}:\n${dirtyPaths}`,
+    );
+  }
 }
 
 function parseSourceLexemes(value: unknown, hskLevel: number): V1SourceLexeme[] {
