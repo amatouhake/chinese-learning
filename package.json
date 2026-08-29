@@ -16,12 +16,14 @@
     "cf-types": "wrangler types --env-interface CloudflareBindings",
     "cf-types:check": "wrangler types --env-interface CloudflareBindings --check",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
+    "test": "bun test tests/unit",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:migrate:local": "wrangler d1 migrations apply chinese-learning --local"
   },
   "dependencies": {
     "hono": "^4.13.5",
-    "ts-fsrs": "^5.4.1"
+    "ts-fsrs": "5.4.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.1.2",

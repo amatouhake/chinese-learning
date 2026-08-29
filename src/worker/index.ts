@@ -1,5 +1,8 @@
 import { Hono } from "hono";
 
+import { ConcurrencyConflictError, DomainConflictError, ingestAttempt } from "../db/ingestion";
+import { parseAttemptInput } from "../domain/validation";
+
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 
 app.get("/api/health", (context) =>
@@ -8,6 +11,28 @@ app.get("/api/health", (context) =>
     service: "chinese-learning",
   }),
 );
+
+app.post("/api/attempts", async (context) => {
+  let input;
+  try {
+    input = parseAttemptInput(await context.req.json<unknown>());
+  } catch (error) {
+    return context.json(
+      { error: error instanceof Error ? error.message : "invalid attempt body" },
+      400,
+    );
+  }
+
+  try {
+    const result = await ingestAttempt(context.env.DB, input);
+    return context.json(result, result.disposition === "inserted" ? 201 : 200);
+  } catch (error) {
+    if (error instanceof DomainConflictError || error instanceof ConcurrencyConflictError) {
+      return context.json({ error: error.message }, 409);
+    }
+    throw error;
+  }
+});
 
 app.all("/mcp", (context) =>
   context.json(
