@@ -28,6 +28,7 @@ Prerequisites: [Bun 1.4.x](https://bun.sh/) and no production Cloudflare credent
 
 ```sh
 bun install --frozen-lockfile
+cp .dev.vars.example .dev.vars # replace the placeholder with a private random token
 bun run cf-types
 bun run db:migrate:local
 ```
@@ -47,6 +48,12 @@ bun run build             # Vite build + Wrangler dry-run Worker bundle; does no
 
 Wrangler stores local D1 data under `.wrangler/`, which is ignored. No deploy script or CI deploy
 is configured.
+
+`POST /api/attempts` is fail-closed and requires
+`Authorization: Bearer <ATTEMPT_WRITE_TOKEN>`. Wrangler declares this as a required encrypted
+secret; local development reads the private value from `.dev.vars`, while CI uses only a disposable
+test value. Health and the reserved MCP boundary do not require this token. Production Cloudflare
+Access remains a separate deferred deployment concern rather than being assumed by the Worker.
 
 ## Durable learning model
 
@@ -83,6 +90,12 @@ content in the content revision, separates readings from lexemes, creates repres
 and two initial vocabulary card directions, and emits an idempotent SQL file. Consequently, a
 partial `--levels`/`--limit` import and a later expanded import produce distinct pull-sync changes,
 while an identical rerun does not.
+
+Once revision B supersedes revision A, rerunning A is a content no-op: it cannot rewrite rows or
+move `learner_settings.current_content_revision` backward without a new cursor. Within a lexeme,
+source readings absent from the newer normalized content are demoted and retired rather than left
+active or destructively deleted; current readings are reactivated if they return in a later valid
+revision.
 
 ```sh
 bun run import:v1 -- \

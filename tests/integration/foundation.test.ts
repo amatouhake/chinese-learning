@@ -129,7 +129,12 @@ describe("D1 learning foundation", () => {
 
     await applyImport(full);
     const fullCursor = (await scalar("SELECT MAX(seq) FROM server_changes")) ?? 0;
+    const fullRevision = await scalar(
+      "SELECT revision FROM content_revisions WHERE source_version = ?",
+      fullIdentity.sourceVersion,
+    );
     expect(fullCursor).toBeGreaterThan(partialCursor);
+    expect(fullRevision).not.toBeNull();
     expect(
       await scalar(
         "SELECT COUNT(*) FROM server_changes WHERE change_id = ?",
@@ -143,6 +148,18 @@ describe("D1 learning foundation", () => {
         fullIdentity.changeId,
       ),
     ).toBe(1);
+
+    await applyImport(partial);
+    expect(await scalar("SELECT MAX(seq) FROM server_changes")).toBe(fullCursor);
+    expect(
+      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+    ).toBe(fullRevision);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM lexemes WHERE simplified LIKE '测scope%' AND content_revision = ?",
+        fullRevision ?? -1,
+      ),
+    ).toBe(2);
   });
 
   test("a revised import atomically changes the one preferred reading", async () => {
@@ -199,6 +216,72 @@ describe("D1 learning foundation", () => {
     expect(
       await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
     ).toBe(revisedRevision);
+  });
+
+  test("a revised import retires source readings that are no longer present", async () => {
+    const [lexeme] = scopedLexemes("removed");
+    if (!lexeme) throw new Error("missing removed-reading test fixture");
+    const initial = {
+      lexemes: [lexeme],
+      enrichments: [],
+      vocabularyVersion: "removed-vocabulary-commit-a",
+      v1Version: "removed-v1-commit",
+      createdAt: timestamp("09:00"),
+    } satisfies V1ImportInput;
+    const remainingForm = lexeme.forms[1];
+    if (!remainingForm) throw new Error("missing remaining reading test fixture");
+    const revised = {
+      ...initial,
+      vocabularyVersion: "removed-vocabulary-commit-b",
+      lexemes: [{ ...lexeme, forms: [remainingForm] }],
+    } satisfies V1ImportInput;
+    const revisedIdentity = await deriveV1ImportIdentity(revised);
+
+    await applyImport(initial);
+    await applyImport(revised);
+
+    const revisedRevision = await scalar(
+      "SELECT revision FROM content_revisions WHERE source_version = ?",
+      revisedIdentity.sourceVersion,
+    );
+    const readings = await env.DB.prepare(
+      `SELECT numeric_pinyin, is_preferred, retired_at, content_revision
+         FROM lexeme_readings
+         WHERE lexeme_id = ?
+         ORDER BY numeric_pinyin`,
+    )
+      .bind(`lexeme:complete-hsk:${encodeURIComponent(lexeme.simplified)}`)
+      .all<{
+        numeric_pinyin: string;
+        is_preferred: number;
+        retired_at: number | null;
+        content_revision: number;
+      }>();
+    expect(readings.results).toEqual([
+      {
+        numeric_pinyin: "removed1",
+        is_preferred: 0,
+        retired_at: timestamp("09:00"),
+        content_revision: revisedRevision,
+      },
+      {
+        numeric_pinyin: "removed2",
+        is_preferred: 1,
+        retired_at: null,
+        content_revision: revisedRevision,
+      },
+    ]);
+    expect(
+      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+    ).toBe(revisedRevision);
+    await expect(
+      env.DB.prepare(
+        `UPDATE lexeme_readings SET is_preferred = 1
+           WHERE lexeme_id = ? AND numeric_pinyin = 'removed1'`,
+      )
+        .bind(`lexeme:complete-hsk:${encodeURIComponent(lexeme.simplified)}`)
+        .run(),
+    ).rejects.toThrow("retired reading cannot be preferred");
   });
 
   test("normal scheduling persists an immutable attempt, 1:1 review, and card state", async () => {

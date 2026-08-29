@@ -62,6 +62,12 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
   const revision = `(SELECT revision FROM content_revisions WHERE source = ${sqlText(
     IMPORT_SOURCE,
   )} AND source_version = ${sqlText(identity.sourceVersion)})`;
+  const importAllowed = `(
+    NOT EXISTS (
+      SELECT 1 FROM server_changes WHERE change_id = ${sqlText(identity.changeId)}
+    )
+    OR (SELECT current_content_revision FROM learner_settings WHERE singleton = 1) = ${revision}
+  )`;
   const enrichmentBySimplified = new Map(
     input.enrichments.map((enrichment) => [enrichment.simplified, enrichment]),
   );
@@ -81,13 +87,13 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
 
   for (const level of [...new Set(input.lexemes.map((lexeme) => lexeme.hskLevel))].sort()) {
     statements.push(`INSERT INTO tags (id, kind, label, source, content_revision)
-      VALUES (
+      SELECT
         ${sqlText(`tag:hsk-2.0:${level}`)},
         'hsk-2.0',
         ${sqlText(`level-${level}`)},
         'complete-hsk-vocabulary',
         ${revision}
-      )
+      WHERE ${importAllowed}
       ON CONFLICT(kind, label) DO UPDATE SET
         source = excluded.source,
         content_revision = excluded.content_revision;`);
@@ -104,11 +110,12 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
     }
     const preferredTraditional = lexeme.forms[0]?.traditional ?? lexeme.simplified;
     const readings = uniqueReadings(lexeme, lexemeId);
+    const currentReadingIds = readings.map((reading) => sqlText(reading.id)).join(", ");
 
     statements.push(`INSERT INTO lexemes
       (id, simplified, traditional, meanings_json, pos_json, frequency_rank,
        source, source_ref, metadata_json, content_revision, created_at, updated_at)
-     VALUES (
+     SELECT
        ${sqlText(lexemeId)},
        ${sqlText(lexeme.simplified)},
        ${sqlText(preferredTraditional)},
@@ -121,7 +128,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
        ${revision},
        ${createdAt},
        ${createdAt}
-     )
+     WHERE ${importAllowed}
      ON CONFLICT(id) DO UPDATE SET
        simplified = excluded.simplified,
        traditional = excluded.traditional,
@@ -138,8 +145,8 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
       statements.push(`INSERT INTO lexeme_readings
         (id, lexeme_id, pinyin, numeric_pinyin, normalized_syllables_json,
          is_preferred, form_scope, sense_scope, source, source_ref,
-         metadata_json, content_revision, created_at)
-       VALUES (
+         metadata_json, content_revision, created_at, retired_at)
+       SELECT
          ${sqlText(reading.id)},
          ${sqlText(lexemeId)},
          ${sqlText(reading.form.transcriptions.pinyin)},
@@ -152,8 +159,9 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          'https://github.com/drkameleon/complete-hsk-vocabulary',
          '{}',
          ${revision},
-         ${createdAt}
-       )
+         ${createdAt},
+         NULL
+       WHERE ${importAllowed}
        ON CONFLICT(id) DO UPDATE SET
          pinyin = excluded.pinyin,
          numeric_pinyin = excluded.numeric_pinyin,
@@ -162,19 +170,31 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          sense_scope = excluded.sense_scope,
          source = excluded.source,
          source_ref = excluded.source_ref,
-         content_revision = excluded.content_revision;`);
+         content_revision = excluded.content_revision,
+         retired_at = NULL;`);
     }
 
     statements.push(`UPDATE lexeme_readings
       SET is_preferred = 1
-      WHERE id = ${sqlText(readings[0]?.id)};`);
+      WHERE id = ${sqlText(readings[0]?.id)}
+        AND ${importAllowed};`);
+
+    statements.push(`UPDATE lexeme_readings
+      SET
+        is_preferred = 0,
+        retired_at = MAX(created_at, ${createdAt}),
+        content_revision = ${revision}
+      WHERE lexeme_id = ${sqlText(lexemeId)}
+        AND source = 'complete-hsk-vocabulary'
+        AND id NOT IN (${currentReadingIds})
+        AND ${importAllowed};`);
 
     statements.push(`INSERT INTO lexeme_tags (lexeme_id, tag_id, content_revision)
-      VALUES (
+      SELECT
         ${sqlText(lexemeId)},
         ${sqlText(`tag:hsk-2.0:${lexeme.hskLevel}`)},
         ${revision}
-      )
+      WHERE ${importAllowed}
       ON CONFLICT(lexeme_id, tag_id) DO UPDATE SET
         content_revision = excluded.content_revision;`);
 
@@ -183,7 +203,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
       statements.push(`INSERT INTO sentences
         (id, chinese, pinyin, meaning_ja, meaning_en, source, source_ref,
          metadata_json, content_revision, created_at)
-       VALUES (
+       SELECT
          ${sqlText(sentenceId)},
          ${sqlText(enrichment.example_zh)},
          ${sqlText(enrichment.example_pinyin)},
@@ -194,7 +214,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          ${sqlText(JSON.stringify({ generatedBy: "LLM", reviewStatus: "unreviewed" }))},
          ${revision},
          ${createdAt}
-       )
+       WHERE ${importAllowed}
        ON CONFLICT(id) DO UPDATE SET
          chinese = excluded.chinese,
          pinyin = excluded.pinyin,
@@ -204,14 +224,14 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          content_revision = excluded.content_revision;`);
       statements.push(`INSERT INTO sentence_lexemes
         (sentence_id, lexeme_id, lexeme_reading_id, position, role, content_revision)
-       VALUES (
+       SELECT
          ${sqlText(sentenceId)},
          ${sqlText(lexemeId)},
          ${sqlText(readings[0]?.id)},
          0,
          'target',
          ${revision}
-       )
+       WHERE ${importAllowed}
        ON CONFLICT(sentence_id, lexeme_id, position) DO UPDATE SET
          lexeme_reading_id = excluded.lexeme_reading_id,
          role = excluded.role,
@@ -223,7 +243,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
       statements.push(`INSERT INTO cards
         (id, subject_type, lexeme_id, activity_type, scheduler_eligible,
          content_revision, created_at)
-       VALUES (
+       SELECT
          ${sqlText(cardId)},
          'lexeme',
          ${sqlText(lexemeId)},
@@ -231,29 +251,31 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          1,
          ${revision},
          ${createdAt}
-       )
+       WHERE ${importAllowed}
        ON CONFLICT(id) DO UPDATE SET
          content_revision = excluded.content_revision,
          retired_at = NULL;`);
       statements.push(`INSERT OR IGNORE INTO card_state
         (card_id, due_at, rebuilt_at)
-       VALUES (${sqlText(cardId)}, ${createdAt}, ${createdAt});`);
+       SELECT ${sqlText(cardId)}, ${createdAt}, ${createdAt}
+       WHERE ${importAllowed};`);
     }
   }
 
+  statements.push(`UPDATE learner_settings
+    SET current_content_revision = ${revision}, updated_at = ${createdAt}
+    WHERE singleton = 1
+      AND ${importAllowed};`);
   statements.push(`INSERT OR IGNORE INTO server_changes
     (change_id, entity_type, entity_id, operation, content_revision, changed_at)
-   VALUES (
+   SELECT
      ${sqlText(identity.changeId)},
      'content',
      'content-revision:' || CAST(${revision} AS TEXT),
      'upsert',
      ${revision},
      ${createdAt}
-   );`);
-  statements.push(`UPDATE learner_settings
-    SET current_content_revision = ${revision}, updated_at = ${createdAt}
-    WHERE singleton = 1;`);
+   WHERE ${importAllowed};`);
 
   return statements;
 }
