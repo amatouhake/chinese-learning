@@ -7,7 +7,11 @@ import {
   createFsrsParameters,
   replayFsrsHistory,
 } from "../../src/domain/fsrs";
-import { compareCanonicalReviews, normalizeUtcInstant } from "../../src/domain/ordering";
+import {
+  compareCanonicalReviews,
+  normalizeUtcInstant,
+  semanticOrderKey,
+} from "../../src/domain/ordering";
 import type { CanonicalFsrsReview, SchedulerConfig } from "../../src/domain/types";
 
 const configX = schedulerConfig("config-x", 0.8, 30);
@@ -40,6 +44,32 @@ describe("canonical FSRS replay", () => {
     expect(
       [astral, privateUseBmp].sort(compareCanonicalReviews).map((review) => review.deviceId),
     ).toEqual([privateUseBmp.deviceId, astral.deviceId]);
+  });
+
+  test("semantic order keys preserve tuple order for delimiter control characters", () => {
+    const base: CanonicalFsrsReview = {
+      eventId: "event-a",
+      cardId: "card-1",
+      deviceId: "a",
+      deviceSeq: 1,
+      occurredAt: Date.parse("2026-08-29T10:00:00Z"),
+      rating: 1,
+      schedulerConfigId: configX.id,
+    };
+    const prefixedDevice = { ...base, eventId: "event-b", deviceId: "a\u001f!" };
+    const reviews = [prefixedDevice, base];
+    const tupleOrder = [...reviews].sort(compareCanonicalReviews).map((review) => review.eventId);
+    const keyOrder = [...reviews]
+      .sort((left, right) => {
+        const leftKey = semanticOrderKey(left);
+        const rightKey = semanticOrderKey(right);
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      })
+      .map((review) => review.eventId);
+
+    expect(tupleOrder).toEqual([base.eventId, prefixedDevice.eventId]);
+    expect(keyOrder).toEqual(tupleOrder);
+    expect(new Set(reviews.map(semanticOrderKey)).size).toBe(reviews.length);
   });
 
   test("rebuilds the same state from the same immutable inputs in any arrival order", () => {

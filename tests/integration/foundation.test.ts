@@ -10,7 +10,7 @@ import {
   createFsrsParameters,
   replayFsrsHistory,
 } from "../../src/domain/fsrs";
-import { compareCanonicalReviews } from "../../src/domain/ordering";
+import { compareCanonicalReviews, semanticOrderKey } from "../../src/domain/ordering";
 import type {
   AttemptInput,
   CanonicalFsrsReview,
@@ -429,6 +429,52 @@ describe("D1 learning foundation", () => {
     ).toBe(1);
   });
 
+  test("an import reuses an existing HSK tag's noncanonical ID", async () => {
+    const [lexeme] = scopedLexemes("hsk-tag-id-conflict");
+    if (!lexeme) throw new Error("missing HSK tag identity test fixture");
+    const importedLexeme = { ...lexeme, hskLevel: 97 };
+    const input = {
+      lexemes: [importedLexeme],
+      enrichments: [],
+      vocabularyVersion: "hsk-tag-id-conflict-vocabulary-commit",
+      v1Version: "hsk-tag-id-conflict-v1-commit",
+      createdAt: timestamp("10:00"),
+    } satisfies V1ImportInput;
+    const identity = await deriveV1ImportIdentity(input);
+    const legacyTagId = "tag:legacy:hsk-2.0:97";
+    const seedRevisionResult = await env.DB.prepare(
+      `INSERT INTO content_revisions (source, source_version, description, created_at)
+       VALUES ('integration-test', 'hsk-tag-id-conflict-seed', 'test fixture', ?)`,
+    )
+      .bind(timestamp("09:00"))
+      .run();
+
+    await env.DB.prepare(
+      `INSERT INTO tags (id, kind, label, source, content_revision)
+       VALUES (?, 'hsk-2.0', 'level-97', 'legacy-import', ?)`,
+    )
+      .bind(legacyTagId, Number(seedRevisionResult.meta.last_row_id))
+      .run();
+
+    await applyImport(input);
+
+    const lexemeId = `lexeme:complete-hsk:${encodeURIComponent(importedLexeme.simplified)}`;
+    expect(
+      await env.DB.prepare(
+        `SELECT t.id, t.kind, t.label
+         FROM lexeme_tags lt
+         JOIN tags t ON t.id = lt.tag_id
+         WHERE lt.lexeme_id = ? AND t.kind = 'hsk-2.0'`,
+      )
+        .bind(lexemeId)
+        .first<{ id: string; kind: string; label: string }>(),
+    ).toEqual({ id: legacyTagId, kind: "hsk-2.0", label: "level-97" });
+    expect(await scalar("SELECT COUNT(*) FROM tags WHERE id = 'tag:hsk-2.0:97'")).toBe(0);
+    expect(
+      await scalar("SELECT COUNT(*) FROM server_changes WHERE change_id = ?", identity.changeId),
+    ).toBe(1);
+  });
+
   test("a revised import retires an omitted generated example and can reactivate it", async () => {
     const [lexeme] = scopedLexemes("example-lifecycle");
     if (!lexeme) throw new Error("missing example lifecycle test fixture");
@@ -710,6 +756,52 @@ describe("D1 learning foundation", () => {
       astral.eventId,
     ]);
     expect(domainOrder).toEqual(sqlOrder.results.map((row) => row.event_id));
+    expect(project(await stateFor(fixture.cardId))).toEqual(
+      replayFsrsHistory(reviews, new Map([[fixture.config.id, fixture.config]])),
+    );
+  });
+
+  test("encoded review keys preserve D1 tuple order for control characters", async () => {
+    const fixture = await seedScheduledCard("control-order");
+    const occurredAt = "2026-08-29T10:00:00Z";
+    const prefixedDevice = scheduledInput(fixture, "control-prefixed", occurredAt, 1, {
+      deviceId: "a\u001f!",
+      rating: 4,
+    });
+    const prefixDevice = scheduledInput(fixture, "control-prefix", occurredAt, 1, {
+      deviceId: "a",
+      rating: 1,
+    });
+
+    await ingestAttempt(env.DB, prefixedDevice, { now: () => timestamp("10:01") });
+    await ingestAttempt(env.DB, prefixDevice, { now: () => timestamp("10:02") });
+
+    const byTuple = await env.DB.prepare(
+      `SELECT event_id FROM attempts
+       WHERE card_id = ?
+       ORDER BY occurred_at, device_id, device_seq, event_id`,
+    )
+      .bind(fixture.cardId)
+      .all<{ event_id: string }>();
+    const byKey = await env.DB.prepare(
+      `SELECT r.attempt_id, r.semantic_order_key
+       FROM fsrs_reviews r
+       WHERE r.card_id = ?
+       ORDER BY r.semantic_order_key`,
+    )
+      .bind(fixture.cardId)
+      .all<{ attempt_id: string; semantic_order_key: string }>();
+    const reviews = [canonical(prefixedDevice), canonical(prefixDevice)];
+    const expectedOrder = [prefixDevice.eventId, prefixedDevice.eventId];
+
+    expect(byTuple.results.map((row) => row.event_id)).toEqual(expectedOrder);
+    expect(byKey.results.map((row) => row.attempt_id)).toEqual(expectedOrder);
+    expect(new Set(byKey.results.map((row) => row.semantic_order_key)).size).toBe(2);
+    expect(byKey.results.map((row) => row.semantic_order_key)).toEqual(
+      expectedOrder.map((eventId) =>
+        semanticOrderKey(reviews.find((review) => review.eventId === eventId)!),
+      ),
+    );
     expect(project(await stateFor(fixture.cardId))).toEqual(
       replayFsrsHistory(reviews, new Map([[fixture.config.id, fixture.config]])),
     );

@@ -67,7 +67,13 @@ export function compareCanonicalReviews(
 export function semanticOrderKey(review: CanonicalFsrsReview): string {
   const instant = review.occurredAt.toString().padStart(16, "0");
   const deviceSequence = review.deviceSeq.toString().padStart(20, "0");
-  return `${instant}\u001f${review.deviceId}\u001f${deviceSequence}\u001f${review.eventId}`;
+  return `${instant}\u001f${encodeOrderText(review.deviceId)}\u001f${deviceSequence}\u001f${encodeOrderText(review.eventId)}`;
+}
+
+function encodeOrderText(value: string): string {
+  return Array.from(UTF8_ENCODER.encode(value), (byte) =>
+    byte.toString(16).padStart(2, "0").toUpperCase(),
+  ).join("");
 }
 
 function compareText(left: string, right: string): number {

@@ -108,7 +108,8 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
     const preferredTraditional = lexeme.forms[0]?.traditional ?? lexeme.simplified;
     const readings = uniqueReadings(lexeme, lexemeId);
     const currentReadingIds = readings.map((reading) => sqlText(reading.id)).join(", ");
-    const hskTagId = `tag:hsk-2.0:${lexeme.hskLevel}`;
+    const hskTagId = `(SELECT id FROM tags
+      WHERE kind = 'hsk-2.0' AND label = ${sqlText(`level-${lexeme.hskLevel}`)})`;
     const sentenceId = `sentence:v1:${encodeIdPart(lexeme.simplified)}`;
 
     statements.push(`INSERT INTO lexemes
@@ -194,14 +195,14 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
           SELECT id FROM tags
           WHERE kind = 'hsk-2.0'
             AND source = 'complete-hsk-vocabulary'
-            AND id <> ${sqlText(hskTagId)}
+            AND id <> ${hskTagId}
         )
         AND ${importAllowed};`);
 
     statements.push(`INSERT INTO lexeme_tags (lexeme_id, tag_id, content_revision)
       SELECT
         ${sqlText(lexemeId)},
-        ${sqlText(hskTagId)},
+        ${hskTagId},
         ${revision}
       WHERE ${importAllowed}
       ON CONFLICT(lexeme_id, tag_id) DO UPDATE SET
