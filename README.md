@@ -90,7 +90,8 @@ complete client pull/cache UX is not implemented yet.
 The repository does not vendor the full 595-word dataset or audio. A deterministic importer reads
 explicit Git checkouts, records both commit hashes plus a SHA-256 digest of the selected normalized
 content in the content revision, separates readings from lexemes, creates representative sentences
-and two initial vocabulary card directions, and emits an idempotent SQL file. Consequently, a
+and two initial vocabulary card directions, and emits an idempotent SQL file. Duplicate enrichment
+identities are rejected before revision hashing or SQL generation. Consequently, a
 partial `--levels`/`--limit` import and a later expanded import produce distinct pull-sync changes,
 while an identical rerun does not.
 

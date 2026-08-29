@@ -567,6 +567,57 @@ describe("D1 learning foundation", () => {
     );
   });
 
+  test("projection metadata keeps the maximum scheduled and practice attempt timestamp", async () => {
+    const fixture = await seedScheduledCard("projection-max");
+    await env.DB.prepare(
+      "UPDATE projection_state SET dirty = 0, last_attempt_at = NULL WHERE singleton = 1",
+    ).run();
+
+    const scheduledNoon = scheduledInput(
+      fixture,
+      "projection-scheduled-noon",
+      "2026-08-29T12:00:00Z",
+      2,
+      { deviceId: "projection-scheduled-device" },
+    );
+    const scheduledEleven = scheduledInput(
+      fixture,
+      "projection-scheduled-eleven",
+      "2026-08-29T11:00:00Z",
+      1,
+      { deviceId: "projection-scheduled-device", rating: 2 },
+    );
+    await ingestAttempt(env.DB, scheduledNoon, { now: () => timestamp("12:01") });
+    await ingestAttempt(env.DB, scheduledEleven, { now: () => timestamp("13:00") });
+    expect(await scalar("SELECT last_attempt_at FROM projection_state WHERE singleton = 1")).toBe(
+      timestamp("12:00"),
+    );
+
+    await env.DB.prepare(
+      "UPDATE projection_state SET dirty = 0, last_attempt_at = NULL WHERE singleton = 1",
+    ).run();
+    const practiceFourteen: AttemptInput = {
+      ...scheduledInput(fixture, "projection-practice-fourteen", "2026-08-29T14:00:00Z", 2, {
+        deviceId: "projection-practice-device",
+      }),
+      mode: "reflex",
+      fsrsReview: undefined,
+    };
+    const practiceThirteen: AttemptInput = {
+      ...scheduledInput(fixture, "projection-practice-thirteen", "2026-08-29T13:00:00Z", 1, {
+        deviceId: "projection-practice-device",
+      }),
+      mode: "reflex",
+      fsrsReview: undefined,
+    };
+    await ingestAttempt(env.DB, practiceFourteen, { now: () => timestamp("14:01") });
+    await ingestAttempt(env.DB, practiceThirteen, { now: () => timestamp("15:00") });
+    expect(await scalar("SELECT last_attempt_at FROM projection_state WHERE singleton = 1")).toBe(
+      timestamp("14:00"),
+    );
+    expect(await scalar("SELECT dirty FROM projection_state WHERE singleton = 1")).toBe(1);
+  });
+
   test("Unicode review tie-breaks match D1 BINARY order", async () => {
     const fixture = await seedScheduledCard("unicode-order");
     const occurredAt = "2026-08-29T10:00:00Z";

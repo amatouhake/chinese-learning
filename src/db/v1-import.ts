@@ -437,6 +437,14 @@ function validateImportInput(input: V1ImportInput): void {
       throw new Error("every source lexeme needs a positive HSK level");
     }
   }
+
+  const enrichmentIdentities = new Set<string>();
+  for (const enrichment of input.enrichments) {
+    if (enrichmentIdentities.has(enrichment.simplified)) {
+      throw new Error(`duplicate enrichment identity: ${enrichment.simplified}`);
+    }
+    enrichmentIdentities.add(enrichment.simplified);
+  }
 }
 
 function encodeIdPart(value: string): string {

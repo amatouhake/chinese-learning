@@ -231,8 +231,16 @@ async function insertUnscheduledAttempt(
       .bind(changeId, input.eventId, receivedAt),
     attemptInsert(db, input, occurredAt, receivedAt, changeId),
     db
-      .prepare("UPDATE projection_state SET dirty = 1, last_attempt_at = ? WHERE singleton = 1")
-      .bind(occurredAt),
+      .prepare(
+        `UPDATE projection_state SET
+          dirty = 1,
+          last_attempt_at = CASE
+            WHEN last_attempt_at IS NULL OR last_attempt_at < ? THEN ?
+            ELSE last_attempt_at
+          END
+         WHERE singleton = 1`,
+      )
+      .bind(occurredAt, occurredAt),
   ];
 
   if (options.forceFailureAfterWrites) {
@@ -319,8 +327,16 @@ async function insertScheduledAttempt(
       .bind(guardId),
     db.prepare("DELETE FROM atomic_write_guards WHERE guard_id = ?").bind(guardId),
     db
-      .prepare("UPDATE projection_state SET dirty = 1, last_attempt_at = ? WHERE singleton = 1")
-      .bind(review.occurredAt),
+      .prepare(
+        `UPDATE projection_state SET
+          dirty = 1,
+          last_attempt_at = CASE
+            WHEN last_attempt_at IS NULL OR last_attempt_at < ? THEN ?
+            ELSE last_attempt_at
+          END
+         WHERE singleton = 1`,
+      )
+      .bind(review.occurredAt, review.occurredAt),
   ];
 
   if (options.forceFailureAfterWrites) {
