@@ -92,6 +92,7 @@ typings/
 # Private learning data and local exports
 private-data/
 exports/private/
+.generated/
 *.learning-export.*
 *.learning-history.*
 

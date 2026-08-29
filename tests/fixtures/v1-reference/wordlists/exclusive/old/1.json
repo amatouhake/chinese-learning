@@ -1,0 +1,31 @@
+[
+  {
+    "simplified": "爱",
+    "frequency": 130,
+    "pos": ["v", "vn", "b"],
+    "forms": [
+      {
+        "traditional": "愛",
+        "transcriptions": { "pinyin": "ài", "numeric": "ai4" },
+        "meanings": ["to love; to be fond of; to like", "affection"]
+      }
+    ]
+  },
+  {
+    "simplified": "大",
+    "frequency": 66,
+    "pos": ["a", "d", "n", "g"],
+    "forms": [
+      {
+        "traditional": "大",
+        "transcriptions": { "pinyin": "dà", "numeric": "da4" },
+        "meanings": ["big; large; great"]
+      },
+      {
+        "traditional": "大",
+        "transcriptions": { "pinyin": "dài", "numeric": "dai4" },
+        "meanings": ["see 夫"]
+      }
+    ]
+  }
+]

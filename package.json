@@ -17,9 +17,12 @@
     "cf-types:check": "wrangler types --env-interface CloudflareBindings --check",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
     "test": "bun test tests/unit",
+    "test:integration": "vitest run --config vitest.config.ts",
+    "test:all": "bun run test && bun run test:integration",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "db:migrate:local": "wrangler d1 migrations apply chinese-learning --local"
+    "db:migrate:local": "wrangler d1 migrations apply chinese-learning --local",
+    "import:v1": "bun run scripts/import-v1.ts"
   },
   "dependencies": {
     "hono": "^4.13.5",

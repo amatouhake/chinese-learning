@@ -14,7 +14,7 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022",
-    "types": ["@types/bun", "vite/client"]
+    "types": ["@types/bun", "@cloudflare/vitest-plugin/types", "vite/client"]
   },
   "include": [
     "src/**/*.ts",
