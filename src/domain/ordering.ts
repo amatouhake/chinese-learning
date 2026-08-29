@@ -1,15 +1,16 @@
 import type { CanonicalFsrsReview } from "./types";
+import { InvalidInputError } from "./errors";
 
 const UTC_OFFSET_SUFFIX = /(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export function normalizeUtcInstant(value: string): number {
   if (!UTC_OFFSET_SUFFIX.test(value)) {
-    throw new Error("occurredAt must include Z or an explicit UTC offset");
+    throw new InvalidInputError("occurredAt must include Z or an explicit UTC offset");
   }
 
   const milliseconds = Date.parse(value);
   if (!Number.isFinite(milliseconds) || milliseconds < 0) {
-    throw new Error("occurredAt must be a valid non-negative UTC instant");
+    throw new InvalidInputError("occurredAt must be a valid non-negative UTC instant");
   }
 
   return milliseconds;

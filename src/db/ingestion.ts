@@ -5,6 +5,12 @@ import {
   parseFsrsParameters,
   replayFsrsHistory,
 } from "../domain/fsrs";
+import {
+  ConcurrencyConflictError,
+  ConflictError,
+  InvalidInputError,
+  ReferenceNotFoundError,
+} from "../domain/errors";
 import { normalizeUtcInstant, semanticOrderKey } from "../domain/ordering";
 import type {
   AttemptInput,
@@ -16,20 +22,6 @@ import type {
 } from "../domain/types";
 
 const MAX_CONCURRENCY_RETRIES = 3;
-
-export class DomainConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DomainConflictError";
-  }
-}
-
-export class ConcurrencyConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConcurrencyConflictError";
-  }
-}
 
 export interface IngestOptions {
   now?: () => number;
@@ -106,6 +98,10 @@ interface SchedulerConfigRow {
   desired_retention: number;
 }
 
+interface AttemptIdentityRow {
+  event_id: string;
+}
+
 export async function ingestAttempt(
   db: D1Database,
   input: AttemptInput,
@@ -121,15 +117,17 @@ export async function ingestAttempt(
   for (let attemptNumber = 0; attemptNumber < MAX_CONCURRENCY_RETRIES; attemptNumber += 1) {
     const existing = await findAttempt(db, input.eventId);
     if (existing) return duplicateResult(db, existing, input, occurredAt);
+    await assertDeviceSequenceAvailable(db, input);
+    await assertStudySessionExists(db, input.studySessionId);
 
     const card = await db
       .prepare("SELECT id, activity_type, scheduler_eligible FROM cards WHERE id = ?")
       .bind(input.cardId)
       .first<CardRow>();
 
-    if (!card) throw new Error(`unknown card: ${input.cardId}`);
+    if (!card) throw new ReferenceNotFoundError("card", input.cardId);
     if (card.activity_type !== input.activityType) {
-      throw new Error("attempt activity does not match its card");
+      throw new InvalidInputError("attempt activity does not match its card");
     }
 
     if (!input.fsrsReview) {
@@ -147,12 +145,13 @@ export async function ingestAttempt(
       } catch (error) {
         const duplicate = await findAttempt(db, input.eventId);
         if (duplicate) return duplicateResult(db, duplicate, input, occurredAt);
+        await assertDeviceSequenceAvailable(db, input);
         throw error;
       }
     }
 
     if (card.scheduler_eligible !== 1) {
-      throw new Error("FSRS review requires a scheduler-eligible card");
+      throw new InvalidInputError("FSRS review requires a scheduler-eligible card");
     }
 
     const currentState = await getCardState(db, input.cardId);
@@ -200,6 +199,7 @@ export async function ingestAttempt(
     } catch (error) {
       const duplicate = await findAttempt(db, input.eventId);
       if (duplicate) return duplicateResult(db, duplicate, input, occurredAt);
+      await assertDeviceSequenceAvailable(db, input);
       if (options.forceFailureAfterWrites) throw error;
 
       const latestState = await getCardState(db, input.cardId);
@@ -428,7 +428,7 @@ function assertDuplicatePayload(
     existing.scheduler_config_id === (input.fsrsReview?.schedulerConfigId ?? null);
 
   if (!same) {
-    throw new DomainConflictError("event_id already exists with a different immutable payload");
+    throw new ConflictError("event_id already exists with a different immutable payload");
   }
 }
 
@@ -500,7 +500,7 @@ async function loadSchedulerConfig(db: D1Database, id: string): Promise<Schedule
     )
     .bind(id)
     .first<SchedulerConfigRow>();
-  if (!row) throw new Error(`unknown scheduler config: ${id}`);
+  if (!row) throw new ReferenceNotFoundError("scheduler config", id);
   return schedulerConfigFromRow(row);
 }
 
@@ -549,18 +549,42 @@ function mapCardState(row: CardStateRow): MaterializedCardState {
 
 function validateAttempt(input: AttemptInput): void {
   if (!input.eventId.trim() || !input.deviceId.trim() || !input.cardId.trim()) {
-    throw new Error("event, device, and card IDs must be non-empty");
+    throw new InvalidInputError("event, device, and card IDs must be non-empty");
   }
   if (!Number.isSafeInteger(input.deviceSeq) || input.deviceSeq <= 0) {
-    throw new Error("device sequence must be a positive safe integer");
+    throw new InvalidInputError("device sequence must be a positive safe integer");
   }
   if (
     input.responseMs !== undefined &&
     (!Number.isInteger(input.responseMs) || input.responseMs < 0)
   ) {
-    throw new Error("response time must be a non-negative integer");
+    throw new InvalidInputError("response time must be a non-negative integer");
   }
   canonicalJson(input.metadata ?? {});
+}
+
+async function assertDeviceSequenceAvailable(db: D1Database, input: AttemptInput): Promise<void> {
+  const owner = await db
+    .prepare("SELECT event_id FROM attempts WHERE device_id = ? AND device_seq = ?")
+    .bind(input.deviceId, input.deviceSeq)
+    .first<AttemptIdentityRow>();
+  if (owner && owner.event_id !== input.eventId) {
+    throw new ConflictError(
+      `device sequence ${input.deviceId}/${input.deviceSeq} already belongs to another event`,
+    );
+  }
+}
+
+async function assertStudySessionExists(
+  db: D1Database,
+  studySessionId: string | undefined,
+): Promise<void> {
+  if (studySessionId === undefined) return;
+  const session = await db
+    .prepare("SELECT id FROM study_sessions WHERE id = ?")
+    .bind(studySessionId)
+    .first<{ id: string }>();
+  if (!session) throw new ReferenceNotFoundError("study session", studySessionId);
 }
 
 function requireRating(value: number): 1 | 2 | 3 | 4 {

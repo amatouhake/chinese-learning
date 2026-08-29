@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 
-import { ConcurrencyConflictError, DomainConflictError, ingestAttempt } from "../db/ingestion";
+import { ingestAttempt } from "../db/ingestion";
+import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
 import { parseAttemptInput } from "../domain/validation";
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
@@ -18,7 +19,10 @@ app.post("/api/attempts", async (context) => {
     input = parseAttemptInput(await context.req.json<unknown>());
   } catch (error) {
     return context.json(
-      { error: error instanceof Error ? error.message : "invalid attempt body" },
+      {
+        error: error instanceof Error ? error.message : "invalid attempt body",
+        code: "invalid_input",
+      },
       400,
     );
   }
@@ -27,8 +31,14 @@ app.post("/api/attempts", async (context) => {
     const result = await ingestAttempt(context.env.DB, input);
     return context.json(result, result.disposition === "inserted" ? 201 : 200);
   } catch (error) {
-    if (error instanceof DomainConflictError || error instanceof ConcurrencyConflictError) {
-      return context.json({ error: error.message }, 409);
+    if (error instanceof InvalidInputError) {
+      return context.json({ error: error.message, code: error.code }, 400);
+    }
+    if (error instanceof ReferenceNotFoundError) {
+      return context.json({ error: error.message, code: error.code }, 404);
+    }
+    if (error instanceof ConflictError) {
+      return context.json({ error: error.message, code: error.code }, 409);
     }
     throw error;
   }

@@ -436,8 +436,57 @@ describe("D1 learning foundation", () => {
     };
     await expect(
       ingestAttempt(env.DB, reusedSequence, { now: () => timestamp("14:00") }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("already belongs to another event");
     expect((await stateFor(fixture.cardId)).version).toBe(1);
+  });
+
+  test("Worker maps invalid input, missing references, and sequence conflicts to 4xx", async () => {
+    const invalidTimestamp = await postAttempt({
+      eventId: "http-invalid-time",
+      deviceId: "http-invalid-device",
+      deviceSeq: 1,
+      occurredAt: "not-a-dateZ",
+      cardId: "missing-card",
+      mode: "study",
+      activityType: "hanzi_to_meaning",
+    });
+    expect(invalidTimestamp.status).toBe(400);
+    await expect(invalidTimestamp.json()).resolves.toMatchObject({ code: "invalid_input" });
+
+    const missingCard = await postAttempt({
+      eventId: "http-missing-card",
+      deviceId: "http-missing-card-device",
+      deviceSeq: 1,
+      occurredAt: "2026-08-29T10:00:00Z",
+      cardId: "card-that-does-not-exist",
+      mode: "study",
+      activityType: "hanzi_to_meaning",
+    });
+    expect(missingCard.status).toBe(404);
+    await expect(missingCard.json()).resolves.toMatchObject({ code: "reference_not_found" });
+
+    const fixture = await seedScheduledCard("http-errors");
+    const missingConfigInput = scheduledInput(
+      fixture,
+      "http-missing-config",
+      "2026-08-29T10:00:00Z",
+      1,
+    );
+    if (!missingConfigInput.fsrsReview) throw new Error("missing HTTP test review");
+    missingConfigInput.fsrsReview.schedulerConfigId = "config-that-does-not-exist";
+    const missingConfig = await postAttempt(missingConfigInput);
+    expect(missingConfig.status).toBe(404);
+    await expect(missingConfig.json()).resolves.toMatchObject({ code: "reference_not_found" });
+    expect(await count("attempts", "event_id", missingConfigInput.eventId)).toBe(0);
+
+    const first = scheduledInput(fixture, "http-sequence-first", "2026-08-29T10:00:00Z", 1);
+    const firstResponse = await postAttempt(first);
+    expect(firstResponse.status).toBe(201);
+    const reused = scheduledInput(fixture, "http-sequence-reused", "2026-08-29T11:00:00Z", 1);
+    const reusedResponse = await postAttempt(reused);
+    expect(reusedResponse.status).toBe(409);
+    await expect(reusedResponse.json()).resolves.toMatchObject({ code: "conflict" });
+    expect(await count("attempts", "event_id", reused.eventId)).toBe(0);
   });
 
   test("Hono Worker exposes the API and reserved MCP boundaries in workerd", async () => {
@@ -632,6 +681,16 @@ async function applyImport(input: V1ImportInput): Promise<void> {
     statements
       .filter((statement) => !statement.startsWith("PRAGMA"))
       .map((statement) => env.DB.prepare(statement)),
+  );
+}
+
+function postAttempt(input: AttemptInput): Promise<Response> {
+  return exports.default.fetch(
+    new Request("https://example.test/api/attempts", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }),
   );
 }
 
