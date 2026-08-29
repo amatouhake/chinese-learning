@@ -59,6 +59,14 @@ describe("canonical FSRS replay", () => {
     );
     expect(() => normalizeUtcInstant("2026-08-29T10:00:00")).toThrow("explicit UTC offset");
   });
+
+  test("rejects calendar rollover while accepting a valid leap day", () => {
+    expect(() => normalizeUtcInstant("2026-02-30T00:00:00Z")).toThrow("invalid calendar");
+    expect(() => normalizeUtcInstant("2025-02-29T00:00:00+09:00")).toThrow("invalid calendar");
+    expect(normalizeUtcInstant("2024-02-29T00:00:00.123Z")).toBe(
+      Date.parse("2024-02-29T00:00:00.123Z"),
+    );
+  });
 });
 
 function schedulerConfig(id: string, retention: number, maximumInterval: number): SchedulerConfig {

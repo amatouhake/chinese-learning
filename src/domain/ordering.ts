@@ -1,11 +1,37 @@
-import type { CanonicalFsrsReview } from "./types";
 import { InvalidInputError } from "./errors";
+import type { CanonicalFsrsReview } from "./types";
 
-const UTC_OFFSET_SUFFIX = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const ISO_INSTANT =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
 export function normalizeUtcInstant(value: string): number {
-  if (!UTC_OFFSET_SUFFIX.test(value)) {
-    throw new InvalidInputError("occurredAt must include Z or an explicit UTC offset");
+  const match = ISO_INSTANT.exec(value);
+  if (!match) {
+    throw new InvalidInputError(
+      "occurredAt must be an ISO instant with seconds and Z or an explicit UTC offset",
+    );
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[8] === undefined ? 0 : Number(match[9]);
+  const offsetMinute = match[8] === undefined ? 0 : Number(match[10]);
+  const validCalendar =
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth(year, month) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHour <= 23 &&
+    offsetMinute <= 59;
+  if (!validCalendar) {
+    throw new InvalidInputError("occurredAt contains an invalid calendar or time field");
   }
 
   const milliseconds = Date.parse(value);
@@ -14,6 +40,15 @@ export function normalizeUtcInstant(value: string): number {
   }
 
   return milliseconds;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return isLeapYear(year) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }
 
 export function compareCanonicalReviews(

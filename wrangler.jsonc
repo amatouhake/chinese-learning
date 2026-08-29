@@ -4,6 +4,9 @@
   "main": "./src/worker/index.ts",
   "compatibility_date": "2026-08-29",
   "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": ["ATTEMPT_WRITE_TOKEN"],
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

@@ -453,6 +453,32 @@ describe("D1 learning foundation", () => {
     expect(invalidTimestamp.status).toBe(400);
     await expect(invalidTimestamp.json()).resolves.toMatchObject({ code: "invalid_input" });
 
+    const invalidCalendar = await postAttempt({
+      eventId: "http-invalid-calendar",
+      deviceId: "http-invalid-calendar-device",
+      deviceSeq: 1,
+      occurredAt: "2026-02-30T00:00:00Z",
+      cardId: "missing-card",
+      mode: "study",
+      activityType: "hanzi_to_meaning",
+    });
+    expect(invalidCalendar.status).toBe(400);
+    await expect(invalidCalendar.json()).resolves.toMatchObject({ code: "invalid_input" });
+
+    const unsafeInteger = await postAttempt({
+      eventId: "http-unsafe-integer",
+      deviceId: "http-unsafe-integer-device",
+      deviceSeq: 1,
+      occurredAt: "2026-08-29T10:00:00Z",
+      cardId: "missing-card",
+      mode: "study",
+      activityType: "hanzi_to_meaning",
+      responseMs: 1e100,
+      expectedCardStateVersion: 1e100,
+    });
+    expect(unsafeInteger.status).toBe(400);
+    await expect(unsafeInteger.json()).resolves.toMatchObject({ code: "invalid_input" });
+
     const missingCard = await postAttempt({
       eventId: "http-missing-card",
       deviceId: "http-missing-card-device",
@@ -487,6 +513,24 @@ describe("D1 learning foundation", () => {
     expect(reusedResponse.status).toBe(409);
     await expect(reusedResponse.json()).resolves.toMatchObject({ code: "conflict" });
     expect(await count("attempts", "event_id", reused.eventId)).toBe(0);
+  });
+
+  test("Worker requires the configured bearer token before immutable attempt writes", async () => {
+    const fixture = await seedScheduledCard("http-auth");
+    const input = scheduledInput(fixture, "http-auth-event", "2026-08-29T10:00:00Z", 1);
+
+    const missing = await postAttempt(input, null);
+    expect(missing.status).toBe(401);
+    expect(missing.headers.get("www-authenticate")).toBe("Bearer");
+
+    const incorrect = await postAttempt(input, "Bearer incorrect-token");
+    expect(incorrect.status).toBe(401);
+    await expect(incorrect.json()).resolves.toMatchObject({ code: "unauthorized" });
+    expect(await count("attempts", "event_id", input.eventId)).toBe(0);
+
+    const authorized = await postAttempt(input);
+    expect(authorized.status).toBe(201);
+    expect(await count("attempts", "event_id", input.eventId)).toBe(1);
   });
 
   test("Hono Worker exposes the API and reserved MCP boundaries in workerd", async () => {
@@ -684,11 +728,16 @@ async function applyImport(input: V1ImportInput): Promise<void> {
   );
 }
 
-function postAttempt(input: AttemptInput): Promise<Response> {
+function postAttempt(
+  input: AttemptInput,
+  authorization: string | null = "Bearer integration-test-write-token",
+): Promise<Response> {
+  const headers = new Headers({ "content-type": "application/json" });
+  if (authorization !== null) headers.set("authorization", authorization);
   return exports.default.fetch(
     new Request("https://example.test/api/attempts", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(input),
     }),
   );

@@ -556,7 +556,7 @@ function validateAttempt(input: AttemptInput): void {
   }
   if (
     input.responseMs !== undefined &&
-    (!Number.isInteger(input.responseMs) || input.responseMs < 0)
+    (!Number.isSafeInteger(input.responseMs) || input.responseMs < 0)
   ) {
     throw new InvalidInputError("response time must be a non-negative integer");
   }

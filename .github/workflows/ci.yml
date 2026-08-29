@@ -11,6 +11,8 @@ jobs:
   foundation:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      ATTEMPT_WRITE_TOKEN: ci-only-build-placeholder
     steps:
       - name: Check out repository
         uses: actions/checkout@v5

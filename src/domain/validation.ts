@@ -11,7 +11,7 @@ export function parseAttemptInput(value: unknown): AttemptInput {
   const cardId = requiredText(value.cardId, "cardId");
   const occurredAt = requiredText(value.occurredAt, "occurredAt");
 
-  if (!isPositiveInteger(value.deviceSeq)) {
+  if (!isPositiveSafeInteger(value.deviceSeq)) {
     throw new InvalidInputError("deviceSeq must be a positive integer");
   }
   if (!isPracticeMode(value.mode)) {
@@ -50,13 +50,13 @@ export function parseAttemptInput(value: unknown): AttemptInput {
     input.selfRating = value.selfRating;
   }
   if (value.responseMs !== undefined) {
-    if (!isNonNegativeInteger(value.responseMs)) {
+    if (!isNonNegativeSafeInteger(value.responseMs)) {
       throw new InvalidInputError("responseMs must be a non-negative integer");
     }
     input.responseMs = value.responseMs;
   }
   if (value.expectedCardStateVersion !== undefined) {
-    if (!isNonNegativeInteger(value.expectedCardStateVersion)) {
+    if (!isNonNegativeSafeInteger(value.expectedCardStateVersion)) {
       throw new InvalidInputError("expectedCardStateVersion must be a non-negative integer");
     }
     input.expectedCardStateVersion = value.expectedCardStateVersion;
@@ -102,12 +102,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function isNonNegativeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {

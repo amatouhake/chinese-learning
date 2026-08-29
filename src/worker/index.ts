@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { ingestAttempt } from "../db/ingestion";
 import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
 import { parseAttemptInput } from "../domain/validation";
+import { authorizeAttemptWrite } from "./auth";
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 
@@ -14,6 +15,22 @@ app.get("/api/health", (context) =>
 );
 
 app.post("/api/attempts", async (context) => {
+  const authorization = await authorizeAttemptWrite(
+    context.req.header("authorization"),
+    context.env.ATTEMPT_WRITE_TOKEN,
+  );
+  if (authorization === "unconfigured") {
+    return context.json(
+      { error: "Attempt write authentication is not configured", code: "auth_unconfigured" },
+      503,
+    );
+  }
+  if (authorization === "unauthorized") {
+    context.header("WWW-Authenticate", "Bearer");
+    context.header("Cache-Control", "no-store");
+    return context.json({ error: "Unauthorized", code: "unauthorized" }, 401);
+  }
+
   let input;
   try {
     input = parseAttemptInput(await context.req.json<unknown>());
