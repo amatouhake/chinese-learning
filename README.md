@@ -67,6 +67,9 @@ Fresh migrations bootstrap the current scheduler as
 (including disabled fuzz), desired retention, and implementation identity are persisted by the
 migration. A scheduled attempt must still carry this exact ID (or another existing immutable
 configuration ID); ingestion never substitutes whichever configuration is currently selected.
+Every persisted scheduler configuration is append-only immediately, so an ID already issued to an
+offline client cannot change or disappear before its first review synchronizes. Selecting a current
+configuration may change; optimizing scheduler semantics requires a new configuration ID.
 
 `attempts` is canonical append-only activity history. Only an attempt carrying an intentional FSRS
 review gets a 1:1 `fsrs_reviews` row. Canonical replay order is `occurred_at`, then binary

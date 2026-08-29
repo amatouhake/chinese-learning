@@ -636,6 +636,40 @@ describe("D1 learning foundation", () => {
     expect(usingX).not.toEqual(usingY);
   });
 
+  test("a persisted scheduler config is immutable before its first synced review", async () => {
+    const fixture = await seedScheduledCard("issued-config");
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM fsrs_reviews WHERE scheduler_config_id = ?",
+        fixture.config.id,
+      ),
+    ).toBe(0);
+
+    await expect(
+      env.DB.prepare("UPDATE scheduler_configs SET desired_retention = 0.7 WHERE id = ?")
+        .bind(fixture.config.id)
+        .run(),
+    ).rejects.toThrow("identity and semantics are immutable");
+    await expect(
+      env.DB.prepare("UPDATE scheduler_configs SET id = ? WHERE id = ?")
+        .bind(`${fixture.config.id}-changed`, fixture.config.id)
+        .run(),
+    ).rejects.toThrow("identity and semantics are immutable");
+    await expect(
+      env.DB.prepare("DELETE FROM scheduler_configs WHERE id = ?").bind(fixture.config.id).run(),
+    ).rejects.toThrow("scheduler configs cannot be deleted");
+
+    await env.DB.prepare("UPDATE scheduler_configs SET is_current = 0 WHERE id = ?")
+      .bind(fixture.config.id)
+      .run();
+    await env.DB.prepare("UPDATE scheduler_configs SET is_current = 1 WHERE id = ?")
+      .bind(fixture.config.id)
+      .run();
+    expect(
+      await scalar("SELECT is_current FROM scheduler_configs WHERE id = ?", fixture.config.id),
+    ).toBe(1);
+  });
+
   test("D1 batch rollback leaves no partial attempt, review, state, cursor, or guard", async () => {
     const fixture = await seedScheduledCard("atomic");
     const input = scheduledInput(fixture, "atomic-failure", "2026-08-29T10:00:00Z", 1);
