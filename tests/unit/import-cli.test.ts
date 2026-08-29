@@ -83,6 +83,48 @@ test("v1 import rejects unsupported options before writing output", async () => 
   }
 });
 
+test("v1 import rejects an ignored untracked contributing source file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chinese-learning-import-ignored-"));
+  const vocabularyRoot = join(root, "vocabulary");
+  const v1Root = join(root, "v1");
+  const vocabularyPath = join(vocabularyRoot, "wordlists/exclusive/old/1.json");
+  const enrichmentPath = join(v1Root, "data/llm_generated.json");
+  const output = join(root, "generated/import.sql");
+
+  try {
+    await mkdir(dirname(vocabularyPath), { recursive: true });
+    await mkdir(dirname(enrichmentPath), { recursive: true });
+    await writeFile(vocabularyPath, JSON.stringify([sourceLexeme("略")]));
+    await writeFile(join(vocabularyRoot, ".gitignore"), "wordlists/exclusive/old/1.json\n");
+    await writeFile(enrichmentPath, "[]");
+    initializeGitCheckout(vocabularyRoot);
+    initializeGitCheckout(v1Root);
+
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        "run",
+        "scripts/import-v1.ts",
+        "--vocabulary-root",
+        vocabularyRoot,
+        "--v1-root",
+        v1Root,
+        "--levels",
+        "1",
+        "--output",
+        output,
+      ],
+      { cwd: projectRoot },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(result.stderr)).toContain("source path is not tracked at");
+    await expect(stat(output)).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function initializeGitCheckout(directory: string): void {
   runGit(directory, "init", "--quiet");
   runGit(directory, "config", "user.name", "Import Test");

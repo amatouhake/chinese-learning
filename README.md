@@ -97,7 +97,8 @@ and two initial vocabulary card directions, and emits an idempotent SQL file. Du
 enrichment identities and unsupported CLI options are rejected before revision hashing or SQL
 generation. Consequently, a
 partial `--levels`/`--limit` import and a later expanded import produce distinct pull-sync changes,
-while an identical rerun does not.
+while an identical rerun is a complete database no-op even if its non-identity creation timestamp
+differs.
 
 Once revision B supersedes revision A, rerunning A is a content no-op: it cannot rewrite rows or
 move `learner_settings.current_content_revision` backward without a new cursor. Within a lexeme,
@@ -116,9 +117,10 @@ bun run import:v1 -- \
 bunx wrangler d1 execute chinese-learning --local --file .generated/v1-import.sql
 ```
 
-Use pinned source checkouts for repeatable output. The importer refuses to read a contributing JSON
-path that is modified, deleted, staged differently, or untracked relative to the recorded `HEAD`;
-unrelated checkout edits do not affect provenance validation. After migrations and import, new
+Use pinned source checkouts for repeatable output. Every contributing JSON path must be tracked at
+the recorded `HEAD`; the importer then refuses paths that are modified, deleted, staged differently,
+or untracked, including ignored untracked files. Unrelated checkout edits do not affect provenance
+validation. After migrations and import, new
 scheduled cards use the bootstrap scheduler ID documented above. A two-lexeme fixture proves this
 fresh setup against D1 without making full content migration part of the test suite. See
 [Third-party notices](docs/THIRD_PARTY_NOTICES.md) for provenance and licensing boundaries.

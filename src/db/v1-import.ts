@@ -62,11 +62,8 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
   const revision = `(SELECT revision FROM content_revisions WHERE source = ${sqlText(
     IMPORT_SOURCE,
   )} AND source_version = ${sqlText(identity.sourceVersion)})`;
-  const importAllowed = `(
-    NOT EXISTS (
-      SELECT 1 FROM server_changes WHERE change_id = ${sqlText(identity.changeId)}
-    )
-    OR (SELECT current_content_revision FROM learner_settings WHERE singleton = 1) = ${revision}
+  const importAllowed = `NOT EXISTS (
+    SELECT 1 FROM server_changes WHERE change_id = ${sqlText(identity.changeId)}
   )`;
   const enrichmentBySimplified = new Map(
     input.enrichments.map((enrichment) => [enrichment.simplified, enrichment]),

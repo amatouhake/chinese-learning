@@ -113,6 +113,20 @@ export function assertCleanImportedPaths(
   relativePaths: string[],
   revision: string,
 ): void {
+  for (const relativePath of relativePaths) {
+    const tracked = Bun.spawnSync([
+      "git",
+      "-C",
+      directory,
+      "cat-file",
+      "-e",
+      `${revision}:${relativePath}`,
+    ]);
+    if (tracked.exitCode !== 0) {
+      throw new Error(`source path is not tracked at ${revision} in ${directory}: ${relativePath}`);
+    }
+  }
+
   const result = Bun.spawnSync([
     "git",
     "-C",

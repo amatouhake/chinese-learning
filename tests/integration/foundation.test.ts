@@ -163,6 +163,68 @@ describe("D1 learning foundation", () => {
     ).toBe(2);
   });
 
+  test("a completed content import is a true no-op when only createdAt changes", async () => {
+    const [lexeme] = scopedLexemes("completed-noop");
+    if (!lexeme) throw new Error("missing completed-import test fixture");
+    const initial = {
+      lexemes: [lexeme],
+      enrichments: [],
+      vocabularyVersion: "completed-noop-vocabulary-commit",
+      v1Version: "completed-noop-v1-commit",
+      createdAt: timestamp("09:00"),
+    } satisfies V1ImportInput;
+    const regenerated = { ...initial, createdAt: timestamp("16:00") } satisfies V1ImportInput;
+    const initialIdentity = await deriveV1ImportIdentity(initial);
+    const regeneratedIdentity = await deriveV1ImportIdentity(regenerated);
+    const lexemeId = `lexeme:complete-hsk:${encodeURIComponent(lexeme.simplified)}`;
+
+    expect(regeneratedIdentity).toEqual(initialIdentity);
+    await applyImport(initial);
+    const snapshot = await env.DB.prepare(
+      `SELECT
+         l.updated_at AS lexeme_updated_at,
+         cr.created_at AS revision_created_at,
+         ls.updated_at AS settings_updated_at,
+         ls.current_content_revision
+       FROM lexemes l
+       JOIN learner_settings ls ON ls.singleton = 1
+       JOIN content_revisions cr ON cr.revision = ls.current_content_revision
+       WHERE l.id = ?`,
+    )
+      .bind(lexemeId)
+      .first<{
+        lexeme_updated_at: number;
+        revision_created_at: number;
+        settings_updated_at: number;
+        current_content_revision: number;
+      }>();
+    const cursor = await scalar("SELECT MAX(seq) FROM server_changes");
+
+    await applyImport(regenerated);
+    expect(
+      await env.DB.prepare(
+        `SELECT
+           l.updated_at AS lexeme_updated_at,
+           cr.created_at AS revision_created_at,
+           ls.updated_at AS settings_updated_at,
+           ls.current_content_revision
+         FROM lexemes l
+         JOIN learner_settings ls ON ls.singleton = 1
+         JOIN content_revisions cr ON cr.revision = ls.current_content_revision
+         WHERE l.id = ?`,
+      )
+        .bind(lexemeId)
+        .first(),
+    ).toEqual(snapshot);
+    expect(await scalar("SELECT MAX(seq) FROM server_changes")).toBe(cursor);
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM server_changes WHERE change_id = ?",
+        initialIdentity.changeId,
+      ),
+    ).toBe(1);
+  });
+
   test("a revised import atomically changes the one preferred reading", async () => {
     const [lexeme] = scopedLexemes("preferred");
     if (!lexeme) throw new Error("missing preferred-reading test fixture");
