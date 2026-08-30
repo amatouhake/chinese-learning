@@ -392,6 +392,53 @@ describe("pronunciation foundation", () => {
     ).rejects.toThrow("require pronunciation mode");
   });
 
+  test("accepts an immutable offline tone fact after its exact reading is retired", async () => {
+    await applyPronunciationFixture();
+    await createPronunciationSession(env.DB, {
+      sessionId: "retired-offline-session",
+      deviceId: "retired-offline-device",
+      focus: "tones",
+      maxItems: 1,
+    });
+    const cached = await getNextPronunciationCard(
+      env.DB,
+      "retired-offline-session",
+      "retired-offline-device",
+    );
+    if (!cached.card?.answerChoiceId) throw new Error("missing cached tone card");
+
+    await env.DB.batch([
+      env.DB.prepare("UPDATE cards SET retired_at = created_at WHERE id = ?").bind(
+        cached.card.cardId,
+      ),
+      env.DB.prepare(
+        "UPDATE lexeme_readings SET retired_at = created_at, is_preferred = 0 WHERE id = ?",
+      ).bind(cached.card.readingId),
+    ]);
+
+    const saved = await ingestAttempt(env.DB, {
+      eventId: "retired-offline-event",
+      deviceId: "retired-offline-device",
+      deviceSeq: 1,
+      occurredAt: "2026-08-30T04:30:00Z",
+      cardId: cached.card.cardId,
+      studySessionId: "retired-offline-session",
+      mode: "pronunciation",
+      activityType: cached.card.activityType,
+      correct: true,
+      metadata: {
+        interaction: "choice",
+        selectedChoiceId: cached.card.answerChoiceId,
+        readingId: cached.card.readingId,
+      },
+    });
+
+    expect(saved).toMatchObject({ reviewCreated: false, cardState: null });
+    expect(
+      await scalar("SELECT COUNT(*) FROM fsrs_reviews WHERE attempt_id = 'retired-offline-event'"),
+    ).toBe(0);
+  });
+
   test("resumes the same presentation, advances durably, and completes through the Worker API", async () => {
     await applyPronunciationFixture();
     const created = await localJson("/api/pronunciation/sessions", {
