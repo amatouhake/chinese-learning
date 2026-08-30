@@ -1,12 +1,13 @@
 # Chinese Learning
 
-A locally usable, offline-sync-ready Chinese vocabulary application. The first study slice imports
-the complete HSK 2.0 Level 1–3 corpus, serves due/new cards through a small Worker API, and records
-reveal-and-rate reviews through immutable attempts plus exact-config FSRS reviews on Cloudflare D1.
+A locally usable, offline-sync-ready Chinese vocabulary and beginner pronunciation application. It
+imports the complete HSK 2.0 Level 1–3 corpus, serves due/new vocabulary through a small Worker API,
+and records both scheduled FSRS reviews and ordinary pronunciation practice as immutable attempts.
 
-This is intentionally the first usable slice, not the whole product. Pronunciation, reading,
-grammar, dashboard, Notion projection, PWA media sync, and Remote MCP product surfaces remain
-deferred.
+The pronunciation surface covers pinyin recognition and recall, dictionary-tone identification,
+two-syllable tone pairs, source-audio perception where the recording can be mapped safely, and
+speak–compare–self-rate production. Reading, grammar, dashboard, Notion projection, offline PWA
+media sync, and Remote MCP product surfaces remain deferred.
 
 ## Stack and topology
 
@@ -19,14 +20,16 @@ deferred.
 Routes are split as follows:
 
 - `/` — Svelte SPA through Worker Static Assets
-- `/api/*` — Hono Worker API (health, study sessions/card acquisition, canonical attempts)
+- `/api/*` — Hono Worker API (vocabulary and pronunciation sessions, canonical attempts)
 - `/mcp` — reserved Worker boundary; currently returns `501`
 
 ## Fresh local setup
 
 Prerequisites: [Bun 1.4.x](https://bun.sh/), Git, and no production Cloudflare credentials.
 
-Clone the two content sources outside this repository and pin the revisions used by the importer:
+Clone the three content sources outside this repository and pin the revisions used by the
+importers. `audio-cmn` remains outside the application repository; only the 429 conservatively
+mapped files are copied into the ignored local staging directory.
 
 ```sh
 git clone https://github.com/drkameleon/complete-hsk-vocabulary.git /tmp/chinese-learning-complete-hsk-vocabulary
@@ -34,6 +37,10 @@ git -C /tmp/chinese-learning-complete-hsk-vocabulary checkout 7ac65bf1a6387d35f1
 
 git clone https://github.com/amatouhake/why-learn-languages-when-we-have-llms-lol.git /tmp/chinese-learning-v1-source
 git -C /tmp/chinese-learning-v1-source checkout 6bd4b8dfc45a97fdeca20efeeab0d6d81d236847
+
+git clone --filter=blob:none --sparse https://github.com/hugolpz/audio-cmn.git /tmp/chinese-learning-audio-cmn
+git -C /tmp/chinese-learning-audio-cmn sparse-checkout set 64k/hsk README.md
+git -C /tmp/chinese-learning-audio-cmn checkout ff9ed3d0c631195bd2c06f39450f3264c7124040
 ```
 
 Install, migrate a fresh local D1 database, and import the corpus:
@@ -49,14 +56,19 @@ bun run import:v1 -- \
   --v1-root /tmp/chinese-learning-v1-source \
   --output .generated/v1-import.sql
 bunx wrangler d1 execute chinese-learning --local --file .generated/v1-import.sql
+bun run import:pronunciation -- \
+  --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
+  --audio-root /tmp/chinese-learning-audio-cmn
+bunx wrangler d1 execute chinese-learning --local --file .generated/pronunciation-import.sql
 bun run dev:worker
 ```
 
 Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page immediately
-starts a 10-card study session: due cards are selected first, followed by deterministic new cards.
-Reveal the answer, rate it with the four FSRS choices, and continue. Space/Enter reveals on a
-keyboard; 1–4 submit Again/Hard/Good/Easy. `bun run dev` serves only the Vite frontend, so use
-`bun run dev:worker` for the real D1-backed flow.
+offers separate Study and Pronunciation tabs. Vocabulary starts a 10-card session: due cards are
+selected first, followed by deterministic new cards. Reveal the answer, rate it with the four FSRS
+choices, and continue. Pronunciation starts from a low-friction focus chooser and offers repeatable
+audio plus a compact sound-system reference. `bun run dev` serves only the Vite frontend, so use
+`bun run dev:worker` for the real D1-backed flow and staged media.
 
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
 when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
@@ -73,11 +85,18 @@ deploy is configured.
 bun run typecheck
 bun run test              # fast Bun domain/browser tests
 bun run test:integration  # workerd/Miniflare tests with a real D1 binding
+bun run test:browser      # bounded phone/desktop dogfood against imported local D1/media
 bun run test:all
 bun run format:check
 bun run cf-types:check
 bun run build             # Vite build + Wrangler dry-run Worker bundle; does not deploy
 ```
+
+Install the browser binary once with
+`PLAYWRIGHT_BROWSERS_PATH=.generated/playwright-browsers bunx playwright install chromium` before
+running `test:browser`. The browser test starts the real local Worker, completes a mixed ten-item
+phone session, verifies staged media responses, checks an exact reading of the polyphonic `的`, and
+inspects the complete tone-pair grid and reference at desktop size.
 
 To re-run the exact full-corpus gate against an isolated temporary D1 database (without touching
 the app's local study data):
@@ -86,12 +105,57 @@ the app's local study data):
 bun run verify:full-import -- \
   --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
   --v1-root /tmp/chinese-learning-v1-source
+
+bun run verify:pronunciation -- \
+  --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
+  --v1-root /tmp/chinese-learning-v1-source \
+  --audio-root /tmp/chinese-learning-audio-cmn
 ```
 
 The pinned corpus produces 595 lexemes (150/147/298 for Levels 1/2/3), 800 active readings, 595
 examples, and 1,190 scheduled vocabulary cards with 1,190 initial card states. The verifier also
 checks representative vocabulary, the current scheduler, the single content-change marker, and
 the commit-plus-content-digest provenance identity.
+
+The pinned pronunciation sources produce 800 exact-reading pinyin cards in each direction, 435
+single-tone cards, 346 exact two-syllable tone-pair cards, 858 audio-perception cards, and 800
+production cards: 4,039 non-scheduled cards in total. Of 595 Hanzi-keyed source-audio lookups, 429
+are reliable, 140 are reading-ambiguous, and 26 are missing. The pronunciation verifier recreates
+both imports and a fresh D1 database, verifies every staged audio file against its pinned Git blob,
+and locks those coverage counts. Its JSON output lists every ambiguous and missing item for review.
+It also reports 141 multi-reading lexemes and 51 cases where the upstream first form is a capitalized
+proper-name reading (for example `还` starts with surname `Huán`), so source order is never treated as
+a verified beginner-reading choice.
+
+## Pronunciation practice model
+
+Pronunciation content and attempts always identify a concrete `lexeme_reading`. Pinyin, tones,
+senses, choices, and media are selected through that reading; a lexeme-level meaning or recording
+is never silently borrowed for another pronunciation. Numeric source pinyin accepts both tone `0`
+and tone `5` as neutral tone internally, and a tone pair is offered only when exactly two complete
+syllable tones can be derived. The UI calls these dictionary tones and gives a brief tone-sandhi
+warning rather than pretending to grade connected speech.
+
+The source audio is named by Hanzi, not reading. A recording is therefore mapped only when that
+lexeme has exactly one active reading in the imported corpus. A present file for a multi-reading
+lexeme is reported as ambiguous and receives neither a media mapping nor audio cards. Missing or
+unplayable audio does not block pinyin, tone, or production prompts; production falls back to a
+text comparison. Each accepted recording has a stable media ID derived from the pinned source
+commit, Hanzi identity, and byte digest. Cards and attempts reference the reading, while the media
+delivery key is replaceable later, keeping future R2 hosting outside learning identity.
+
+Every pronunciation activity in this milestone is ordinary, non-FSRS practice:
+`hanzi_to_pinyin`, `pinyin_to_hanzi`, `tone_identification`, `tone_pair_identification`,
+`audio_to_hanzi`, `audio_to_meaning`, and `pronunciation_production`. Objective activities persist
+binary correctness separately from the chosen answer; production persists only a 1–4 self-rating.
+None creates an FSRS review or mutates `card_state`. The existing vocabulary directions remain the
+only scheduled activities and continue to use Again/Hard/Good/Easy solely as FSRS ratings.
+Ordinary attempt history still provides lightweight rotation: least-practiced cards come first,
+then the oldest practice, single-reading lexemes, HSK level, and frequency. A session avoids
+repeating the same lexeme while alternatives exist. This keeps new sessions moving through useful
+beginner material without turning pronunciation into a scheduler. Multi-reading cards remain
+available with exact sense hints after the unambiguous foundation rather than being silently
+collapsed or promoted according to unreliable source ordering.
 
 ## Vocabulary study flow
 

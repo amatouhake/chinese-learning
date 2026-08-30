@@ -18,12 +18,15 @@
     "typecheck": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
     "test": "bun test tests/unit",
     "test:integration": "vitest run --config vitest.config.ts",
+    "test:browser": "PLAYWRIGHT_BROWSERS_PATH=.generated/playwright-browsers playwright test",
     "test:all": "bun run test && bun run test:integration",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:migrate:local": "wrangler d1 migrations apply chinese-learning --local",
     "import:v1": "bun run scripts/import-v1.ts",
-    "verify:full-import": "bun run scripts/verify-full-import.ts"
+    "import:pronunciation": "bun run scripts/import-pronunciation.ts",
+    "verify:full-import": "bun run scripts/verify-full-import.ts",
+    "verify:pronunciation": "bun run scripts/verify-pronunciation.ts"
   },
   "dependencies": {
     "hono": "^4.13.5",
@@ -31,6 +34,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.1.2",
+    "@playwright/test": "^1.62.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@types/bun": "^1.4.0",
     "@types/node": "^26.4.0",
