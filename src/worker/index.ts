@@ -3,6 +3,7 @@ import { Hono, type Context } from "hono";
 import { ingestAttempt } from "../db/ingestion";
 import { createPronunciationSession, getNextPronunciationCard } from "../db/pronunciation";
 import { createStudySession, getNextStudyCard } from "../db/study";
+import { pullSyncChanges } from "../db/sync";
 import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
 import { parseCreateStudySessionInput, parseNextStudyCardInput } from "../domain/study-validation";
 import {
@@ -10,6 +11,7 @@ import {
   parseNextPronunciationCardInput,
 } from "../domain/pronunciation-validation";
 import { parseAttemptInput } from "../domain/validation";
+import { parseSyncPullInput } from "../domain/sync-validation";
 import { authorizeStudyWrite } from "./auth";
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
@@ -135,6 +137,25 @@ app.post("/api/pronunciation/sessions/:sessionId/next", async (context) => {
       input.deviceId,
     );
     return context.json(result);
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
+});
+
+app.post("/api/sync/pull", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    const input = parseSyncPullInput(await readJsonBody(context));
+    return context.json(await pullSyncChanges(context.env.DB, input));
   } catch (error) {
     const response = domainError(context, error);
     if (response) return response;

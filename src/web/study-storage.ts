@@ -260,7 +260,7 @@ function requireCurrentStateForStaging(state: BrowserStudyState, latest: Browser
   }
 }
 
-function parseBrowserStudyState(json: string): BrowserStudyState {
+export function parseBrowserStudyState(json: string): BrowserStudyState {
   let value: unknown;
   try {
     value = JSON.parse(json);

@@ -197,6 +197,70 @@ export interface PronunciationNextResult {
   card: PronunciationCard | null;
 }
 
+export interface OfflineStudyPack {
+  status: "cards" | "empty" | "completed";
+  session: StudySessionView;
+  cards: StudyCard[];
+}
+
+export interface OfflinePronunciationPack {
+  status: "cards" | "empty" | "completed";
+  session: PronunciationSessionView;
+  cards: PronunciationCard[];
+}
+
+export interface SyncAttemptChange {
+  seq: number;
+  entityType: "attempt";
+  eventId: string;
+  deviceId: string;
+  deviceSeq: number;
+  cardId: string;
+  occurredAt: number;
+  reviewCreated: boolean;
+}
+
+export interface SyncCardStateChange {
+  seq: number;
+  entityType: "card_state";
+  cardState: MaterializedCardState;
+}
+
+export interface SyncSessionChange {
+  seq: number;
+  entityType: "study_session";
+  sessionId: string;
+  mode: "study" | "pronunciation";
+  endedAt: number | null;
+}
+
+export interface SyncOtherLearnerChange {
+  seq: number;
+  entityType: "grammar_topic_state";
+  entityId: string;
+}
+
+export type SyncLearnerChange =
+  SyncAttemptChange | SyncCardStateChange | SyncSessionChange | SyncOtherLearnerChange;
+
+export interface SyncContentChange {
+  seq: number;
+  entityId: string;
+  operation: "upsert" | "delete";
+  revision: number;
+}
+
+export interface SyncPullResponse {
+  nextCursor: number;
+  hasMore: boolean;
+  currentContentRevision: number | null;
+  contentChanged: boolean;
+  learnerChanges: SyncLearnerChange[];
+  contentChanges: SyncContentChange[];
+  studyPack: OfflineStudyPack | null;
+  pronunciationPack: OfflinePronunciationPack | null;
+}
+
 export function isActivityType(value: unknown): value is ActivityType {
   return typeof value === "string" && (ACTIVITY_TYPES as readonly string[]).includes(value);
 }

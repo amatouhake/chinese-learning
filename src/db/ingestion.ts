@@ -644,8 +644,10 @@ async function validatePronunciationAttempt(
     input.activityType === "tone_identification" ||
     input.activityType === "tone_pair_identification"
   ) {
+    // An offline attempt is an immutable fact about content that was valid when
+    // the prompt was cached. Retirement must not make that delayed fact invalid.
     const reading = await db
-      .prepare("SELECT numeric_pinyin FROM lexeme_readings WHERE id = ? AND retired_at IS NULL")
+      .prepare("SELECT numeric_pinyin FROM lexeme_readings WHERE id = ?")
       .bind(card.lexeme_reading_id)
       .first<{ numeric_pinyin: string }>();
     if (!reading) throw new ReferenceNotFoundError("lexeme reading", card.lexeme_reading_id);

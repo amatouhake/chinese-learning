@@ -2,19 +2,11 @@
   import { onMount } from "svelte";
 
   import type { PronunciationFocus } from "../domain/pronunciation";
-  import type {
-    PronunciationCard,
-    PronunciationNextResult,
-    PronunciationSessionView,
-  } from "../domain/types";
+  import type { PronunciationCard, PronunciationSessionView } from "../domain/types";
+  import { isPronunciationAudioCached } from "./audio-cache";
   import { postJson } from "./api";
-  import {
-    clearPendingStudyAttempt,
-    loadOrCreateBrowserStudyState,
-    setActivePronunciationSession,
-    stageStudyAttempt,
-    type BrowserStudyState,
-  } from "./study-storage";
+  import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
+  import { synchronizeLearning } from "./sync";
 
   type Phase =
     "loading" | "choose" | "prompt" | "revealed" | "submitting" | "empty" | "completed" | "error";
@@ -33,7 +25,8 @@
   ] as const;
 
   let phase: Phase = "loading";
-  let browserState: BrowserStudyState | null = null;
+  let store: OfflineLearningStore | null = null;
+  let browserState: BrowserOfflineState | null = null;
   let session: PronunciationSessionView | null = null;
   let card: PronunciationCard | null = null;
   let errorMessage = "";
@@ -41,6 +34,9 @@
   let promptStartedAt = 0;
   let answerSaved = false;
   let wasCorrect: boolean | null = null;
+  let isOffline = !navigator.onLine;
+  let audioAvailableOffline = true;
+  let syncMessage = "Choose a focus to prepare its offline set.";
 
   onMount(() => void initializePronunciation());
 
@@ -48,11 +44,8 @@
     phase = "loading";
     errorMessage = "";
     try {
-      browserState = await loadOrCreateBrowserStudyState(localStorage);
-      if (browserState.pendingAttempt) {
-        phase = "submitting";
-        await deliverPendingAttempt();
-      }
+      store ??= await OfflineLearningStore.open(localStorage);
+      browserState = await store.snapshot();
       if (!browserState.activePronunciationSessionId) {
         phase = "choose";
         return;
@@ -60,11 +53,22 @@
       if (!browserState.activePronunciationFocus) {
         throw new Error("The active pronunciation session has no practice focus.");
       }
-      await ensureSession(
-        browserState.activePronunciationSessionId,
-        browserState.deviceId,
-        browserState.activePronunciationFocus,
-      );
+      if (!isOffline) {
+        try {
+          await ensureSession(
+            browserState.activePronunciationSessionId,
+            browserState.deviceId,
+            browserState.activePronunciationFocus,
+          );
+          await syncNow();
+        } catch (error) {
+          if (!(await store.getPronunciationSession(browserState.activePronunciationSessionId))) {
+            throw error;
+          }
+          isOffline = true;
+          syncMessage = "Network unavailable · using the cached pronunciation set";
+        }
+      }
       await loadNextCard();
     } catch (error) {
       showError(error);
@@ -75,13 +79,13 @@
     phase = "loading";
     errorMessage = "";
     try {
-      browserState ??= await loadOrCreateBrowserStudyState(localStorage);
-      if (browserState.pendingAttempt)
-        throw new Error("A learning attempt is still pending delivery.");
-      browserState = await setActivePronunciationSession(localStorage, browserState, {
-        sessionId: `pronunciation-session:${crypto.randomUUID()}`,
+      if (isOffline) throw new Error("Reconnect to prepare a new pronunciation offline set.");
+      store ??= await OfflineLearningStore.open(localStorage);
+      browserState ??= await store.snapshot();
+      browserState = await store.setActivePronunciationSession(
+        `pronunciation-session:${crypto.randomUUID()}`,
         focus,
-      });
+      );
       if (!browserState.activePronunciationSessionId || !browserState.activePronunciationFocus) {
         throw new Error("No active pronunciation session is available.");
       }
@@ -90,6 +94,7 @@
         browserState.deviceId,
         browserState.activePronunciationFocus,
       );
+      await syncNow();
       await loadNextCard();
     } catch (error) {
       showError(error);
@@ -109,26 +114,39 @@
   }
 
   async function loadNextCard(): Promise<void> {
-    if (!browserState?.activePronunciationSessionId) {
+    if (!store || !browserState?.activePronunciationSessionId) {
       throw new Error("No pronunciation session is active.");
     }
     phase = "loading";
-    const result = await postJson<PronunciationNextResult>(
-      `/api/pronunciation/sessions/${encodeURIComponent(browserState.activePronunciationSessionId)}/next`,
-      { deviceId: browserState.deviceId },
-    );
-    session = result.session;
-    card = result.card;
+    const sessionId = browserState.activePronunciationSessionId;
+    const [cachedSession, cachedCard, pending] = await Promise.all([
+      store.getPronunciationSession(sessionId),
+      store.getCachedPronunciationCard(sessionId),
+      store.countPendingAttempts(sessionId),
+    ]);
+    if (!cachedSession) {
+      throw new Error(
+        isOffline
+          ? "This pronunciation set was not cached before the connection was lost."
+          : "The canonical pronunciation set has not been pulled yet.",
+      );
+    }
+    session = {
+      ...cachedSession,
+      completedItems: Math.min(cachedSession.maxItems, cachedSession.completedItems + pending),
+    };
+    card = cachedCard;
     answerSaved = false;
     wasCorrect = null;
     audioError = "";
-    if (result.status === "card" && result.card) {
+    if (cachedCard) {
+      audioAvailableOffline = await isPronunciationAudioCached(cachedCard);
       promptStartedAt = performance.now();
       phase = "prompt";
       return;
     }
-    browserState = await setActivePronunciationSession(localStorage, browserState, null);
-    phase = result.status === "empty" ? "empty" : "completed";
+    if (pending === 0) browserState = await store.clearActivePronunciationSession(sessionId);
+    phase = session.completedItems === 0 ? "empty" : "completed";
   }
 
   function revealRecall(): void {
@@ -173,7 +191,8 @@
     if (!card || !browserState?.activePronunciationSessionId) return;
     try {
       phase = "submitting";
-      const staged = await stageStudyAttempt(localStorage, browserState, {
+      if (!store) throw new Error("Offline storage is not ready.");
+      const staged = await store.stageAttempt(browserState, {
         cardId: card.cardId,
         studySessionId: browserState.activePronunciationSessionId,
         mode: "pronunciation",
@@ -184,26 +203,67 @@
         metadata: result.metadata,
       });
       browserState = staged.state;
-      await deliverPendingAttempt();
+      if (!isOffline) await syncNow();
       answerSaved = true;
-      if (session) session = { ...session, completedItems: session.completedItems + 1 };
+      if (session && isOffline) {
+        session = { ...session, completedItems: session.completedItems + 1 };
+      }
       phase = "revealed";
     } catch (error) {
       showError(error);
     }
   }
 
-  async function deliverPendingAttempt(): Promise<void> {
-    if (!browserState?.pendingAttempt) return;
-    const eventId = browserState.pendingAttempt.eventId;
-    await postJson("/api/attempts", browserState.pendingAttempt);
-    browserState = await clearPendingStudyAttempt(localStorage, browserState, eventId);
+  async function syncNow(): Promise<void> {
+    if (!store || isOffline) return;
+    const result = await synchronizeLearning(store);
+    browserState = result.state;
+    if (result.error) {
+      syncMessage = `${result.pending} queued · ${result.error}`;
+      return;
+    }
+    syncMessage =
+      result.audioCacheFailures.length === 0
+        ? "Offline set ready · synced"
+        : `${result.audioCacheFailures.length} audio item(s) unavailable offline`;
+  }
+
+  async function skipUncachedAudio(): Promise<void> {
+    if (!store || !card || !browserState?.activePronunciationSessionId) return;
+    browserState = await store.discardCachedPronunciationCard(
+      browserState.activePronunciationSessionId,
+      card.cardId,
+    );
+    await loadNextCard();
+  }
+
+  async function handleOnline(): Promise<void> {
+    isOffline = false;
+    syncMessage = "Connection restored · synchronizing…";
+    try {
+      if (!store) return await initializePronunciation();
+      await syncNow();
+      if (card) audioAvailableOffline = await isPronunciationAudioCached(card);
+      if (phase !== "revealed" && phase !== "prompt") await loadNextCard();
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  function handleOffline(): void {
+    isOffline = true;
+    syncMessage = `${browserState?.pendingCount ?? 0} queued · offline`;
   }
 
   async function playAudio(): Promise<void> {
     audioError = "";
     if (!card?.media) {
       audioError = "No reliable source recording is mapped to this exact reading.";
+      return;
+    }
+    if (isOffline && !audioAvailableOffline) {
+      audioError =
+        "This recording was not cached before the connection was lost. Skip it to continue.";
       return;
     }
     try {
@@ -257,6 +317,8 @@
   }
 </script>
 
+<svelte:window ononline={() => void handleOnline()} onoffline={handleOffline} />
+
 <header class="app-header surface-header">
   <div><p class="eyebrow">Pronunciation foundation</p></div>
   {#if session && (phase === "prompt" || phase === "revealed" || phase === "submitting")}
@@ -269,6 +331,10 @@
     </p>
   {/if}
 </header>
+
+<p class:offline={isOffline} class="sync-status" aria-live="polite">
+  {isOffline ? `${browserState?.pendingCount ?? 0} queued · offline` : syncMessage}
+</p>
 
 {#if phase === "loading" || phase === "submitting"}
   <section class="status-panel" aria-live="polite">
@@ -293,6 +359,7 @@
       {#each focuses as focus}
         <button
           class:recommended={focus.id === "mixed"}
+          disabled={isOffline}
           onclick={() => void createNewSession(focus.id)}
         >
           <strong>{focus.label}</strong><span>{focus.hint}</span>
@@ -319,10 +386,17 @@
     <p class="completion-mark" aria-hidden="true">听</p>
     <h2>Pronunciation set complete</h2>
     <p>
-      {session?.completedItems ?? 0} practice attempts are safely persisted without changing FSRS state.
+      {session?.completedItems ?? 0} non-FSRS attempts are {browserState?.pendingCount
+        ? "durably queued for reconnect"
+        : "safely synchronized"}.
     </p>
-    <button class="primary-button" onclick={() => (phase = "choose")}>Practice another focus</button
+    <button
+      class="primary-button"
+      onclick={() =>
+        void (browserState?.pendingCount ? initializePronunciation() : (phase = "choose"))}
     >
+      {browserState?.pendingCount ? "Retry synchronization" : "Practice another focus"}
+    </button>
   </section>
 {:else if card}
   <section class="study-card pronunciation-card" aria-live="polite">
@@ -335,10 +409,19 @@
       {#if card.activityType.startsWith("audio_to_")}
         <button
           class="audio-button"
+          disabled={isOffline && !audioAvailableOffline}
           onclick={() => void playAudio()}
           aria-label="Play or replay word audio"
           ><span aria-hidden="true">▶</span><strong>Play / replay</strong></button
         >
+        {#if isOffline && !audioAvailableOffline}
+          <p class="audio-error" role="status">
+            This recording was not cached before network loss. Other pronunciation cards still work.
+          </p>
+          <button class="audio-replay-small" onclick={() => void skipUncachedAudio()}
+            >Skip uncached audio</button
+          >
+        {/if}
       {:else}
         <h2 class:hanzi-prompt={card.activityType !== "pinyin_to_hanzi"}>
           {card.activityType === "pinyin_to_hanzi" ? card.reading.pinyin : card.lexeme.simplified}

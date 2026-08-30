@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Chinese Learning">
+  <rect width="512" height="512" fill="#183b2f"/>
+  <circle cx="256" cy="256" r="176" fill="#efe9dc"/>
+  <path d="M157 181h198v34H157zm21 64h156v34H178zm-21 64h198v34H157z" fill="#9a4935"/>
+  <path d="M239 151h34v210h-34z" fill="#1f654e"/>
+</svg>

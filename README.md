@@ -1,13 +1,14 @@
 # Chinese Learning
 
-A locally usable, offline-sync-ready Chinese vocabulary and beginner pronunciation application. It
-imports the complete HSK 2.0 Level 1–3 corpus, serves due/new vocabulary through a small Worker API,
-and records both scheduled FSRS reviews and ordinary pronunciation practice as immutable attempts.
+A locally usable, installable offline PWA for Chinese vocabulary and beginner pronunciation. It
+imports the complete HSK 2.0 Level 1–3 corpus, caches bounded study sets in the browser, and records
+both scheduled FSRS reviews and ordinary pronunciation practice as immutable attempts that safely
+synchronize after temporary network loss.
 
 The pronunciation surface covers pinyin recognition and recall, dictionary-tone identification,
 two-syllable tone pairs, source-audio perception where the recording can be mapped safely, and
-speak–compare–self-rate production. Reading, grammar, dashboard, Notion projection, offline PWA
-media sync, and Remote MCP product surfaces remain deferred.
+speak–compare–self-rate production. Reading, grammar, dashboard, Notion projection, background
+sync, broad content prefetch, and Remote MCP product surfaces remain deferred.
 
 ## Stack and topology
 
@@ -70,6 +71,13 @@ choices, and continue. Pronunciation starts from a low-friction focus chooser an
 audio plus a compact sound-system reference. `bun run dev` serves only the Vite frontend, so use
 `bun run dev:worker` for the real D1-backed flow and staged media.
 
+After the first online study set is prepared, the browser can install the app and continue that
+bounded Vocabulary set without a connection, including across reloads. A prepared Pronunciation
+set also works offline; listening cards are available only when their exact-reading audio was
+successfully staged in Cache Storage. An uncached recording is clearly marked and can be skipped
+without blocking the rest of the set. Reconnecting the page pushes durable attempts before pulling
+canonical learner/content changes.
+
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
 when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
 sends a same-origin `application/json` request. Cross-origin and simple-form requests cannot use
@@ -94,9 +102,11 @@ bun run build             # Vite build + Wrangler dry-run Worker bundle; does no
 
 Install the browser binary once with
 `PLAYWRIGHT_BROWSERS_PATH=.generated/playwright-browsers bunx playwright install chromium` before
-running `test:browser`. The browser test starts the real local Worker, completes a mixed ten-item
-phone session, verifies staged media responses, checks an exact reading of the polyphonic `的`, and
-inspects the complete tone-pair grid and reference at desktop size.
+running `test:browser`. The browser suite starts the real local Worker and uses Playwright's network
+simulation to study online, disconnect, queue multiple Vocabulary and Pronunciation events, reload
+offline, retry a partial push, reconnect, and verify convergence with local D1. It also covers
+multi-tab sequence allocation, legacy-state migration, cached versus uncached audio, a late-arriving
+review, a mixed ten-item phone session, the polyphonic `的`, and the tone-pair reference.
 
 To re-run the exact full-corpus gate against an isolated temporary D1 database (without touching
 the app's local study data):
@@ -177,16 +187,30 @@ chosen Again/Hard/Good/Easy value is persisted only as the FSRS rating, preservi
 correctness-versus-scheduler distinction. The response contains the resulting materialized card
 state, and the next-card query observes canonical D1 state.
 
-The browser keeps one small versioned localStorage record containing its stable device ID, the next
-device sequence, active session ID, and at most one pending attempt. Staging a review durably saves
-the complete event and advances the next sequence before any request is sent. Reloading retries the
-same event ID/sequence until the idempotent server acknowledges it; it never silently replaces a
-corrupt identity. Browser-wide Web Locks serialize every read-modify-write transaction so two tabs
-cannot reserve the same device sequence or clear each other's pending event. Staging also compares
-the tab's sequence and pending-event snapshot with durable state, rejecting a card left stale by a
-review in another tab. Browsers without that coordination primitive fail closed. This is a
-deliberately small single-outbox boundary for this online slice. The later PWA work can move content
-and a multi-event queue to IndexedDB without changing the canonical event contract.
+IndexedDB is the canonical browser store for the stable device identity, monotonic next device
+sequence, active sessions, bounded study cards, materialized card states, synchronization cursor,
+content revision, and a multi-event outbox. Staging an answer atomically saves the complete immutable
+event, consumes its cached card, and advances the device sequence before any request is sent. Every
+event retains its original event/device identity, occurrence time, FSRS rating, and exact scheduler
+configuration while queued. Reloading or reopening retries those same facts until the idempotent
+server acknowledges each event; a partial push deletes only acknowledgements already received.
+
+Browser-wide Web Locks serialize IndexedDB writes and synchronization. Two tabs therefore cannot
+reserve the same device sequence, overwrite an outbox entry, or answer the same stale cached card.
+A stale tab fails closed and reloads current durable state. Browsers without Web Locks also fail
+closed. A small localStorage identity mirror is only a recovery watermark; it is not the learning
+cache. On first open, browser state versions 1–3 are migrated once from the previous localStorage
+record into IndexedDB. The existing `device_id`, next unused `device_seq`, active session/focus, and
+single pending event are preserved. Sequence allocation takes the maximum durable watermark so a
+database recovery never deliberately reuses an issued sequence.
+
+Reconnect synchronization pushes the outbox in device-sequence order, then pages canonical changes
+after the stored `server_changes.seq` cursor. Learner changes and content-revision changes remain
+separate in the response. Pulled `card_state` replaces only the local derived projection; immutable
+history is never resolved with last-write-wins. The server returns fresh bounded packs for active
+sessions, and pending card IDs are filtered before replacement so a pull cannot resurrect work
+staged concurrently. Pronunciation media for the available pack is explicitly staged in a dedicated
+Cache Storage cache rather than being added by a generic runtime media cache.
 
 `POST /api/attempts` remains fail-closed and accepts
 `Authorization: Bearer <ATTEMPT_WRITE_TOKEN>` outside the explicit loopback-only development mode.
@@ -221,8 +245,11 @@ A failed optimistic update becomes a constraint failure inside the same batch, s
 write set back before the service retries from canonical history.
 
 `server_changes.seq` is the monotonic pull-sync cursor. `content_revisions` and
-`learner_settings.current_content_revision` establish the matching content revision boundary; the
-complete client pull/cache UX is not implemented yet.
+`learner_settings.current_content_revision` establish the distinct content revision boundary.
+`POST /api/sync/pull` reports both boundaries and supplies only the current active session's bounded
+Vocabulary and Pronunciation packs. An older scheduled attempt that arrives after a newer review is
+inserted as its original immutable fact; the existing deterministic server replay recomputes the
+canonical `card_state`, which the next pull applies locally.
 
 ## V1 content import
 

@@ -12,6 +12,7 @@ import {
 } from "../domain/pronunciation";
 import type { CreatePronunciationSessionInput } from "../domain/pronunciation-validation";
 import type {
+  OfflinePronunciationPack,
   PronunciationCard,
   PronunciationChoice,
   PronunciationNextResult,
@@ -34,6 +35,7 @@ interface PronunciationSessionContext {
 interface PronunciationCardRow {
   card_id: string;
   activity_type: PronunciationActivityType;
+  lexeme_id: string;
   reading_id: string;
   pinyin: string;
   numeric_pinyin: string;
@@ -146,11 +148,68 @@ export async function getNextPronunciationCard(
   };
 }
 
+export async function getOfflinePronunciationPack(
+  db: D1Database,
+  sessionId: string,
+  deviceId: string,
+  options: PronunciationServiceOptions = {},
+): Promise<OfflinePronunciationPack> {
+  const session = await loadOwnedSession(db, sessionId, deviceId);
+  let sessionView = await mapSession(db, session);
+  if (session.ended_at !== null || sessionView.completedItems >= sessionView.maxItems) {
+    if (session.ended_at === null) {
+      await completeSession(db, session, sessionView, options);
+      sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+    }
+    return {
+      status: sessionView.completedItems === 0 ? "empty" : "completed",
+      session: sessionView,
+      cards: [],
+    };
+  }
+
+  const rows: PronunciationCardRow[] = [];
+  const excludedCardIds: string[] = [];
+  const excludedLexemeIds: string[] = [];
+  const remaining = sessionView.maxItems - sessionView.completedItems;
+  for (let index = 0; index < remaining; index += 1) {
+    const selected = await selectForFocus(
+      db,
+      sessionId,
+      sessionView.focus,
+      sessionView.completedItems + index,
+      excludedCardIds,
+      excludedLexemeIds,
+    );
+    if (!selected) break;
+    rows.push(selected);
+    excludedCardIds.push(selected.card_id);
+    excludedLexemeIds.push(selected.lexeme_id);
+  }
+
+  if (rows.length === 0) {
+    await completeSession(db, session, sessionView, options);
+    sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+    return {
+      status: sessionView.completedItems === 0 ? "empty" : "completed",
+      session: sessionView,
+      cards: [],
+    };
+  }
+  return {
+    status: "cards",
+    session: sessionView,
+    cards: await Promise.all(rows.map((row) => mapCard(db, row))),
+  };
+}
+
 async function selectForFocus(
   db: D1Database,
   sessionId: string,
   focus: PronunciationFocus,
   completedItems: number,
+  excludedCardIds: readonly string[] = [],
+  excludedLexemeIds: readonly string[] = [],
 ): Promise<PronunciationCardRow | null> {
   const activities = activitiesForFocus(focus);
   const rotated = activities.map(
@@ -158,7 +217,14 @@ async function selectForFocus(
   );
   for (const excludeUsedLexemes of [true, false]) {
     for (const activity of rotated) {
-      const card = await selectCard(db, sessionId, activity, excludeUsedLexemes);
+      const card = await selectCard(
+        db,
+        sessionId,
+        activity,
+        excludeUsedLexemes,
+        excludedCardIds,
+        excludeUsedLexemes ? excludedLexemeIds : [],
+      );
       if (card) return card;
     }
   }
@@ -170,12 +236,23 @@ async function selectCard(
   sessionId: string,
   activity: PronunciationActivityType,
   excludeUsedLexemes: boolean,
+  excludedCardIds: readonly string[] = [],
+  excludedLexemeIds: readonly string[] = [],
 ): Promise<PronunciationCardRow | null> {
+  const cardExclusion =
+    excludedCardIds.length === 0
+      ? ""
+      : `AND c.id NOT IN (${excludedCardIds.map(() => "?").join(", ")})`;
+  const lexemeExclusion =
+    excludedLexemeIds.length === 0
+      ? ""
+      : `AND l.id NOT IN (${excludedLexemeIds.map(() => "?").join(", ")})`;
   return db
     .prepare(
       `SELECT
         c.id AS card_id,
         c.activity_type,
+        l.id AS lexeme_id,
         r.id AS reading_id,
         r.pinyin,
         r.numeric_pinyin,
@@ -218,6 +295,8 @@ async function selectCard(
            SELECT 1 FROM attempts a
            WHERE a.study_session_id = ? AND a.card_id = c.id
          )
+         ${cardExclusion}
+         ${lexemeExclusion}
          AND (
            ? = 0 OR NOT EXISTS (
              SELECT 1
@@ -241,7 +320,14 @@ async function selectCard(
          c.id
        LIMIT 1`,
     )
-    .bind(activity, sessionId, Number(excludeUsedLexemes), sessionId)
+    .bind(
+      activity,
+      sessionId,
+      ...excludedCardIds,
+      ...excludedLexemeIds,
+      Number(excludeUsedLexemes),
+      sessionId,
+    )
     .first<PronunciationCardRow>();
 }
 

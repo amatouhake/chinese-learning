@@ -50,6 +50,23 @@ main {
   margin-bottom: 1rem;
 }
 
+.sync-status {
+  margin: -0.7rem 0 0.9rem;
+  color: #47645a;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.sync-status.offline {
+  color: #9a4935;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .eyebrow,
 .status-kicker {
   margin: 0;
