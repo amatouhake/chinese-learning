@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  import type { PronunciationFocus } from "../domain/pronunciation";
+  import {
+    PRONUNCIATION_AUDIO_SKIP_INTERACTION,
+    PRONUNCIATION_AUDIO_SKIP_REASON,
+    type PronunciationFocus,
+  } from "../domain/pronunciation";
   import type { PronunciationCard, PronunciationSessionView } from "../domain/types";
   import { isPronunciationAudioCached } from "./audio-cache";
   import { ApiError, postJson } from "./api";
@@ -186,11 +190,14 @@
     });
   }
 
-  async function saveAttempt(result: {
-    correct?: boolean;
-    selfRating?: number;
-    metadata: Record<string, unknown>;
-  }): Promise<void> {
+  async function saveAttempt(
+    result: {
+      correct?: boolean;
+      selfRating?: number;
+      metadata: Record<string, unknown>;
+    },
+    continueImmediately = false,
+  ): Promise<void> {
     if (!card || !browserState?.activePronunciationSessionId) return;
     try {
       phase = "submitting";
@@ -210,6 +217,10 @@
       answerSaved = true;
       if (session && isOffline) {
         session = { ...session, completedItems: session.completedItems + 1 };
+      }
+      if (continueImmediately) {
+        await loadNextCard();
+        return;
       }
       phase = "revealed";
     } catch (error) {
@@ -233,12 +244,22 @@
   }
 
   async function skipUncachedAudio(): Promise<void> {
-    if (!store || !card || !browserState?.activePronunciationSessionId) return;
-    browserState = await store.discardCachedPronunciationCard(
-      browserState.activePronunciationSessionId,
-      card.cardId,
+    if (
+      phase !== "prompt" ||
+      !card?.activityType.startsWith("audio_to_") ||
+      !browserState?.activePronunciationSessionId
+    )
+      return;
+    await saveAttempt(
+      {
+        metadata: {
+          interaction: PRONUNCIATION_AUDIO_SKIP_INTERACTION,
+          reason: PRONUNCIATION_AUDIO_SKIP_REASON,
+          readingId: card.readingId,
+        },
+      },
+      true,
     );
-    await loadNextCard();
   }
 
   async function handleOnline(): Promise<void> {

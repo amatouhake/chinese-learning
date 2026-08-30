@@ -2,6 +2,7 @@ import { mount } from "svelte";
 
 import App from "./App.svelte";
 import "./app.css";
+import { registerProductionServiceWorker } from "./service-worker-registration";
 
 const target = document.getElementById("app");
 
@@ -11,8 +12,4 @@ if (!target) {
 
 mount(App, { target });
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/service-worker.js").catch(() => undefined);
-  });
-}
+registerProductionServiceWorker(import.meta.env.PROD);

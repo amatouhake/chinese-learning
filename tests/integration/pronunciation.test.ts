@@ -8,6 +8,10 @@ import {
 } from "../../src/db/pronunciation-import";
 import { createPronunciationSession, getNextPronunciationCard } from "../../src/db/pronunciation";
 import {
+  PRONUNCIATION_AUDIO_SKIP_INTERACTION,
+  PRONUNCIATION_AUDIO_SKIP_REASON,
+} from "../../src/domain/pronunciation";
+import {
   buildV1ImportStatements,
   type V1ImportInput,
   type V1SourceLexeme,
@@ -390,6 +394,101 @@ describe("pronunciation foundation", () => {
         selfRating: 3,
       }),
     ).rejects.toThrow("require pronunciation mode");
+  });
+
+  test("persists an uncached-audio skip as an immutable non-FSRS event", async () => {
+    await applyPronunciationFixture();
+    await createPronunciationSession(env.DB, {
+      sessionId: "audio-skip-session",
+      deviceId: "audio-skip-device",
+      focus: "listening",
+      maxItems: 1,
+    });
+    const selected = await getNextPronunciationCard(
+      env.DB,
+      "audio-skip-session",
+      "audio-skip-device",
+    );
+    if (!selected.card?.activityType.startsWith("audio_to_") || !selected.card.media) {
+      throw new Error("missing exact-reading audio card for skip test");
+    }
+    const skipped: AttemptInput = {
+      eventId: "audio-skip-event",
+      deviceId: "audio-skip-device",
+      deviceSeq: 1,
+      occurredAt: "2026-08-30T04:15:00Z",
+      cardId: selected.card.cardId,
+      studySessionId: "audio-skip-session",
+      mode: "pronunciation",
+      activityType: selected.card.activityType,
+      responseMs: 250,
+      metadata: {
+        interaction: PRONUNCIATION_AUDIO_SKIP_INTERACTION,
+        reason: PRONUNCIATION_AUDIO_SKIP_REASON,
+        readingId: selected.card.readingId,
+      },
+    };
+
+    expect(await ingestAttempt(env.DB, skipped)).toMatchObject({
+      disposition: "inserted",
+      reviewCreated: false,
+      cardState: null,
+    });
+    expect(await ingestAttempt(env.DB, skipped)).toMatchObject({ disposition: "duplicate" });
+    const persisted = await env.DB.prepare(
+      `SELECT correct, score, self_rating, metadata_json
+         FROM attempts WHERE event_id = ?`,
+    )
+      .bind(skipped.eventId)
+      .first<{
+        correct: number | null;
+        score: number | null;
+        self_rating: number | null;
+        metadata_json: string;
+      }>();
+    expect(persisted).not.toBeNull();
+    expect({
+      correct: persisted?.correct,
+      score: persisted?.score,
+      self_rating: persisted?.self_rating,
+      metadata: JSON.parse(persisted?.metadata_json ?? "null"),
+    }).toEqual({
+      correct: null,
+      score: null,
+      self_rating: null,
+      metadata: skipped.metadata,
+    });
+    expect(
+      await scalar("SELECT COUNT(*) FROM fsrs_reviews WHERE attempt_id = 'audio-skip-event'"),
+    ).toBe(0);
+
+    const completed = await getNextPronunciationCard(
+      env.DB,
+      "audio-skip-session",
+      "audio-skip-device",
+    );
+    expect(completed).toMatchObject({
+      status: "completed",
+      session: { completedItems: 1, endedAt: expect.any(Number) },
+      card: null,
+    });
+
+    await expect(
+      ingestAttempt(env.DB, {
+        ...skipped,
+        eventId: "invalid-audio-skip-reading",
+        deviceSeq: 2,
+        metadata: { ...skipped.metadata, readingId: "reading:not-the-presented-reading" },
+      }),
+    ).rejects.toThrow("preserve the exact reading identity");
+    await expect(
+      ingestAttempt(env.DB, {
+        ...skipped,
+        eventId: "invalid-audio-skip-grade",
+        deviceSeq: 2,
+        correct: false,
+      }),
+    ).rejects.toThrow("must not claim a graded response");
   });
 
   test("accepts an immutable offline tone fact after its exact reading is retired", async () => {

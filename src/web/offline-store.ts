@@ -346,19 +346,6 @@ export class OfflineLearningStore {
     return cards.sort((left, right) => left.position - right.position)[0]?.card ?? null;
   }
 
-  discardCachedPronunciationCard(sessionId: string, cardId: string): Promise<BrowserOfflineState> {
-    return this.locks.request(OFFLINE_DB_LOCK, async () => {
-      await this.reconcileLegacyStateUnderLock();
-      const transaction = this.db.transaction([META_STORE, PRONUNCIATION_CARD_STORE], "readwrite");
-      const metaStore = transaction.objectStore(META_STORE);
-      const latest = await requiredMeta(metaStore);
-      transaction.objectStore(PRONUNCIATION_CARD_STORE).delete(cardKey(sessionId, cardId));
-      metaStore.put({ ...latest, revision: latest.revision + 1 } satisfies PersistedMeta);
-      await transactionDone(transaction);
-      return this.snapshot();
-    });
-  }
-
   getStudySession(sessionId: string): Promise<StudySessionView | null> {
     return this.getCachedSession<CachedStudySession>("study", sessionId).then(
       (value) => value?.session ?? null,

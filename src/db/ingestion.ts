@@ -13,6 +13,8 @@ import {
 } from "../domain/errors";
 import { normalizeUtcInstant, semanticOrderKey } from "../domain/ordering";
 import {
+  PRONUNCIATION_AUDIO_SKIP_INTERACTION,
+  PRONUNCIATION_AUDIO_SKIP_REASON,
   deriveTonePair,
   isPronunciationActivity,
   normalizeNumericPinyin,
@@ -607,6 +609,27 @@ async function validatePronunciationAttempt(
   }
   if (input.expectedCardStateVersion !== undefined) {
     throw new InvalidInputError("pronunciation practice must not carry card state versions");
+  }
+
+  if (input.metadata?.interaction === PRONUNCIATION_AUDIO_SKIP_INTERACTION) {
+    if (input.activityType !== "audio_to_hanzi" && input.activityType !== "audio_to_meaning") {
+      throw new InvalidInputError("uncached-audio skips require an audio pronunciation card");
+    }
+    if (
+      input.correct !== undefined ||
+      input.selfRating !== undefined ||
+      input.score !== undefined ||
+      input.metadata.selectedChoiceId !== undefined
+    ) {
+      throw new InvalidInputError("uncached-audio skips must not claim a graded response");
+    }
+    if (input.metadata.reason !== PRONUNCIATION_AUDIO_SKIP_REASON) {
+      throw new InvalidInputError("uncached-audio skips require their canonical reason");
+    }
+    if (card.lexeme_reading_id === null || input.metadata.readingId !== card.lexeme_reading_id) {
+      throw new InvalidInputError("uncached-audio skips must preserve the exact reading identity");
+    }
+    return;
   }
 
   if (input.activityType === "pronunciation_production") {

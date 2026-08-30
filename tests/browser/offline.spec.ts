@@ -359,30 +359,78 @@ test.describe("offline PWA foundation", () => {
     expect((await readMeta(page)).activeSessionId).toBe(failedSessionId);
   });
 
-  test("uses cached pronunciation audio offline and clearly skips an uncached recording", async ({
+  test("durably syncs uncached-audio skips and canonically closes the session", async ({
     page,
     context,
+    request,
   }) => {
     await page.goto("/#pronunciation");
     await page.getByRole("button", { name: /^Listening / }).click();
     await expect(page.getByText(/Audio →/)).toBeVisible({ timeout: 20_000 });
     await waitForServiceWorker(page);
-    const mediaUrl = await firstCachedPronunciationMedia(page);
-    expect(mediaUrl).not.toBeNull();
-    expect(await audioCacheContains(page, mediaUrl!)).toBe(true);
+    const sessionId = (await readMeta(page)).activePronunciationSessionId;
+    expect(typeof sessionId).toBe("string");
+    const first = await firstCachedPronunciationAudioCard(page);
+    if (!first) throw new Error("listening session has no cached audio card");
+    expect(await audioCacheContains(page, first.mediaUrl)).toBe(true);
 
     await context.setOffline(true);
     await page.reload();
     await expect(page.getByRole("button", { name: "Play or replay word audio" })).toBeEnabled();
     await page.getByRole("button", { name: "Play or replay word audio" }).click();
 
-    await deleteCachedAudio(page, mediaUrl!);
+    const skippedCardIds = new Set<string>();
+    for (let item = 0; item < 10; item += 1) {
+      const current = await firstCachedPronunciationAudioCard(page);
+      if (!current) throw new Error(`listening session has no cached item ${item + 1}`);
+      expect(skippedCardIds.has(current.cardId)).toBe(false);
+      skippedCardIds.add(current.cardId);
+      await deleteCachedAudio(page, current.mediaUrl);
+      await page.reload();
+      await expect(
+        page.getByText("This recording was not cached before network loss."),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Skip uncached audio" }).click();
+      if (item < 9) await expect(page.locator(".study-card")).toBeVisible();
+    }
+
+    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect.poll(() => outboxCount(page)).toBe(10);
+    const queued = await readOutbox(page);
+    expect(queued).toHaveLength(10);
+    expect(queued.every((attempt) => attempt.mode === "pronunciation")).toBe(true);
+    expect(queued.every((attempt) => attempt.correct === undefined)).toBe(true);
+    expect(queued.every((attempt) => attempt.fsrsReview === undefined)).toBe(true);
+    expect(
+      queued.every(
+        (attempt) =>
+          attempt.metadata?.interaction === "skip-uncached-audio" &&
+          attempt.metadata.reason === "audio-not-cached" &&
+          typeof attempt.metadata.readingId === "string",
+      ),
+    ).toBe(true);
+
     await page.reload();
-    await expect(
-      page.getByText("This recording was not cached before network loss."),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Skip uncached audio" }).click();
-    await expect(page.getByRole("button", { name: "Play or replay word audio" })).toBeEnabled();
+    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect.poll(() => outboxCount(page)).toBe(10);
+
+    await context.setOffline(false);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    await expect.poll(async () => (await readMeta(page)).activePronunciationSessionId).toBeNull();
+    const changes = await apiPullAll(request, (await readMeta(page)).deviceId as string);
+    for (const attempt of queued) {
+      expect(changes.filter((change) => change.eventId === attempt.eventId)).toHaveLength(1);
+    }
+    expect(
+      changes.find(
+        (change) =>
+          change.entityType === "study_session" &&
+          change.sessionId === sessionId &&
+          change.mode === "pronunciation" &&
+          typeof change.endedAt === "number",
+      ),
+    ).toBeDefined();
   });
 
   test("migrates the localStorage identity and pending fact without sequence reuse", async ({
@@ -770,7 +818,9 @@ function readCardStates(page: Page): Promise<Array<Record<string, any>>> {
   );
 }
 
-async function firstCachedPronunciationMedia(page: Page): Promise<string | null> {
+async function firstCachedPronunciationAudioCard(
+  page: Page,
+): Promise<{ cardId: string; mediaUrl: string } | null> {
   return page.evaluate(
     async ({ dbName }) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -779,7 +829,7 @@ async function firstCachedPronunciationMedia(page: Page): Promise<string | null>
         open.onsuccess = () => resolve(open.result);
       });
       const cards = await new Promise<
-        Array<{ position: number; card: { media?: { url: string } } }>
+        Array<{ position: number; card: { cardId: string; media?: { url: string } } }>
       >((resolve, reject) => {
         const get = db
           .transaction("pronunciationCards", "readonly")
@@ -788,7 +838,8 @@ async function firstCachedPronunciationMedia(page: Page): Promise<string | null>
         get.onerror = () => reject(get.error);
         get.onsuccess = () => resolve(get.result);
       });
-      return cards.sort((a, b) => a.position - b.position)[0]?.card.media?.url ?? null;
+      const card = cards.sort((a, b) => a.position - b.position)[0]?.card;
+      return card?.media ? { cardId: card.cardId, mediaUrl: card.media.url } : null;
     },
     { dbName: DB_NAME },
   );
