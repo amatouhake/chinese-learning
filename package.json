@@ -22,7 +22,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:migrate:local": "wrangler d1 migrations apply chinese-learning --local",
-    "import:v1": "bun run scripts/import-v1.ts"
+    "import:v1": "bun run scripts/import-v1.ts",
+    "verify:full-import": "bun run scripts/verify-full-import.ts"
   },
   "dependencies": {
     "hono": "^4.13.5",
