@@ -6,6 +6,7 @@ import { createStudySession, getNextStudyCard } from "../../src/db/study";
 import {
   buildV1ImportStatements,
   type V1ImportInput,
+  type V1Enrichment,
   type V1SourceLexeme,
 } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
@@ -138,6 +139,55 @@ describe("vocabulary study flow", () => {
     await retireLexemes(["爱"]);
   });
 
+  test("aligns displayed meanings with the preferred reading", async () => {
+    await applyImport(
+      "preferred-reading-meaning",
+      [
+        {
+          simplified: "行",
+          frequency: 1,
+          hskLevel: 1,
+          forms: [
+            {
+              traditional: "行",
+              transcriptions: { pinyin: "xíng", numeric: "xing2" },
+              meanings: ["to walk", "to be capable"],
+            },
+            {
+              traditional: "行",
+              transcriptions: { pinyin: "háng", numeric: "hang2" },
+              meanings: ["row", "profession"],
+            },
+          ],
+        },
+      ],
+      [{ simplified: "行", meaning_ja: "歩く；できる" }],
+    );
+    await createStudySession(env.DB, {
+      sessionId: "preferred-reading-meaning-session",
+      deviceId: "preferred-reading-meaning-device",
+      maxCards: 1,
+    });
+
+    const next = await getNextStudyCard(
+      env.DB,
+      "preferred-reading-meaning-session",
+      "preferred-reading-meaning-device",
+    );
+
+    expect(next.card?.lexeme).toMatchObject({
+      simplified: "行",
+      pinyin: "xíng",
+      numericPinyin: "xing2",
+    });
+    expect(next.card?.lexeme.meanings).toEqual([
+      { language: "en", text: "to walk" },
+      { language: "en", text: "to be capable" },
+      { language: "ja", text: "歩く；できる" },
+    ]);
+    await retireLexemes(["行"]);
+  });
+
   test("empty sessions complete coherently and API input failures are explicit", async () => {
     const invalid = await localJson("/api/study/sessions", {
       sessionId: "invalid-session",
@@ -214,10 +264,14 @@ describe("vocabulary study flow", () => {
   });
 });
 
-async function applyImport(prefix: string, lexemes: V1SourceLexeme[]): Promise<void> {
+async function applyImport(
+  prefix: string,
+  lexemes: V1SourceLexeme[],
+  enrichments: V1Enrichment[] = [],
+): Promise<void> {
   const input: V1ImportInput = {
     lexemes,
-    enrichments: [],
+    enrichments,
     vocabularyVersion: `${prefix}-vocabulary`,
     v1Version: `${prefix}-v1`,
   };

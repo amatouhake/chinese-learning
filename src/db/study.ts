@@ -22,6 +22,7 @@ interface StudyCardRow {
   meanings_json: string;
   pinyin: string | null;
   numeric_pinyin: string | null;
+  preferred_meanings_json: string | null;
   hsk_level: number | null;
   example_chinese: string | null;
   example_pinyin: string | null;
@@ -161,6 +162,11 @@ async function selectStudyCard(
           WHERE r.lexeme_id = l.id AND r.is_preferred = 1 AND r.retired_at IS NULL
           ORDER BY r.id LIMIT 1
         ) AS numeric_pinyin,
+        (
+          SELECT r.sense_scope FROM lexeme_readings r
+          WHERE r.lexeme_id = l.id AND r.is_preferred = 1 AND r.retired_at IS NULL
+          ORDER BY r.id LIMIT 1
+        ) AS preferred_meanings_json,
         (
           SELECT MIN(CAST(substr(t.label, 7) AS INTEGER))
           FROM lexeme_tags lt JOIN tags t ON t.id = lt.tag_id
@@ -321,7 +327,7 @@ function mapStudyCard(
       traditional: row.traditional,
       pinyin: row.pinyin,
       numericPinyin: row.numeric_pinyin,
-      meanings: parseMeanings(row.meanings_json),
+      meanings: selectStudyMeanings(row.meanings_json, row.preferred_meanings_json),
       hskLevel: row.hsk_level,
     },
     example:
@@ -334,6 +340,29 @@ function mapStudyCard(
             meaningEn: row.example_meaning_en,
           },
   };
+}
+
+function selectStudyMeanings(
+  lexemeMeaningsJson: string,
+  preferredMeaningsJson: string | null,
+): StudyMeaning[] {
+  const lexemeMeanings = parseMeanings(lexemeMeaningsJson);
+  if (preferredMeaningsJson === null) return lexemeMeanings;
+
+  const value: unknown = JSON.parse(preferredMeaningsJson);
+  if (!Array.isArray(value)) {
+    throw new Error("persisted preferred reading meanings must be an array of strings");
+  }
+  const preferredMeanings = value.map((meaning: unknown) => {
+    if (typeof meaning !== "string") {
+      throw new Error("persisted preferred reading meanings must be an array of strings");
+    }
+    return meaning;
+  });
+  return [
+    ...preferredMeanings.map((text) => ({ language: "en", text })),
+    ...lexemeMeanings.filter(({ language }) => language !== "en"),
+  ];
 }
 
 function parseMeanings(json: string): StudyMeaning[] {
