@@ -203,7 +203,17 @@ async function selectCard(
          AND c.scheduler_eligible = 0
          AND c.retired_at IS NULL
          AND r.retired_at IS NULL
-         AND (? = 0 OR c.activity_type NOT IN ('audio_to_hanzi', 'audio_to_meaning') OR m.id IS NOT NULL)
+         AND (
+           c.activity_type NOT IN ('audio_to_hanzi', 'audio_to_meaning')
+           OR (
+             m.id IS NOT NULL
+             AND 1 = (
+               SELECT COUNT(*) FROM lexeme_readings audio_sibling
+               WHERE audio_sibling.lexeme_id = r.lexeme_id
+                 AND audio_sibling.retired_at IS NULL
+             )
+           )
+         )
          AND NOT EXISTS (
            SELECT 1 FROM attempts a
            WHERE a.study_session_id = ? AND a.card_id = c.id
@@ -231,13 +241,7 @@ async function selectCard(
          c.id
        LIMIT 1`,
     )
-    .bind(
-      activity,
-      Number(activity.startsWith("audio_to_")),
-      sessionId,
-      Number(excludeUsedLexemes),
-      sessionId,
-    )
+    .bind(activity, sessionId, Number(excludeUsedLexemes), sessionId)
     .first<PronunciationCardRow>();
 }
 

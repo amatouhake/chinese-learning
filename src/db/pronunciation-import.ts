@@ -146,6 +146,14 @@ export async function buildPronunciationImportStatements(
           SELECT id FROM lexeme_readings WHERE retired_at IS NOT NULL
         )
         AND ${importAllowed};`,
+    `UPDATE cards
+      SET retired_at = MAX(created_at, ${createdAt}), content_revision = ${revision}
+      WHERE subject_type = 'lexeme_reading'
+        AND lexeme_reading_id IN (
+          SELECT id FROM lexeme_readings WHERE retired_at IS NOT NULL
+        )
+        AND retired_at IS NULL
+        AND ${importAllowed};`,
   ];
 
   for (const lexeme of input.lexemes) {

@@ -163,6 +163,16 @@ describe("pronunciation foundation", () => {
         createdAt: 20,
       }),
     );
+    expect(
+      await scalar(
+        `SELECT COUNT(*) FROM cards c
+         JOIN lexeme_readings r ON r.id = c.lexeme_reading_id
+         WHERE r.lexeme_id = 'lexeme:complete-hsk:%E7%88%B1'
+           AND r.numeric_pinyin = 'ai4'
+           AND r.retired_at IS NOT NULL
+           AND c.retired_at IS NULL`,
+      ),
+    ).toBe(6);
     await applyStatements(
       await buildPronunciationImportStatements(
         reliablePronunciationInput(revised, "mapping-vocabulary-2", 20),
@@ -194,6 +204,119 @@ describe("pronunciation foundation", () => {
          WHERE m.source_version = 'mapping-audio'`,
       ),
     ).toBe(1);
+    expect(
+      await scalar(
+        `SELECT COUNT(*) FROM cards c
+         JOIN lexeme_readings r ON r.id = c.lexeme_reading_id
+         WHERE r.lexeme_id = 'lexeme:complete-hsk:%E7%88%B1'
+           AND r.numeric_pinyin = 'ai4'
+           AND r.retired_at IS NOT NULL
+           AND c.retired_at IS NULL`,
+      ),
+    ).toBe(0);
+    expect(
+      await scalar(
+        `SELECT COUNT(*) FROM cards c
+         JOIN lexeme_readings r ON r.id = c.lexeme_reading_id
+         WHERE r.lexeme_id = 'lexeme:complete-hsk:%E7%88%B1'
+           AND r.numeric_pinyin = 'ai4'
+           AND r.retired_at IS NOT NULL
+           AND c.retired_at IS NOT NULL`,
+      ),
+    ).toBe(6);
+  });
+
+  test("withholds Hanzi-keyed audio when vocabulary adds an active sibling reading", async () => {
+    const original = [
+      lexeme("声", [{ pinyin: "shēng", numeric: "sheng1", meanings: ["sound"] }], 1),
+    ];
+    await applyStatements(
+      await buildV1ImportStatements({
+        lexemes: original,
+        enrichments: [],
+        vocabularyVersion: "audio-safety-vocabulary-1",
+        v1Version: "audio-safety-v1",
+        createdAt: 30,
+      }),
+    );
+    await applyStatements(
+      await buildPronunciationImportStatements(
+        reliablePronunciationInput(original, "audio-safety-vocabulary-1", 30),
+      ),
+    );
+
+    const revised = [
+      lexeme(
+        "声",
+        [
+          { pinyin: "shēng", numeric: "sheng1", meanings: ["sound"] },
+          { pinyin: "shèng", numeric: "sheng4", meanings: ["tone of voice"] },
+        ],
+        1,
+      ),
+    ];
+    await applyStatements(
+      await buildV1ImportStatements({
+        lexemes: revised,
+        enrichments: [],
+        vocabularyVersion: "audio-safety-vocabulary-2",
+        v1Version: "audio-safety-v1",
+        createdAt: 40,
+      }),
+    );
+
+    expect(
+      await scalar(
+        `SELECT COUNT(*) FROM lexeme_readings
+         WHERE lexeme_id = 'lexeme:complete-hsk:%E5%A3%B0' AND retired_at IS NULL`,
+      ),
+    ).toBe(2);
+    expect(
+      await scalar(
+        `SELECT COUNT(*) FROM lexeme_reading_media rm
+         JOIN lexeme_readings r ON r.id = rm.lexeme_reading_id
+         WHERE r.lexeme_id = 'lexeme:complete-hsk:%E5%A3%B0'`,
+      ),
+    ).toBe(1);
+
+    const target = await env.DB.prepare(
+      `SELECT c.id FROM cards c
+       JOIN lexeme_readings r ON r.id = c.lexeme_reading_id
+       WHERE r.lexeme_id = 'lexeme:complete-hsk:%E5%A3%B0'
+         AND r.numeric_pinyin = 'sheng1'
+         AND c.activity_type = 'audio_to_hanzi'
+         AND c.retired_at IS NULL`,
+    ).first<{ id: string }>();
+    if (!target) throw new Error("missing audio safety target card");
+
+    const temporaryRetirement = 9_999_999;
+    await env.DB.prepare(
+      `UPDATE cards SET retired_at = ?
+       WHERE subject_type = 'lexeme_reading' AND retired_at IS NULL AND id <> ?`,
+    )
+      .bind(temporaryRetirement, target.id)
+      .run();
+    try {
+      await createPronunciationSession(env.DB, {
+        sessionId: "audio-safety-session",
+        deviceId: "audio-safety-device",
+        focus: "listening",
+        maxItems: 1,
+      });
+      const next = await getNextPronunciationCard(
+        env.DB,
+        "audio-safety-session",
+        "audio-safety-device",
+      );
+      expect(next).toMatchObject({ status: "empty", card: null });
+    } finally {
+      await env.DB.prepare(
+        `UPDATE cards SET retired_at = NULL
+         WHERE subject_type = 'lexeme_reading' AND retired_at = ?`,
+      )
+        .bind(temporaryRetirement)
+        .run();
+    }
   });
 
   test("persists perception correctness and production self-rating without FSRS mutation", async () => {
@@ -466,6 +589,8 @@ function reliablePronunciationInput(
   vocabularyVersion: string,
   createdAt: number,
 ): PronunciationImportInput {
+  const simplified = lexemes[0]?.simplified;
+  if (!simplified) throw new Error("reliable pronunciation fixture requires one lexeme");
   return {
     lexemes,
     vocabularyVersion,
@@ -473,9 +598,9 @@ function reliablePronunciationInput(
     createdAt,
     audioItems: [
       {
-        simplified: "爱",
+        simplified,
         status: "reliable",
-        sourcePath: "64k/hsk/cmn-爱.mp3",
+        sourcePath: `64k/hsk/cmn-${simplified}.mp3`,
         contentSha256: "c".repeat(64),
         byteLength: 128,
       },
