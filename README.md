@@ -59,9 +59,10 @@ keyboard; 1–4 submit Again/Hard/Good/Easy. `bun run dev` serves only the Vite 
 `bun run dev:worker` for the real D1-backed flow.
 
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
-when both the binding is explicitly `true` and the request URL uses a loopback hostname. The
-version-controlled Wrangler configuration keeps it `false`, and non-loopback/production requests
-still require the existing bearer token. No credential is included in the frontend bundle.
+when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
+sends a same-origin `application/json` request. Cross-origin and simple-form requests cannot use
+the bypass. The version-controlled Wrangler configuration keeps it `false`, and production
+requests still require the existing bearer token. No credential is included in the frontend bundle.
 
 Wrangler stores ordinary local D1 data under `.wrangler/`, which is ignored. No deploy script or CI
 deploy is configured.
@@ -116,9 +117,11 @@ The browser keeps one small versioned localStorage record containing its stable 
 device sequence, active session ID, and at most one pending attempt. Staging a review durably saves
 the complete event and advances the next sequence before any request is sent. Reloading retries the
 same event ID/sequence until the idempotent server acknowledges it; it never silently replaces a
-corrupt identity. This is a deliberately small single-outbox boundary for this online slice. The
-later PWA work can move content and a multi-event queue to IndexedDB without changing the canonical
-event contract.
+corrupt identity. Browser-wide Web Locks serialize every read-modify-write transaction so two tabs
+cannot reserve the same device sequence or clear each other's pending event. Browsers without that
+coordination primitive fail closed. This is a deliberately small single-outbox boundary for this
+online slice. The later PWA work can move content and a multi-event queue to IndexedDB without
+changing the canonical event contract.
 
 `POST /api/attempts` remains fail-closed and accepts
 `Authorization: Bearer <ATTEMPT_WRITE_TOKEN>` outside the explicit loopback-only development mode.

@@ -182,6 +182,36 @@ describe("vocabulary study flow", () => {
     expect(empty).toMatchObject({ status: "empty", card: null });
     expect(empty.session.endedAt).not.toBeNull();
   });
+
+  test("local bypass rejects cross-origin/simple requests and malformed JSON is a 400", async () => {
+    const sessionBody = {
+      sessionId: "bypass-security-session",
+      deviceId: "bypass-security-device",
+      maxCards: 3,
+    };
+    const crossOrigin = await workerJson("http://127.0.0.1/api/study/sessions", sessionBody, {
+      origin: "https://attacker.example",
+    });
+    expect(crossOrigin.status).toBe(401);
+
+    const simpleRequest = await workerRaw(
+      "http://127.0.0.1/api/study/sessions",
+      JSON.stringify(sessionBody),
+      {
+        "content-type": "text/plain",
+        origin: "http://127.0.0.1",
+      },
+    );
+    expect(simpleRequest.status).toBe(401);
+
+    const malformedSession = await localRaw("/api/study/sessions", "{");
+    expect(malformedSession.status).toBe(400);
+    await expect(malformedSession.json()).resolves.toMatchObject({ code: "invalid_input" });
+
+    const malformedNext = await localRaw("/api/study/sessions/bypass-security-session/next", "");
+    expect(malformedNext.status).toBe(400);
+    await expect(malformedNext.json()).resolves.toMatchObject({ code: "invalid_input" });
+  });
 });
 
 async function applyImport(prefix: string, lexemes: V1SourceLexeme[]): Promise<void> {
@@ -257,15 +287,35 @@ function scheduledAttempt(input: {
 }
 
 function localJson(path: string, body: unknown): Promise<Response> {
-  return workerJson(`http://127.0.0.1${path}`, body);
+  const url = `http://127.0.0.1${path}`;
+  return workerJson(url, body, { origin: new URL(url).origin });
 }
 
-function workerJson(url: string, body: unknown): Promise<Response> {
+function localRaw(path: string, body: string): Promise<Response> {
+  const url = `http://127.0.0.1${path}`;
+  return workerRaw(url, body, {
+    "content-type": "application/json",
+    origin: new URL(url).origin,
+  });
+}
+
+function workerJson(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return workerRaw(url, JSON.stringify(body), {
+    "content-type": "application/json",
+    ...headers,
+  });
+}
+
+function workerRaw(url: string, body: string, headers: Record<string, string>): Promise<Response> {
   return exports.default.fetch(
     new Request(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      headers,
+      body,
     }),
   );
 }

@@ -6,19 +6,28 @@ import {
   loadOrCreateBrowserStudyState,
   setActiveStudySession,
   stageStudyAttempt,
+  type BrowserStudyState,
+  type StagedAttempt,
   type StorageLike,
+  type StudyLockManager,
 } from "../../src/web/study-storage";
 
 describe("browser study identity", () => {
-  test("survives reload while reserving every device sequence before delivery", () => {
+  test("survives reload while reserving every device sequence before delivery", async () => {
     const storage = new MemoryStorage();
+    const locks = new QueuedStudyLockManager();
     const ids = idFactory("device", "session", "event-1", "event-2");
-    let state = loadOrCreateBrowserStudyState(storage, ids);
+    let state = await loadOrCreateBrowserStudyState(storage, ids, locks);
     const deviceId = state.deviceId;
-    state = setActiveStudySession(storage, state, `study-session:${ids()}`);
+    state = await setActiveStudySession(storage, state, `study-session:${ids()}`, locks);
 
-    const first = stageStudyAttempt(storage, state, attemptDraft(state.activeSessionId), ids, () =>
-      Date.parse("2026-08-30T01:00:00Z"),
+    const first = await stageStudyAttempt(
+      storage,
+      state,
+      attemptDraft(state.activeSessionId),
+      ids,
+      () => Date.parse("2026-08-30T01:00:00Z"),
+      locks,
     );
     expect(first.attempt).toMatchObject({
       eventId: "study-event:event-1",
@@ -26,8 +35,10 @@ describe("browser study identity", () => {
       deviceSeq: 1,
     });
 
-    const afterFailedDeliveryReload = loadOrCreateBrowserStudyState(storage, () =>
-      never("reload must not create another identity"),
+    const afterFailedDeliveryReload = await loadOrCreateBrowserStudyState(
+      storage,
+      () => never("reload must not create another identity"),
+      locks,
     );
     expect(afterFailedDeliveryReload).toMatchObject({
       deviceId,
@@ -36,9 +47,19 @@ describe("browser study identity", () => {
       pendingAttempt: { eventId: first.attempt.eventId, deviceSeq: 1 },
     });
 
-    state = clearPendingStudyAttempt(storage, afterFailedDeliveryReload, first.attempt.eventId);
-    const second = stageStudyAttempt(storage, state, attemptDraft(state.activeSessionId), ids, () =>
-      Date.parse("2026-08-30T01:01:00Z"),
+    state = await clearPendingStudyAttempt(
+      storage,
+      afterFailedDeliveryReload,
+      first.attempt.eventId,
+      locks,
+    );
+    const second = await stageStudyAttempt(
+      storage,
+      state,
+      attemptDraft(state.activeSessionId),
+      ids,
+      () => Date.parse("2026-08-30T01:01:00Z"),
+      locks,
     );
     expect(second.attempt).toMatchObject({
       eventId: "study-event:event-2",
@@ -46,19 +67,91 @@ describe("browser study identity", () => {
       deviceSeq: 2,
     });
 
-    const finalReload = loadOrCreateBrowserStudyState(storage, () =>
-      never("reload must not create another identity"),
+    const finalReload = await loadOrCreateBrowserStudyState(
+      storage,
+      () => never("reload must not create another identity"),
+      locks,
     );
     expect(finalReload.nextDeviceSeq).toBe(3);
     expect(finalReload.pendingAttempt?.eventId).toBe(second.attempt.eventId);
   });
 
-  test("fails closed instead of silently replacing corrupt identity or pending review", () => {
+  test("serializes stale tabs so they cannot reuse a sequence or overwrite another review", async () => {
     const storage = new MemoryStorage();
-    storage.setItem(STUDY_STORAGE_KEY, "{not json");
-    expect(() => loadOrCreateBrowserStudyState(storage, () => "replacement")).toThrow(
-      "refusing to replace it",
+    const locks = new QueuedStudyLockManager();
+    let state = await loadOrCreateBrowserStudyState(storage, () => "device", locks);
+    state = await setActiveStudySession(storage, state, "study-session:shared", locks);
+    const preservedSession = await setActiveStudySession(
+      storage,
+      state,
+      "study-session:stale-tab-replacement",
+      locks,
     );
+    expect(preservedSession.activeSessionId).toBe("study-session:shared");
+
+    const attempts = await Promise.allSettled([
+      stageStudyAttempt(
+        storage,
+        state,
+        attemptDraft(state.activeSessionId),
+        () => "event-1",
+        () => Date.parse("2026-08-30T01:00:00Z"),
+        locks,
+      ),
+      stageStudyAttempt(
+        storage,
+        state,
+        attemptDraft(state.activeSessionId),
+        () => "event-raced",
+        () => Date.parse("2026-08-30T01:00:01Z"),
+        locks,
+      ),
+    ]);
+
+    expect(attempts[0].status).toBe("fulfilled");
+    expect(attempts[1]).toMatchObject({
+      status: "rejected",
+      reason: new Error("a study review is already pending delivery"),
+    });
+    if (attempts[0].status !== "fulfilled") throw attempts[0].reason;
+    const first = attempts[0].value;
+    expect(first.attempt.deviceSeq).toBe(1);
+
+    const cleared = await clearPendingStudyAttempt(
+      storage,
+      first.state,
+      first.attempt.eventId,
+      locks,
+    );
+    const second = await stageStudyAttempt(
+      storage,
+      cleared,
+      attemptDraft(cleared.activeSessionId),
+      () => "event-2",
+      () => Date.parse("2026-08-30T01:01:00Z"),
+      locks,
+    );
+    expect(second.attempt.deviceSeq).toBe(2);
+
+    await expect(
+      clearPendingStudyAttempt(storage, first.state, first.attempt.eventId, locks),
+    ).rejects.toThrow("pending study review identity changed");
+    const latest = await loadOrCreateBrowserStudyState(
+      storage,
+      () => never("existing identity must win"),
+      locks,
+    );
+    expect(latest.pendingAttempt?.eventId).toBe(second.attempt.eventId);
+    expect(latest.nextDeviceSeq).toBe(3);
+  });
+
+  test("fails closed instead of silently replacing corrupt identity or pending review", async () => {
+    const storage = new MemoryStorage();
+    const locks = new QueuedStudyLockManager();
+    storage.setItem(STUDY_STORAGE_KEY, "{not json");
+    await expect(
+      loadOrCreateBrowserStudyState(storage, () => "replacement", locks),
+    ).rejects.toThrow("refusing to replace it");
 
     storage.setItem(
       STUDY_STORAGE_KEY,
@@ -70,9 +163,9 @@ describe("browser study identity", () => {
         pendingAttempt: { eventId: "partial" },
       }),
     );
-    expect(() => loadOrCreateBrowserStudyState(storage, () => "replacement")).toThrow(
-      "refusing to discard it",
-    );
+    await expect(
+      loadOrCreateBrowserStudyState(storage, () => "replacement", locks),
+    ).rejects.toThrow("refusing to discard it");
   });
 });
 
@@ -85,6 +178,26 @@ class MemoryStorage implements StorageLike {
 
   setItem(key: string, value: string): void {
     this.values.set(key, value);
+  }
+}
+
+class QueuedStudyLockManager implements StudyLockManager {
+  readonly tails = new Map<string, Promise<void>>();
+
+  request<T extends BrowserStudyState | StagedAttempt>(
+    name: string,
+    callback: () => T,
+  ): Promise<T> {
+    const previous = this.tails.get(name) ?? Promise.resolve();
+    const result = previous.then(callback);
+    this.tails.set(
+      name,
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
   }
 }
 

@@ -2,6 +2,7 @@ import type { AttemptInput } from "../domain/types";
 import { parseAttemptInput } from "../domain/validation";
 
 export const STUDY_STORAGE_KEY = "chinese-learning.study-browser.v1";
+export const STUDY_STORAGE_LOCK = `${STUDY_STORAGE_KEY}.lock`;
 
 export interface BrowserStudyState {
   version: 1;
@@ -26,89 +27,151 @@ export interface StagedAttempt {
   attempt: AttemptInput;
 }
 
-export function loadOrCreateBrowserStudyState(
-  storage: StorageLike,
-  createId: () => string = () => crypto.randomUUID(),
-): BrowserStudyState {
-  const persisted = storage.getItem(STUDY_STORAGE_KEY);
-  if (persisted !== null) return parseBrowserStudyState(persisted);
+type StudyLockResult = BrowserStudyState | StagedAttempt;
 
-  const state: BrowserStudyState = {
-    version: 1,
-    deviceId: `browser:${createId()}`,
-    nextDeviceSeq: 1,
-    activeSessionId: null,
-    pendingAttempt: null,
-  };
-  persist(storage, state);
-  return state;
+export interface StudyLockManager {
+  request<T extends StudyLockResult>(name: string, callback: () => T): Promise<T>;
 }
 
-export function setActiveStudySession(
+export async function loadOrCreateBrowserStudyState(
+  storage: StorageLike,
+  createId: () => string = () => crypto.randomUUID(),
+  lockManager: StudyLockManager = browserStudyLockManager(),
+): Promise<BrowserStudyState> {
+  return lockManager.request(STUDY_STORAGE_LOCK, () => {
+    const persisted = storage.getItem(STUDY_STORAGE_KEY);
+    if (persisted !== null) return parseBrowserStudyState(persisted);
+
+    const state: BrowserStudyState = {
+      version: 1,
+      deviceId: `browser:${createId()}`,
+      nextDeviceSeq: 1,
+      activeSessionId: null,
+      pendingAttempt: null,
+    };
+    persist(storage, state);
+    return state;
+  });
+}
+
+export async function setActiveStudySession(
   storage: StorageLike,
   state: BrowserStudyState,
   sessionId: string | null,
-): BrowserStudyState {
+  lockManager: StudyLockManager = browserStudyLockManager(),
+): Promise<BrowserStudyState> {
   if (sessionId !== null && sessionId.trim().length === 0) {
     throw new Error("study session ID must be non-empty");
   }
-  if (state.pendingAttempt && sessionId !== state.activeSessionId) {
-    throw new Error("cannot replace a session while its review is pending");
-  }
-  const next = { ...state, activeSessionId: sessionId };
-  persist(storage, next);
-  return next;
+  return lockManager.request(STUDY_STORAGE_LOCK, () => {
+    const latest = loadExistingState(storage);
+    requireSameDevice(state, latest);
+    if (latest.pendingAttempt && sessionId !== latest.activeSessionId) {
+      throw new Error("cannot replace a session while its review is pending");
+    }
+    if (latest.activeSessionId !== state.activeSessionId) return latest;
+    if (
+      sessionId !== null &&
+      latest.activeSessionId !== null &&
+      sessionId !== latest.activeSessionId
+    ) {
+      return latest;
+    }
+    const next = { ...latest, activeSessionId: sessionId };
+    persist(storage, next);
+    return next;
+  });
 }
 
-export function stageStudyAttempt(
+export async function stageStudyAttempt(
   storage: StorageLike,
   state: BrowserStudyState,
   draft: StudyAttemptDraft,
   createId: () => string = () => crypto.randomUUID(),
   now: () => number = () => Date.now(),
-): StagedAttempt {
-  if (state.pendingAttempt) throw new Error("a study review is already pending delivery");
-  if (!state.activeSessionId || draft.studySessionId !== state.activeSessionId) {
-    throw new Error("a study review must belong to the active session");
-  }
-  if (state.nextDeviceSeq >= Number.MAX_SAFE_INTEGER) {
-    throw new Error("browser device sequence is exhausted");
-  }
+  lockManager: StudyLockManager = browserStudyLockManager(),
+): Promise<StagedAttempt> {
+  return lockManager.request(STUDY_STORAGE_LOCK, () => {
+    const latest = loadExistingState(storage);
+    requireSameDevice(state, latest);
+    if (latest.pendingAttempt) throw new Error("a study review is already pending delivery");
+    if (!latest.activeSessionId || draft.studySessionId !== latest.activeSessionId) {
+      throw new Error("a study review must belong to the active session");
+    }
+    if (latest.nextDeviceSeq >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("browser device sequence is exhausted");
+    }
 
-  const occurredAt = now();
-  if (!Number.isSafeInteger(occurredAt) || occurredAt < 0) {
-    throw new Error("study attempt time must be a non-negative integer");
-  }
-  const attempt: AttemptInput = {
-    ...draft,
-    eventId: `study-event:${createId()}`,
-    deviceId: state.deviceId,
-    deviceSeq: state.nextDeviceSeq,
-    occurredAt: new Date(occurredAt).toISOString(),
-  };
-  const next: BrowserStudyState = {
-    ...state,
-    nextDeviceSeq: state.nextDeviceSeq + 1,
-    pendingAttempt: attempt,
-  };
+    const occurredAt = now();
+    if (!Number.isSafeInteger(occurredAt) || occurredAt < 0) {
+      throw new Error("study attempt time must be a non-negative integer");
+    }
+    const attempt: AttemptInput = {
+      ...draft,
+      eventId: `study-event:${createId()}`,
+      deviceId: latest.deviceId,
+      deviceSeq: latest.nextDeviceSeq,
+      occurredAt: new Date(occurredAt).toISOString(),
+    };
+    const next: BrowserStudyState = {
+      ...latest,
+      nextDeviceSeq: latest.nextDeviceSeq + 1,
+      pendingAttempt: attempt,
+    };
 
-  // The sequence reservation and complete retry payload reach durable storage
-  // before the caller is allowed to send the request.
-  persist(storage, next);
-  return { state: next, attempt };
+    // The sequence reservation and complete retry payload reach durable storage
+    // before the caller is allowed to send the request.
+    persist(storage, next);
+    return { state: next, attempt };
+  });
 }
 
-export function clearPendingStudyAttempt(
+export async function clearPendingStudyAttempt(
   storage: StorageLike,
   state: BrowserStudyState,
   eventId: string,
-): BrowserStudyState {
-  if (!state.pendingAttempt || state.pendingAttempt.eventId !== eventId) {
+  lockManager: StudyLockManager = browserStudyLockManager(),
+): Promise<BrowserStudyState> {
+  if (state.pendingAttempt?.eventId !== eventId) {
     throw new Error("pending study review identity changed before acknowledgement");
   }
-  const next = { ...state, pendingAttempt: null };
-  persist(storage, next);
-  return next;
+  return lockManager.request(STUDY_STORAGE_LOCK, () => {
+    const latest = loadExistingState(storage);
+    requireSameDevice(state, latest);
+    if (latest.pendingAttempt === null) return latest;
+    if (latest.pendingAttempt.eventId !== eventId) {
+      throw new Error("pending study review identity changed before acknowledgement");
+    }
+    const next = { ...latest, pendingAttempt: null };
+    persist(storage, next);
+    return next;
+  });
+}
+
+function browserStudyLockManager(): StudyLockManager {
+  const locks = globalThis.navigator?.locks;
+  if (!locks) {
+    throw new Error("This browser cannot safely coordinate study identity across tabs.");
+  }
+  return {
+    request<T extends StudyLockResult>(name: string, callback: () => T): Promise<T> {
+      return locks.request(name, callback);
+    },
+  };
+}
+
+function loadExistingState(storage: StorageLike): BrowserStudyState {
+  const persisted = storage.getItem(STUDY_STORAGE_KEY);
+  if (persisted === null) {
+    throw new Error("stored study identity disappeared; refusing to create a replacement");
+  }
+  return parseBrowserStudyState(persisted);
+}
+
+function requireSameDevice(state: BrowserStudyState, latest: BrowserStudyState): void {
+  if (state.deviceId !== latest.deviceId) {
+    throw new Error("stored study device identity changed unexpectedly");
+  }
 }
 
 function parseBrowserStudyState(json: string): BrowserStudyState {

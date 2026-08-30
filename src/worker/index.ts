@@ -59,7 +59,7 @@ app.post("/api/study/sessions", async (context) => {
   if (authError) return authError;
 
   try {
-    const input = parseCreateStudySessionInput(await context.req.json<unknown>());
+    const input = parseCreateStudySessionInput(await readJsonBody(context));
     const result = await createStudySession(context.env.DB, input);
     return context.json(result, result.disposition === "created" ? 201 : 200);
   } catch (error) {
@@ -79,7 +79,7 @@ app.post("/api/study/sessions/:sessionId/next", async (context) => {
   if (authError) return authError;
 
   try {
-    const input = parseNextStudyCardInput(await context.req.json<unknown>());
+    const input = parseNextStudyCardInput(await readJsonBody(context));
     const result = await getNextStudyCard(
       context.env.DB,
       context.req.param("sessionId"),
@@ -142,4 +142,12 @@ function domainError(context: AppContext, error: unknown): Response | null {
     return context.json({ error: error.message, code: error.code }, 409);
   }
   return null;
+}
+
+async function readJsonBody(context: AppContext): Promise<unknown> {
+  try {
+    return await context.req.json<unknown>();
+  } catch {
+    throw new InvalidInputError("request body must be valid JSON");
+  }
 }

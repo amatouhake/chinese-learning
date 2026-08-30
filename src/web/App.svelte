@@ -34,7 +34,7 @@
     phase = "loading";
     errorMessage = "";
     try {
-      browserState = loadOrCreateBrowserStudyState(localStorage);
+      browserState = await loadOrCreateBrowserStudyState(localStorage);
       if (!browserState.activeSessionId) {
         await createNewSession();
         return;
@@ -55,13 +55,14 @@
     phase = "loading";
     errorMessage = "";
     try {
-      browserState ??= loadOrCreateBrowserStudyState(localStorage);
+      browserState ??= await loadOrCreateBrowserStudyState(localStorage);
       if (browserState.pendingAttempt) {
         throw new Error("Finish delivering the pending review before starting another session.");
       }
-      const sessionId = `study-session:${crypto.randomUUID()}`;
-      browserState = setActiveStudySession(localStorage, browserState, sessionId);
-      await ensureSession(sessionId, browserState.deviceId);
+      const requestedSessionId = `study-session:${crypto.randomUUID()}`;
+      browserState = await setActiveStudySession(localStorage, browserState, requestedSessionId);
+      if (!browserState.activeSessionId) throw new Error("No active study session is available.");
+      await ensureSession(browserState.activeSessionId, browserState.deviceId);
       await loadNextCard();
     } catch (error) {
       showError(error);
@@ -93,7 +94,7 @@
       return;
     }
 
-    browserState = setActiveStudySession(localStorage, browserState, null);
+    browserState = await setActiveStudySession(localStorage, browserState, null);
     phase = result.status === "empty" ? "empty" : "completed";
   }
 
@@ -107,7 +108,8 @@
 
     const responseMs = Math.max(0, Math.round(performance.now() - promptStartedAt));
     try {
-      const staged = stageStudyAttempt(localStorage, browserState, {
+      phase = "submitting";
+      const staged = await stageStudyAttempt(localStorage, browserState, {
         cardId: card.cardId,
         studySessionId: browserState.activeSessionId,
         mode: "study",
@@ -124,7 +126,6 @@
         },
       });
       browserState = staged.state;
-      phase = "submitting";
       await deliverPendingAttempt();
       await loadNextCard();
     } catch (error) {
@@ -136,7 +137,7 @@
     if (!browserState?.pendingAttempt) return;
     const eventId = browserState.pendingAttempt.eventId;
     await postJson("/api/attempts", browserState.pendingAttempt);
-    browserState = clearPendingStudyAttempt(localStorage, browserState, eventId);
+    browserState = await clearPendingStudyAttempt(localStorage, browserState, eventId);
   }
 
   function handleKeydown(event: KeyboardEvent): void {
