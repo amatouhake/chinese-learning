@@ -21,3 +21,44 @@ export async function authorizeAttemptWrite(
   ]);
   return subtle.timingSafeEqual(providedHash, expectedHash) ? "authorized" : "unauthorized";
 }
+
+export async function authorizeStudyWrite(
+  request: Request,
+  expectedToken: string | undefined,
+  localStudyBypass: string | undefined,
+): Promise<"authorized" | "unauthorized" | "unconfigured"> {
+  const url = new URL(request.url);
+  if (
+    localStudyBypass === "true" &&
+    isLoopbackHostname(url.hostname) &&
+    isSameOriginBrowserRequest(request, url) &&
+    hasJsonContentType(request)
+  ) {
+    return "authorized";
+  }
+  return authorizeAttemptWrite(request.headers.get("authorization") ?? undefined, expectedToken);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+function isSameOriginBrowserRequest(request: Request, url: URL): boolean {
+  const origin = request.headers.get("origin");
+  if (origin !== null) {
+    try {
+      return new URL(origin).origin === url.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  return request.headers.get("sec-fetch-site") === "same-origin";
+}
+
+function hasJsonContentType(request: Request): boolean {
+  return (
+    request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ===
+    "application/json"
+  );
+}

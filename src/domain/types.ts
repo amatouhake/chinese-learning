@@ -91,6 +91,55 @@ export interface IngestResult {
   cardState: MaterializedCardState | null;
 }
 
+export interface StudyMeaning {
+  language: string;
+  text: string;
+}
+
+export interface StudyExample {
+  chinese: string;
+  pinyin: string | null;
+  meaningJa: string | null;
+  meaningEn: string | null;
+}
+
+export interface StudyCard {
+  cardId: string;
+  activityType: "hanzi_to_meaning" | "meaning_to_hanzi";
+  source: "due" | "new";
+  schedulerConfigId: string;
+  state: {
+    dueAt: number;
+    reps: number;
+    lapses: number;
+    version: number;
+  };
+  lexeme: {
+    simplified: string;
+    traditional: string | null;
+    pinyin: string | null;
+    numericPinyin: string | null;
+    meanings: StudyMeaning[];
+    hskLevel: number | null;
+  };
+  example: StudyExample | null;
+}
+
+export interface StudySessionView {
+  id: string;
+  deviceId: string;
+  maxCards: number;
+  reviewedCards: number;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface StudyNextResult {
+  status: "card" | "empty" | "completed";
+  session: StudySessionView;
+  card: StudyCard | null;
+}
+
 export function isActivityType(value: unknown): value is ActivityType {
   return typeof value === "string" && (ACTIVITY_TYPES as readonly string[]).includes(value);
 }
