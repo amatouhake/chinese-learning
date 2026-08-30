@@ -1,0 +1,31 @@
+{
+  "name": "Chinese Learning",
+  "short_name": "中文学习",
+  "description": "Offline-capable Chinese vocabulary and pronunciation practice.",
+  "id": "/",
+  "start_url": "/#study",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#efe9dc",
+  "theme_color": "#182b24",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

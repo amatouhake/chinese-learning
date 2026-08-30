@@ -13,6 +13,8 @@ import {
 } from "../domain/errors";
 import { normalizeUtcInstant, semanticOrderKey } from "../domain/ordering";
 import {
+  PRONUNCIATION_AUDIO_SKIP_INTERACTION,
+  PRONUNCIATION_AUDIO_SKIP_REASON,
   deriveTonePair,
   isPronunciationActivity,
   normalizeNumericPinyin,
@@ -609,6 +611,27 @@ async function validatePronunciationAttempt(
     throw new InvalidInputError("pronunciation practice must not carry card state versions");
   }
 
+  if (input.metadata?.interaction === PRONUNCIATION_AUDIO_SKIP_INTERACTION) {
+    if (input.activityType !== "audio_to_hanzi" && input.activityType !== "audio_to_meaning") {
+      throw new InvalidInputError("uncached-audio skips require an audio pronunciation card");
+    }
+    if (
+      input.correct !== undefined ||
+      input.selfRating !== undefined ||
+      input.score !== undefined ||
+      input.metadata.selectedChoiceId !== undefined
+    ) {
+      throw new InvalidInputError("uncached-audio skips must not claim a graded response");
+    }
+    if (input.metadata.reason !== PRONUNCIATION_AUDIO_SKIP_REASON) {
+      throw new InvalidInputError("uncached-audio skips require their canonical reason");
+    }
+    if (card.lexeme_reading_id === null || input.metadata.readingId !== card.lexeme_reading_id) {
+      throw new InvalidInputError("uncached-audio skips must preserve the exact reading identity");
+    }
+    return;
+  }
+
   if (input.activityType === "pronunciation_production") {
     if (input.selfRating === undefined) {
       throw new InvalidInputError("pronunciation production requires a self-rating");
@@ -644,8 +667,10 @@ async function validatePronunciationAttempt(
     input.activityType === "tone_identification" ||
     input.activityType === "tone_pair_identification"
   ) {
+    // An offline attempt is an immutable fact about content that was valid when
+    // the prompt was cached. Retirement must not make that delayed fact invalid.
     const reading = await db
-      .prepare("SELECT numeric_pinyin FROM lexeme_readings WHERE id = ? AND retired_at IS NULL")
+      .prepare("SELECT numeric_pinyin FROM lexeme_readings WHERE id = ?")
       .bind(card.lexeme_reading_id)
       .first<{ numeric_pinyin: string }>();
     if (!reading) throw new ReferenceNotFoundError("lexeme reading", card.lexeme_reading_id);

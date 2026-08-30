@@ -1,3 +1,12 @@
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 export async function postJson<T = unknown>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
@@ -12,12 +21,19 @@ export async function postJson<T = unknown>(path: string, body: unknown): Promis
       typeof (payload as Record<string, unknown>).error === "string"
         ? ((payload as Record<string, unknown>).error as string)
         : `Request failed (${response.status})`;
-    if (response.status === 401 || response.status === 503) {
-      throw new Error(
+    const serverCode =
+      typeof payload === "object" &&
+      payload !== null &&
+      typeof (payload as Record<string, unknown>).code === "string"
+        ? (payload as Record<string, unknown>).code
+        : null;
+    if (response.status === 401 || serverCode === "auth_unconfigured") {
+      throw new ApiError(
         "Local study access is not enabled. Use bun run dev:worker with LOCAL_STUDY_BYPASS=true in .dev.vars.",
+        response.status,
       );
     }
-    throw new Error(serverMessage);
+    throw new ApiError(serverMessage, response.status);
   }
   return payload as T;
 }

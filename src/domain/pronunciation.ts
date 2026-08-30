@@ -24,6 +24,9 @@ export const PRONUNCIATION_FOCUSES = ["mixed", "pinyin", "tones", "listening", "
 
 export type PronunciationFocus = (typeof PRONUNCIATION_FOCUSES)[number];
 
+export const PRONUNCIATION_AUDIO_SKIP_INTERACTION = "skip-uncached-audio";
+export const PRONUNCIATION_AUDIO_SKIP_REASON = "audio-not-cached";
+
 export type WordAudioMappingStatus = "reliable" | "ambiguous" | "missing";
 
 export function normalizeNumericPinyin(numericPinyin: string): NormalizedSyllable[] {

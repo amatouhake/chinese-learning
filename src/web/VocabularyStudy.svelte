@@ -1,15 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  import type { FsrsRating, StudyCard, StudyNextResult, StudySessionView } from "../domain/types";
-  import { postJson } from "./api";
-  import {
-    clearPendingStudyAttempt,
-    loadOrCreateBrowserStudyState,
-    setActiveStudySession,
-    stageStudyAttempt,
-    type BrowserStudyState,
-  } from "./study-storage";
+  import type { FsrsRating, StudyCard, StudySessionView } from "../domain/types";
+  import { ApiError, postJson } from "./api";
+  import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
+  import { synchronizeLearning } from "./sync";
 
   type Phase = "loading" | "prompt" | "revealed" | "submitting" | "empty" | "completed" | "error";
   const ratings: Array<{ rating: FsrsRating; label: string; hint: string }> = [
@@ -20,11 +15,15 @@
   ];
 
   let phase: Phase = "loading";
-  let browserState: BrowserStudyState | null = null;
+  let store: OfflineLearningStore | null = null;
+  let browserState: BrowserOfflineState | null = null;
   let session: StudySessionView | null = null;
   let card: StudyCard | null = null;
   let errorMessage = "";
   let promptStartedAt = 0;
+  let syncMessage = "Preparing offline cache…";
+  let browserOffline = !navigator.onLine;
+  let isOffline = browserOffline;
 
   onMount(() => void initializeStudy());
 
@@ -32,16 +31,29 @@
     phase = "loading";
     errorMessage = "";
     try {
-      browserState = await loadOrCreateBrowserStudyState(localStorage);
-      if (browserState.pendingAttempt) {
-        phase = "submitting";
-        await deliverPendingAttempt();
-      }
+      store ??= await OfflineLearningStore.open(localStorage);
+      browserState = await store.snapshot();
       if (!browserState.activeSessionId) {
+        if (browserOffline) {
+          errorMessage = "Reconnect once to prepare a new offline vocabulary set.";
+          phase = "error";
+          return;
+        }
         await createNewSession();
         return;
       }
-      await ensureSession(browserState.activeSessionId, browserState.deviceId);
+      if (!browserOffline) {
+        try {
+          await ensureSession(browserState.activeSessionId, browserState.deviceId);
+          await syncNow();
+        } catch (error) {
+          if (!(await store.getStudySession(browserState.activeSessionId))) throw error;
+          isOffline = browserOffline || !(error instanceof ApiError);
+          syncMessage = isOffline
+            ? "Network unavailable · using the cached vocabulary set"
+            : "Service unavailable · using the cached vocabulary set";
+        }
+      }
       await loadNextCard();
     } catch (error) {
       showError(error);
@@ -52,16 +64,13 @@
     phase = "loading";
     errorMessage = "";
     try {
-      browserState ??= await loadOrCreateBrowserStudyState(localStorage);
-      if (browserState.pendingAttempt)
-        throw new Error("A learning attempt is still pending delivery.");
-      browserState = await setActiveStudySession(
-        localStorage,
-        browserState,
-        `study-session:${crypto.randomUUID()}`,
-      );
+      if (browserOffline) throw new Error("Reconnect to prepare another offline vocabulary set.");
+      store ??= await OfflineLearningStore.open(localStorage);
+      browserState ??= await store.snapshot();
+      browserState = await store.setActiveStudySession(`study-session:${crypto.randomUUID()}`);
       if (!browserState.activeSessionId) throw new Error("No active study session is available.");
       await ensureSession(browserState.activeSessionId, browserState.deviceId);
+      await syncNow();
       await loadNextCard();
     } catch (error) {
       showError(error);
@@ -75,31 +84,46 @@
       maxCards: 10,
     });
     session = result.session;
+    if (!store) throw new Error("Offline storage is not ready.");
+    await store.rememberStudySession(result.session);
   }
 
   async function loadNextCard(): Promise<void> {
-    if (!browserState?.activeSessionId) throw new Error("No active study session is available.");
+    if (!store || !browserState?.activeSessionId) {
+      throw new Error("No active study session is available.");
+    }
     phase = "loading";
-    const result = await postJson<StudyNextResult>(
-      `/api/study/sessions/${encodeURIComponent(browserState.activeSessionId)}/next`,
-      { deviceId: browserState.deviceId },
-    );
-    session = result.session;
-    card = result.card;
-    if (result.status === "card" && result.card) {
+    const sessionId = browserState.activeSessionId;
+    const [cachedSession, cachedCard] = await Promise.all([
+      store.getStudySession(sessionId),
+      store.getCachedStudyCard(sessionId),
+    ]);
+    if (!cachedSession) {
+      throw new Error(
+        isOffline
+          ? "This vocabulary set was not cached before the connection was lost."
+          : "The canonical vocabulary set has not been pulled yet.",
+      );
+    }
+    session = cachedSession;
+    card = cachedCard;
+    if (cachedCard) {
       promptStartedAt = performance.now();
       phase = "prompt";
       return;
     }
-    browserState = await setActiveStudySession(localStorage, browserState, null);
-    phase = result.status === "empty" ? "empty" : "completed";
+    if (cachedSession.endedAt !== null) {
+      browserState = await store.clearActiveStudySession(sessionId);
+    }
+    phase = session.reviewedCards === 0 ? "empty" : "completed";
   }
 
   async function rateCard(rating: FsrsRating): Promise<void> {
     if (phase !== "revealed" || !card || !browserState?.activeSessionId) return;
     try {
       phase = "submitting";
-      const staged = await stageStudyAttempt(localStorage, browserState, {
+      if (!store) throw new Error("Offline storage is not ready.");
+      const staged = await store.stageAttempt(browserState, {
         cardId: card.cardId,
         studySessionId: browserState.activeSessionId,
         mode: "study",
@@ -110,18 +134,43 @@
         fsrsReview: { rating, schedulerConfigId: card.schedulerConfigId },
       });
       browserState = staged.state;
-      await deliverPendingAttempt();
+      if (!browserOffline) await syncNow();
       await loadNextCard();
     } catch (error) {
       showError(error);
     }
   }
 
-  async function deliverPendingAttempt(): Promise<void> {
-    if (!browserState?.pendingAttempt) return;
-    const eventId = browserState.pendingAttempt.eventId;
-    await postJson("/api/attempts", browserState.pendingAttempt);
-    browserState = await clearPendingStudyAttempt(localStorage, browserState, eventId);
+  async function syncNow(): Promise<void> {
+    if (!store || browserOffline) return;
+    const result = await synchronizeLearning(store);
+    browserState = result.state;
+    isOffline = browserOffline || result.networkUnavailable;
+    if (result.error) {
+      syncMessage = `${result.pending} queued · ${result.error}`;
+      return;
+    }
+    syncMessage =
+      result.pending === 0 ? "Offline cache ready · synced" : `${result.pending} queued`;
+  }
+
+  async function handleOnline(): Promise<void> {
+    browserOffline = false;
+    isOffline = false;
+    syncMessage = "Connection restored · synchronizing…";
+    try {
+      if (!store) return await initializeStudy();
+      await syncNow();
+      if (phase !== "revealed") await loadNextCard();
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  function handleOffline(): void {
+    browserOffline = true;
+    isOffline = true;
+    syncMessage = `${browserState?.pendingCount ?? 0} queued · offline`;
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -163,7 +212,11 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window
+  onkeydown={handleKeydown}
+  ononline={() => void handleOnline()}
+  onoffline={handleOffline}
+/>
 
 <header class="app-header surface-header">
   <div><p class="eyebrow">Vocabulary study</p></div>
@@ -173,6 +226,10 @@
     </p>
   {/if}
 </header>
+
+<p class:offline={isOffline} class="sync-status" aria-live="polite">
+  {isOffline ? `${browserState?.pendingCount ?? 0} queued · offline` : syncMessage}
+</p>
 
 {#if phase === "loading" || phase === "submitting"}
   <section class="status-panel" aria-live="polite">
@@ -202,8 +259,17 @@
   <section class="status-panel">
     <p class="completion-mark" aria-hidden="true">好</p>
     <h2>Session complete</h2>
-    <p>{session?.reviewedCards ?? 0} reviews are safely persisted.</p>
-    <button class="primary-button" onclick={() => void createNewSession()}>Study another 10</button>
+    <p>
+      {session?.reviewedCards ?? 0} reviews are {browserState?.pendingCount
+        ? "durably queued for reconnect"
+        : "safely synchronized"}.
+    </p>
+    <button
+      class="primary-button"
+      onclick={() => void (browserState?.pendingCount ? initializeStudy() : createNewSession())}
+    >
+      {browserState?.pendingCount ? "Retry synchronization" : "Study another 10"}
+    </button>
   </section>
 {:else if card}
   <section class="study-card" aria-live="polite">

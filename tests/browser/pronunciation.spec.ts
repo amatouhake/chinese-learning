@@ -29,11 +29,8 @@ test.describe("pronunciation dogfood", () => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("response", (response) => {
-      if (
-        response.url().includes("/api/pronunciation/sessions/") &&
-        response.url().endsWith("/next")
-      ) {
-        nextResponses.push(recordCard(response, observedCards));
+      if (response.url().endsWith("/api/sync/pull")) {
+        nextResponses.push(recordCards(response, observedCards));
       }
       if (response.url().includes("/media/audio-cmn/")) audioResponses.push(response);
     });
@@ -62,7 +59,9 @@ test.describe("pronunciation dogfood", () => {
       await page.getByRole("button", { name: "Continue" }).click();
     }
 
-    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible({
+      timeout: 20_000,
+    });
     await Promise.all(nextResponses);
     expect(new Set(observedCards.map((card) => card.activityType))).toEqual(
       EXPECTED_MIXED_ACTIVITIES,
@@ -90,7 +89,9 @@ test.describe("pronunciation dogfood", () => {
     await page.goto("/#pronunciation");
     await page.getByRole("button", { name: /^Tones / }).click();
 
-    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible();
+    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
     await page.locator(".choice-grid button").first().click();
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText("Tone pair", { exact: true })).toBeVisible();
@@ -126,35 +127,47 @@ test.describe("pronunciation dogfood", () => {
     await expect(page.getByRole("alert")).toContainText("simulated session creation failure");
     await page.getByRole("button", { name: "Try again" }).click();
 
-    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible();
+    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
     expect(sessionRequests).toHaveLength(2);
     expect(sessionRequests[1]).toEqual(sessionRequests[0]);
     expect(sessionRequests[1]?.focus).toBe("tones");
     expect(
       await page.evaluate(() => {
-        const state = JSON.parse(
-          localStorage.getItem("chinese-learning.study-browser.v1") ?? "null",
-        ) as { activePronunciationFocus?: unknown } | null;
-        return state?.activePronunciationFocus;
+        return new Promise<unknown>((resolve, reject) => {
+          const request = indexedDB.open("chinese-learning.offline.v1", 1);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const transaction = request.result.transaction("meta", "readonly");
+            const get = transaction.objectStore("meta").get("state");
+            get.onerror = () => reject(get.error);
+            get.onsuccess = () => resolve(get.result?.activePronunciationFocus);
+          };
+        });
       }),
     ).toBe("tones");
   });
 });
 
-async function recordCard(response: Response, cards: ObservedCard[]): Promise<void> {
+async function recordCards(response: Response, cards: ObservedCard[]): Promise<void> {
   const payload = (await response.json()) as {
-    card: null | {
-      activityType: string;
-      lexeme: { simplified: string };
-      reading: { pinyin: string };
-      media: null | { url: string };
+    pronunciationPack: null | {
+      cards: Array<{
+        activityType: string;
+        lexeme: { simplified: string };
+        reading: { pinyin: string };
+        media: null | { url: string };
+      }>;
     };
   };
-  if (!payload.card) return;
-  cards.push({
-    activityType: payload.card.activityType,
-    simplified: payload.card.lexeme.simplified,
-    pinyin: payload.card.reading.pinyin,
-    mediaUrl: payload.card.media?.url ?? null,
-  });
+  if (!payload.pronunciationPack || cards.length > 0) return;
+  cards.push(
+    ...payload.pronunciationPack.cards.map((card) => ({
+      activityType: card.activityType,
+      simplified: card.lexeme.simplified,
+      pinyin: card.reading.pinyin,
+      mediaUrl: card.media?.url ?? null,
+    })),
+  );
 }

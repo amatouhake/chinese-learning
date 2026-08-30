@@ -1,5 +1,11 @@
 import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
-import type { StudyCard, StudyMeaning, StudyNextResult, StudySessionView } from "../domain/types";
+import type {
+  OfflineStudyPack,
+  StudyCard,
+  StudyMeaning,
+  StudyNextResult,
+  StudySessionView,
+} from "../domain/types";
 import type { CreateStudySessionInput } from "../domain/study-validation";
 
 interface StudySessionRow {
@@ -121,16 +127,58 @@ export async function getNextStudyCard(
     };
   }
 
-  const scheduler = await db
-    .prepare("SELECT id FROM scheduler_configs WHERE is_current = 1")
-    .first<SchedulerRow>();
-  if (!scheduler) throw new Error("no current scheduler configuration is available");
+  const schedulerConfigId = await currentSchedulerId(db);
 
   return {
     status: "card",
     session: sessionView,
-    card: mapStudyCard(selected, due ? "due" : "new", scheduler.id),
+    card: mapStudyCard(selected, due ? "due" : "new", schedulerConfigId),
   };
+}
+
+export async function getOfflineStudyPack(
+  db: D1Database,
+  sessionId: string,
+  deviceId: string,
+  options: StudyServiceOptions = {},
+): Promise<OfflineStudyPack> {
+  const session = await loadOwnedStudySession(db, sessionId, deviceId);
+  let sessionView = await mapSession(db, session);
+  if (session.ended_at !== null || sessionView.reviewedCards >= sessionView.maxCards) {
+    if (session.ended_at === null) {
+      await completeStudySession(db, session, sessionView, options);
+      sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+    }
+    return {
+      status: sessionView.reviewedCards === 0 ? "empty" : "completed",
+      session: sessionView,
+      cards: [],
+    };
+  }
+
+  const now = serverTime(options);
+  const schedulerConfigId = await currentSchedulerId(db);
+  const cards: StudyCard[] = [];
+  const excludedCardIds: string[] = [];
+  const remaining = sessionView.maxCards - sessionView.reviewedCards;
+  for (let index = 0; index < remaining; index += 1) {
+    const due = await selectStudyCard(db, sessionId, now, "due", excludedCardIds);
+    const selected = due ?? (await selectStudyCard(db, sessionId, now, "new", excludedCardIds));
+    if (!selected) break;
+    excludedCardIds.push(selected.card_id);
+    cards.push(mapStudyCard(selected, due ? "due" : "new", schedulerConfigId));
+  }
+
+  if (cards.length === 0) {
+    await completeStudySession(db, session, sessionView, { now: () => now });
+    sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+    return {
+      status: sessionView.reviewedCards === 0 ? "empty" : "completed",
+      session: sessionView,
+      cards,
+    };
+  }
+  return { status: "cards", session: sessionView, cards };
 }
 
 async function selectStudyCard(
@@ -138,8 +186,13 @@ async function selectStudyCard(
   sessionId: string,
   now: number,
   source: "due" | "new",
+  excludedCardIds: readonly string[] = [],
 ): Promise<StudyCardRow | null> {
   const schedulingPredicate = source === "due" ? "cs.reps > 0 AND cs.due_at <= ?" : "cs.reps = 0";
+  const exclusionPredicate =
+    excludedCardIds.length === 0
+      ? ""
+      : `AND c.id NOT IN (${excludedCardIds.map(() => "?").join(", ")})`;
   return db
     .prepare(
       `SELECT
@@ -208,6 +261,7 @@ async function selectStudyCard(
            SELECT 1 FROM attempts a
            WHERE a.study_session_id = ? AND a.card_id = c.id
          )
+         ${exclusionPredicate}
        ORDER BY
          ${source === "due" ? "cs.due_at," : ""}
          COALESCE(hsk_level, 2147483647),
@@ -217,8 +271,16 @@ async function selectStudyCard(
          c.id
        LIMIT 1`,
     )
-    .bind(...(source === "due" ? [now, sessionId] : [sessionId]))
+    .bind(...(source === "due" ? [now, sessionId] : [sessionId]), ...excludedCardIds)
     .first<StudyCardRow>();
+}
+
+async function currentSchedulerId(db: D1Database): Promise<string> {
+  const scheduler = await db
+    .prepare("SELECT id FROM scheduler_configs WHERE is_current = 1")
+    .first<SchedulerRow>();
+  if (!scheduler) throw new Error("no current scheduler configuration is available");
+  return scheduler.id;
 }
 
 async function loadOwnedStudySession(
