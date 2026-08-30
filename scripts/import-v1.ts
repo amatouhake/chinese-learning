@@ -168,7 +168,7 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return left.every((byte, index) => byte === right[index]);
 }
 
-function parseSourceLexemes(value: unknown, hskLevel: number): V1SourceLexeme[] {
+export function parseSourceLexemes(value: unknown, hskLevel: number): V1SourceLexeme[] {
   if (!Array.isArray(value)) throw new Error("vocabulary source must be an array");
   return value.map((entry) => {
     if (!isRecord(entry) || typeof entry.simplified !== "string" || !Array.isArray(entry.forms)) {
