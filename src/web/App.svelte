@@ -251,8 +251,8 @@
   {:else if phase === "empty"}
     <section class="status-panel">
       <p class="completion-mark" aria-hidden="true">○</p>
-      <h2>No vocabulary is available yet</h2>
-      <p>Run the full HSK import, then start a fresh short session.</p>
+      <h2>No cards are ready right now</h2>
+      <p>You may be caught up for now. On a fresh setup, complete the HSK import first.</p>
       <button class="primary-button" onclick={() => void createNewSession()}>Check again</button>
     </section>
   {:else if phase === "completed"}

@@ -76,7 +76,7 @@ describe("browser study identity", () => {
     expect(finalReload.pendingAttempt?.eventId).toBe(second.attempt.eventId);
   });
 
-  test("serializes stale tabs so they cannot reuse a sequence or overwrite another review", async () => {
+  test("serializes stale tabs without sequence reuse, duplicate presentations, or overwritten reviews", async () => {
     const storage = new MemoryStorage();
     const locks = new QueuedStudyLockManager();
     let state = await loadOrCreateBrowserStudyState(storage, () => "device", locks);
@@ -123,6 +123,17 @@ describe("browser study identity", () => {
       first.attempt.eventId,
       locks,
     );
+    await expect(
+      stageStudyAttempt(
+        storage,
+        state,
+        attemptDraft(state.activeSessionId),
+        () => "event-from-stale-card",
+        () => Date.parse("2026-08-30T01:00:30Z"),
+        locks,
+      ),
+    ).rejects.toThrow("study state changed in another tab");
+
     const second = await stageStudyAttempt(
       storage,
       cleared,

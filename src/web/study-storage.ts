@@ -95,6 +95,7 @@ export async function stageStudyAttempt(
     const latest = loadExistingState(storage);
     requireSameDevice(state, latest);
     if (latest.pendingAttempt) throw new Error("a study review is already pending delivery");
+    requireCurrentStateForStaging(state, latest);
     if (!latest.activeSessionId || draft.studySessionId !== latest.activeSessionId) {
       throw new Error("a study review must belong to the active session");
     }
@@ -171,6 +172,16 @@ function loadExistingState(storage: StorageLike): BrowserStudyState {
 function requireSameDevice(state: BrowserStudyState, latest: BrowserStudyState): void {
   if (state.deviceId !== latest.deviceId) {
     throw new Error("stored study device identity changed unexpectedly");
+  }
+}
+
+function requireCurrentStateForStaging(state: BrowserStudyState, latest: BrowserStudyState): void {
+  if (
+    state.nextDeviceSeq !== latest.nextDeviceSeq ||
+    state.activeSessionId !== latest.activeSessionId ||
+    state.pendingAttempt?.eventId !== latest.pendingAttempt?.eventId
+  ) {
+    throw new Error("study state changed in another tab; reload before rating this card");
   }
 }
 

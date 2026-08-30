@@ -118,10 +118,11 @@ device sequence, active session ID, and at most one pending attempt. Staging a r
 the complete event and advances the next sequence before any request is sent. Reloading retries the
 same event ID/sequence until the idempotent server acknowledges it; it never silently replaces a
 corrupt identity. Browser-wide Web Locks serialize every read-modify-write transaction so two tabs
-cannot reserve the same device sequence or clear each other's pending event. Browsers without that
-coordination primitive fail closed. This is a deliberately small single-outbox boundary for this
-online slice. The later PWA work can move content and a multi-event queue to IndexedDB without
-changing the canonical event contract.
+cannot reserve the same device sequence or clear each other's pending event. Staging also compares
+the tab's sequence and pending-event snapshot with durable state, rejecting a card left stale by a
+review in another tab. Browsers without that coordination primitive fail closed. This is a
+deliberately small single-outbox boundary for this online slice. The later PWA work can move content
+and a multi-event queue to IndexedDB without changing the canonical event contract.
 
 `POST /api/attempts` remains fail-closed and accepts
 `Authorization: Bearer <ATTEMPT_WRITE_TOKEN>` outside the explicit loopback-only development mode.
