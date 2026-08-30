@@ -12,6 +12,12 @@ import {
   ReferenceNotFoundError,
 } from "../domain/errors";
 import { normalizeUtcInstant, semanticOrderKey } from "../domain/ordering";
+import {
+  deriveTonePair,
+  isPronunciationActivity,
+  normalizeNumericPinyin,
+  singleTone,
+} from "../domain/pronunciation";
 import type {
   AttemptInput,
   CanonicalFsrsReview,
@@ -54,6 +60,7 @@ interface CardRow {
   id: string;
   activity_type: AttemptInput["activityType"];
   scheduler_eligible: number;
+  lexeme_reading_id: string | null;
 }
 
 interface CardStateRow {
@@ -121,7 +128,9 @@ export async function ingestAttempt(
     await assertStudySessionOwnedByDevice(db, input.studySessionId, input.deviceId);
 
     const card = await db
-      .prepare("SELECT id, activity_type, scheduler_eligible FROM cards WHERE id = ?")
+      .prepare(
+        "SELECT id, activity_type, scheduler_eligible, lexeme_reading_id FROM cards WHERE id = ?",
+      )
       .bind(input.cardId)
       .first<CardRow>();
 
@@ -129,6 +138,7 @@ export async function ingestAttempt(
     if (card.activity_type !== input.activityType) {
       throw new InvalidInputError("attempt activity does not match its card");
     }
+    await validatePronunciationAttempt(db, input, card);
 
     if (!input.fsrsReview) {
       try {
@@ -577,6 +587,82 @@ function validateAttempt(input: AttemptInput): void {
     throw new InvalidInputError("response time must be a non-negative integer");
   }
   canonicalJson(input.metadata ?? {});
+}
+
+async function validatePronunciationAttempt(
+  db: D1Database,
+  input: AttemptInput,
+  card: CardRow,
+): Promise<void> {
+  const pronunciationCard = isPronunciationActivity(card.activity_type);
+  if (!pronunciationCard && input.mode !== "pronunciation") return;
+  if (!pronunciationCard) {
+    throw new InvalidInputError("pronunciation mode requires a pronunciation activity");
+  }
+  if (input.mode !== "pronunciation") {
+    throw new InvalidInputError("pronunciation activities require pronunciation mode");
+  }
+  if (card.scheduler_eligible !== 0 || input.fsrsReview !== undefined) {
+    throw new InvalidInputError("pronunciation sessions are ordinary practice, not FSRS reviews");
+  }
+  if (input.expectedCardStateVersion !== undefined) {
+    throw new InvalidInputError("pronunciation practice must not carry card state versions");
+  }
+
+  if (input.activityType === "pronunciation_production") {
+    if (input.selfRating === undefined) {
+      throw new InvalidInputError("pronunciation production requires a self-rating");
+    }
+    if (input.correct !== undefined || input.score !== undefined) {
+      throw new InvalidInputError(
+        "pronunciation production keeps self-rating separate from correctness and score",
+      );
+    }
+    return;
+  }
+
+  if (input.correct === undefined) {
+    throw new InvalidInputError("pronunciation perception and recall require correctness");
+  }
+  if (input.selfRating !== undefined || input.score !== undefined) {
+    throw new InvalidInputError(
+      "pronunciation perception and recall keep correctness separate from self-rating and score",
+    );
+  }
+
+  if (input.activityType === "hanzi_to_pinyin") return;
+  if (card.lexeme_reading_id === null) {
+    throw new InvalidInputError("pronunciation cards must reference an exact reading");
+  }
+  const selectedChoiceId = input.metadata?.selectedChoiceId;
+  if (typeof selectedChoiceId !== "string" || selectedChoiceId.length === 0) {
+    throw new InvalidInputError("objective pronunciation attempts require a selected choice");
+  }
+
+  let answerChoiceId = card.lexeme_reading_id;
+  if (
+    input.activityType === "tone_identification" ||
+    input.activityType === "tone_pair_identification"
+  ) {
+    const reading = await db
+      .prepare("SELECT numeric_pinyin FROM lexeme_readings WHERE id = ? AND retired_at IS NULL")
+      .bind(card.lexeme_reading_id)
+      .first<{ numeric_pinyin: string }>();
+    if (!reading) throw new ReferenceNotFoundError("lexeme reading", card.lexeme_reading_id);
+    const syllables = normalizeNumericPinyin(reading.numeric_pinyin);
+    if (input.activityType === "tone_identification") {
+      const tone = singleTone(syllables);
+      if (tone === null) throw new Error("tone-identification card has no single tone");
+      answerChoiceId = `tone:${tone}`;
+    } else {
+      const pair = deriveTonePair(syllables);
+      if (pair === null) throw new Error("tone-pair card has no exact pair");
+      answerChoiceId = `tone-pair:${pair[0]}-${pair[1]}`;
+    }
+  }
+  if (input.correct !== (selectedChoiceId === answerChoiceId)) {
+    throw new InvalidInputError("pronunciation correctness disagrees with the selected choice");
+  }
 }
 
 async function assertDeviceSequenceAvailable(db: D1Database, input: AttemptInput): Promise<void> {

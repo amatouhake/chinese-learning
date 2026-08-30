@@ -4,6 +4,7 @@ import {
   STUDY_STORAGE_KEY,
   clearPendingStudyAttempt,
   loadOrCreateBrowserStudyState,
+  setActivePronunciationSession,
   setActiveStudySession,
   stageStudyAttempt,
   type BrowserStudyState,
@@ -177,6 +178,67 @@ describe("browser study identity", () => {
     await expect(
       loadOrCreateBrowserStudyState(storage, () => "replacement", locks),
     ).rejects.toThrow("refusing to discard it");
+  });
+
+  test("migrates the v1 browser envelope and reloads a pending pronunciation attempt", async () => {
+    const storage = new MemoryStorage();
+    const locks = new QueuedStudyLockManager();
+    storage.setItem(
+      STUDY_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        deviceId: "browser:existing",
+        nextDeviceSeq: 7,
+        activeSessionId: null,
+        pendingAttempt: null,
+      }),
+    );
+    let state = await loadOrCreateBrowserStudyState(
+      storage,
+      () => never("migration must preserve the device"),
+      locks,
+    );
+    expect(state).toMatchObject({
+      version: 2,
+      deviceId: "browser:existing",
+      nextDeviceSeq: 7,
+      activePronunciationSessionId: null,
+    });
+
+    state = await setActivePronunciationSession(
+      storage,
+      state,
+      "pronunciation-session:reload",
+      locks,
+    );
+    const staged = await stageStudyAttempt(
+      storage,
+      state,
+      {
+        cardId: "card:reading:test:tone_identification",
+        studySessionId: state.activePronunciationSessionId ?? undefined,
+        mode: "pronunciation",
+        activityType: "tone_identification",
+        correct: true,
+      },
+      () => "pronunciation-event",
+      () => Date.parse("2026-08-30T02:00:00Z"),
+      locks,
+    );
+    const reloaded = await loadOrCreateBrowserStudyState(
+      storage,
+      () => never("reload must preserve the device"),
+      locks,
+    );
+    expect(reloaded).toMatchObject({
+      nextDeviceSeq: 8,
+      activePronunciationSessionId: "pronunciation-session:reload",
+      pendingAttempt: {
+        eventId: staged.attempt.eventId,
+        mode: "pronunciation",
+        correct: true,
+      },
+    });
   });
 });
 
