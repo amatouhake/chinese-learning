@@ -140,6 +140,12 @@ export async function buildPronunciationImportStatements(
        )},
        ${createdAt}
      );`,
+    `DELETE FROM lexeme_reading_media
+      WHERE role = 'word_pronunciation'
+        AND lexeme_reading_id IN (
+          SELECT id FROM lexeme_readings WHERE retired_at IS NOT NULL
+        )
+        AND ${importAllowed};`,
   ];
 
   for (const lexeme of input.lexemes) {

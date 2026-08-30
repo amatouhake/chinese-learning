@@ -113,6 +113,89 @@ describe("pronunciation foundation", () => {
     expect(await importIdentitySummary()).toEqual(before);
   });
 
+  test("serves legacy ü syllable storage through the canonical reading path", async () => {
+    await applyPronunciationFixture();
+    await env.DB.prepare(
+      `UPDATE lexeme_readings
+       SET normalized_syllables_json = '[{"syllable":"lü","tone":4}]'
+       WHERE lexeme_id = 'lexeme:complete-hsk:%E7%BB%BF'`,
+    ).run();
+
+    const card = await cardFor("绿", "hanzi_to_pinyin");
+    expect(card?.reading).toMatchObject({
+      pinyin: "lǜ",
+      numericPinyin: "lv4",
+      untonedPinyin: "lü",
+      tone: 4,
+    });
+
+    await env.DB.prepare(
+      `UPDATE lexeme_readings
+       SET normalized_syllables_json = '[{"syllable":"lv","tone":4}]'
+       WHERE lexeme_id = 'lexeme:complete-hsk:%E7%BB%BF'`,
+    ).run();
+  });
+
+  test("releases retired reading media before remapping unchanged audio to a new reading", async () => {
+    const original = [lexeme("爱", [{ pinyin: "ài", numeric: "ai4", meanings: ["to love"] }], 1)];
+    await applyStatements(
+      await buildV1ImportStatements({
+        lexemes: original,
+        enrichments: [],
+        vocabularyVersion: "mapping-vocabulary-1",
+        v1Version: "mapping-v1",
+        createdAt: 10,
+      }),
+    );
+    await applyStatements(
+      await buildPronunciationImportStatements(
+        reliablePronunciationInput(original, "mapping-vocabulary-1", 10),
+      ),
+    );
+
+    const revised = [lexeme("爱", [{ pinyin: "ǎi", numeric: "ai3", meanings: ["to love"] }], 1)];
+    await applyStatements(
+      await buildV1ImportStatements({
+        lexemes: revised,
+        enrichments: [],
+        vocabularyVersion: "mapping-vocabulary-2",
+        v1Version: "mapping-v1",
+        createdAt: 20,
+      }),
+    );
+    await applyStatements(
+      await buildPronunciationImportStatements(
+        reliablePronunciationInput(revised, "mapping-vocabulary-2", 20),
+      ),
+    );
+
+    const readings = await env.DB.prepare(
+      `SELECT r.numeric_pinyin, r.retired_at, rm.media_asset_id
+       FROM lexeme_readings r
+       LEFT JOIN lexeme_reading_media rm ON rm.lexeme_reading_id = r.id
+       WHERE r.lexeme_id = 'lexeme:complete-hsk:%E7%88%B1'
+       ORDER BY r.numeric_pinyin`,
+    ).all<{
+      numeric_pinyin: string;
+      retired_at: number | null;
+      media_asset_id: string | null;
+    }>();
+    expect(readings.results).toEqual([
+      { numeric_pinyin: "ai3", retired_at: null, media_asset_id: expect.any(String) },
+      { numeric_pinyin: "ai4", retired_at: 20, media_asset_id: null },
+    ]);
+    expect(
+      await scalar("SELECT COUNT(*) FROM media_assets WHERE source_version = 'mapping-audio'"),
+    ).toBe(1);
+    expect(
+      await scalar(
+        `SELECT COUNT(*) FROM lexeme_reading_media rm
+         JOIN media_assets m ON m.id = rm.media_asset_id
+         WHERE m.source_version = 'mapping-audio'`,
+      ),
+    ).toBe(1);
+  });
+
   test("persists perception correctness and production self-rating without FSRS mutation", async () => {
     await applyPronunciationFixture();
     const vocabularyStateBefore = await env.DB.prepare(
@@ -302,6 +385,7 @@ function pronunciationFixtureInput(lexemes: V1SourceLexeme[]): PronunciationImpo
       },
       { simplified: "吗", status: "missing" },
       { simplified: "你好", status: "missing" },
+      { simplified: "绿", status: "missing" },
     ],
   };
 }
@@ -373,7 +457,30 @@ function fixtureLexemes(): V1SourceLexeme[] {
     ),
     lexeme("吗", [{ pinyin: "ma", numeric: "ma5", meanings: ["question particle"] }], 3),
     lexeme("你好", [{ pinyin: "nǐ hǎo", numeric: "ni3 hao3", meanings: ["hello"] }], 4),
+    lexeme("绿", [{ pinyin: "lǜ", numeric: "lv4", meanings: ["green"] }], 5),
   ];
+}
+
+function reliablePronunciationInput(
+  lexemes: V1SourceLexeme[],
+  vocabularyVersion: string,
+  createdAt: number,
+): PronunciationImportInput {
+  return {
+    lexemes,
+    vocabularyVersion,
+    audioVersion: "mapping-audio",
+    createdAt,
+    audioItems: [
+      {
+        simplified: "爱",
+        status: "reliable",
+        sourcePath: "64k/hsk/cmn-爱.mp3",
+        contentSha256: "c".repeat(64),
+        byteLength: 128,
+      },
+    ],
+  };
 }
 
 function lexeme(

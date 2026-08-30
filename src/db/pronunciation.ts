@@ -4,6 +4,7 @@ import {
   deriveTonePair,
   normalizeNumericPinyin,
   singleTone,
+  TONES,
   untonedPinyin,
   type PronunciationActivityType,
   type PronunciationFocus,
@@ -459,8 +460,28 @@ function parseReadingMeanings(json: string | null): string[] {
 function parseSyllables(json: string, numericPinyin: string) {
   const parsed: unknown = JSON.parse(json);
   if (!Array.isArray(parsed)) throw new Error("persisted pronunciation syllables are invalid");
+  const persisted = parsed.map((value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error("persisted pronunciation syllables are invalid");
+    }
+    const record = value as Record<string, unknown>;
+    if (
+      Object.keys(record).some((key) => key !== "syllable" && key !== "tone") ||
+      typeof record.syllable !== "string" ||
+      !(record.tone === null || TONES.includes(record.tone as Tone))
+    ) {
+      throw new Error("persisted pronunciation syllables are invalid");
+    }
+    const canonical = normalizeNumericPinyin(
+      `${record.syllable}${record.tone === null ? "" : record.tone}`,
+    );
+    if (canonical.length !== 1 || canonical[0]?.tone !== record.tone) {
+      throw new Error("persisted pronunciation syllables are invalid");
+    }
+    return canonical[0];
+  });
   const normalized = normalizeNumericPinyin(numericPinyin);
-  if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+  if (JSON.stringify(persisted) !== JSON.stringify(normalized)) {
     throw new Error("persisted pronunciation syllables disagree with numeric pinyin");
   }
   return normalized;

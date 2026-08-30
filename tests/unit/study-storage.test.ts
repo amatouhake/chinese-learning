@@ -199,16 +199,17 @@ describe("browser study identity", () => {
       locks,
     );
     expect(state).toMatchObject({
-      version: 2,
+      version: 3,
       deviceId: "browser:existing",
       nextDeviceSeq: 7,
       activePronunciationSessionId: null,
+      activePronunciationFocus: null,
     });
 
     state = await setActivePronunciationSession(
       storage,
       state,
-      "pronunciation-session:reload",
+      { sessionId: "pronunciation-session:reload", focus: "tones" },
       locks,
     );
     const staged = await stageStudyAttempt(
@@ -233,11 +234,50 @@ describe("browser study identity", () => {
     expect(reloaded).toMatchObject({
       nextDeviceSeq: 8,
       activePronunciationSessionId: "pronunciation-session:reload",
+      activePronunciationFocus: "tones",
       pendingAttempt: {
         eventId: staged.attempt.eventId,
         mode: "pronunciation",
         correct: true,
       },
+    });
+  });
+
+  test("preserves a pending pronunciation focus across reloads and stale-tab creation races", async () => {
+    const storage = new MemoryStorage();
+    const locks = new QueuedStudyLockManager();
+    const initial = await loadOrCreateBrowserStudyState(storage, () => "device", locks);
+
+    const tones = await setActivePronunciationSession(
+      storage,
+      initial,
+      { sessionId: "pronunciation-session:pending", focus: "tones" },
+      locks,
+    );
+    expect(tones).toMatchObject({
+      activePronunciationSessionId: "pronunciation-session:pending",
+      activePronunciationFocus: "tones",
+    });
+
+    const reloaded = await loadOrCreateBrowserStudyState(
+      storage,
+      () => never("reload must preserve the pending session"),
+      locks,
+    );
+    expect(reloaded).toMatchObject({
+      activePronunciationSessionId: "pronunciation-session:pending",
+      activePronunciationFocus: "tones",
+    });
+
+    const staleTab = await setActivePronunciationSession(
+      storage,
+      initial,
+      { sessionId: "pronunciation-session:raced", focus: "listening" },
+      locks,
+    );
+    expect(staleTab).toMatchObject({
+      activePronunciationSessionId: "pronunciation-session:pending",
+      activePronunciationFocus: "tones",
     });
   });
 });

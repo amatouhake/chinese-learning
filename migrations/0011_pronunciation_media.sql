@@ -1,3 +1,15 @@
+-- Main's v1 importer stored source spellings such as `nü` and `lü` verbatim.
+-- Pronunciation foundation uses `v` as the stable internal spelling for ü, so
+-- upgrade those persisted arrays before pronunciation cards validate them.
+UPDATE lexeme_readings
+SET normalized_syllables_json = replace(
+  replace(normalized_syllables_json, 'u:', 'v'),
+  'ü',
+  'v'
+)
+WHERE normalized_syllables_json LIKE '%u:%'
+   OR normalized_syllables_json LIKE '%ü%';
+
 CREATE TABLE media_assets (
   id TEXT PRIMARY KEY,
   media_type TEXT NOT NULL CHECK (media_type = 'audio'),

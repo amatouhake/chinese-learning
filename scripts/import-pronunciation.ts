@@ -128,6 +128,11 @@ async function inspectAudioItems(
     if (fileExists && committedBlob === undefined) {
       throw new Error(`audio path is not tracked at ${audioVersion}: ${sourcePath}`);
     }
+    if (!fileExists && committedBlob !== undefined) {
+      throw new Error(
+        `audio path tracked at ${audioVersion} is missing from worktree: ${sourcePath}`,
+      );
+    }
     const readingCount = uniqueReadings(
       lexeme,
       `lexeme:complete-hsk:${encodeURIComponent(lexeme.simplified).replaceAll("'", "%27")}`,

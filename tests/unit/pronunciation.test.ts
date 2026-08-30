@@ -1,4 +1,7 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   pronunciationCoverage,
@@ -31,6 +34,55 @@ describe("pronunciation normalization", () => {
     expect(deriveTonePair(normalizeNumericPinyin("ni3"))).toBeNull();
     expect(deriveTonePair(normalizeNumericPinyin("ni hao3"))).toBeNull();
     expect(deriveTonePair(normalizeNumericPinyin("gong1 gong4 qi4 che1"))).toBeNull();
+  });
+
+  test("migration upgrades legacy ü spellings before pronunciation validation", async () => {
+    const database = new Database(":memory:");
+    const migrationsRoot = fileURLToPath(new URL("../../migrations/", import.meta.url));
+    try {
+      for (let index = 1; index <= 10; index += 1) {
+        const name = `${String(index).padStart(4, "0")}_${
+          [
+            "foundation",
+            "content_revision_identity",
+            "scheduler_bootstrap_and_reading_promotion",
+            "reading_retirement",
+            "sentence_retirement",
+            "scheduler_config_immutability",
+            "scheduler_and_session_guards",
+            "session_ownership_immutability",
+            "semantic_order_keys",
+            "study_session_queries",
+          ][index - 1]
+        }.sql`;
+        database.exec(await readFile(`${migrationsRoot}${name}`, "utf8"));
+      }
+      database.exec(`
+        INSERT INTO content_revisions (source, source_version, created_at)
+        VALUES ('legacy', 'main', 0);
+        INSERT INTO lexemes
+          (id, simplified, meanings_json, source, content_revision, created_at, updated_at)
+        VALUES ('lexeme:legacy', '女绿', '[]', 'legacy', 1, 0, 0);
+        INSERT INTO lexeme_readings
+          (id, lexeme_id, pinyin, numeric_pinyin, normalized_syllables_json,
+           is_preferred, source, content_revision, created_at)
+        VALUES
+          ('reading:legacy', 'lexeme:legacy', 'nǚ lǜ', 'nü3 lü4',
+           '[{"syllable":"nü","tone":3},{"syllable":"lu:","tone":4}]',
+           1, 'legacy', 1, 0);
+      `);
+
+      database.exec(await readFile(`${migrationsRoot}0011_pronunciation_media.sql`, "utf8"));
+      const row = database
+        .query("SELECT normalized_syllables_json AS syllables FROM lexeme_readings")
+        .get() as { syllables: string };
+      expect(JSON.parse(row.syllables)).toEqual([
+        { syllable: "nv", tone: 3 },
+        { syllable: "lv", tone: 4 },
+      ]);
+    } finally {
+      database.close();
+    }
   });
 });
 

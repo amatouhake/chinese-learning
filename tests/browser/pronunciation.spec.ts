@@ -101,6 +101,44 @@ test.describe("pronunciation dogfood", () => {
       true,
     );
   });
+
+  test("session creation retry preserves the selected pronunciation focus", async ({ page }) => {
+    const sessionRequests: Array<{ sessionId: string; focus: string }> = [];
+    await page.route("**/api/pronunciation/sessions", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      sessionRequests.push(route.request().postDataJSON());
+      if (sessionRequests.length === 1) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "simulated session creation failure" }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.goto("/#pronunciation");
+    await page.getByRole("button", { name: /^Tones / }).click();
+    await expect(page.getByRole("alert")).toContainText("simulated session creation failure");
+    await page.getByRole("button", { name: "Try again" }).click();
+
+    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible();
+    expect(sessionRequests).toHaveLength(2);
+    expect(sessionRequests[1]).toEqual(sessionRequests[0]);
+    expect(sessionRequests[1]?.focus).toBe("tones");
+    expect(
+      await page.evaluate(() => {
+        const state = JSON.parse(
+          localStorage.getItem("chinese-learning.study-browser.v1") ?? "null",
+        ) as { activePronunciationFocus?: unknown } | null;
+        return state?.activePronunciationFocus;
+      }),
+    ).toBe("tones");
+  });
 });
 
 async function recordCard(response: Response, cards: ObservedCard[]): Promise<void> {

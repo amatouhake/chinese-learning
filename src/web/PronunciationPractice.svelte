@@ -57,10 +57,13 @@
         phase = "choose";
         return;
       }
+      if (!browserState.activePronunciationFocus) {
+        throw new Error("The active pronunciation session has no practice focus.");
+      }
       await ensureSession(
         browserState.activePronunciationSessionId,
         browserState.deviceId,
-        "mixed",
+        browserState.activePronunciationFocus,
       );
       await loadNextCard();
     } catch (error) {
@@ -75,15 +78,18 @@
       browserState ??= await loadOrCreateBrowserStudyState(localStorage);
       if (browserState.pendingAttempt)
         throw new Error("A learning attempt is still pending delivery.");
-      browserState = await setActivePronunciationSession(
-        localStorage,
-        browserState,
-        `pronunciation-session:${crypto.randomUUID()}`,
-      );
-      if (!browserState.activePronunciationSessionId) {
+      browserState = await setActivePronunciationSession(localStorage, browserState, {
+        sessionId: `pronunciation-session:${crypto.randomUUID()}`,
+        focus,
+      });
+      if (!browserState.activePronunciationSessionId || !browserState.activePronunciationFocus) {
         throw new Error("No active pronunciation session is available.");
       }
-      await ensureSession(browserState.activePronunciationSessionId, browserState.deviceId, focus);
+      await ensureSession(
+        browserState.activePronunciationSessionId,
+        browserState.deviceId,
+        browserState.activePronunciationFocus,
+      );
       await loadNextCard();
     } catch (error) {
       showError(error);
