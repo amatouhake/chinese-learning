@@ -1,12 +1,15 @@
 <script lang="ts">
   import PronunciationPractice from "./PronunciationPractice.svelte";
+  import ReadingGrammar from "./ReadingGrammar.svelte";
   import VocabularyStudy from "./VocabularyStudy.svelte";
 
-  type Surface = "study" | "pronunciation";
+  type Surface = "study" | "pronunciation" | "reading";
   let surface: Surface = surfaceFromHash();
 
   function surfaceFromHash(): Surface {
-    return globalThis.location?.hash === "#pronunciation" ? "pronunciation" : "study";
+    if (globalThis.location?.hash === "#pronunciation") return "pronunciation";
+    if (globalThis.location?.hash === "#reading") return "reading";
+    return "study";
   }
 
   function syncSurfaceFromHash(): void {
@@ -15,7 +18,7 @@
 
   function selectSurface(value: Surface): void {
     surface = value;
-    history.replaceState(null, "", value === "pronunciation" ? "#pronunciation" : "#study");
+    history.replaceState(null, "", `#${value}`);
   }
 </script>
 
@@ -24,7 +27,7 @@
 <svelte:head>
   <meta
     name="description"
-    content="Durable Chinese vocabulary and beginner pronunciation practice."
+    content="Durable Chinese vocabulary, pronunciation, sentence reading, and beginner grammar practice."
   />
 </svelte:head>
 
@@ -42,12 +45,17 @@
         class:active={surface === "pronunciation"}
         onclick={() => selectSurface("pronunciation")}>Pronunciation</button
       >
+      <button class:active={surface === "reading"} onclick={() => selectSurface("reading")}
+        >Reading</button
+      >
     </nav>
   </header>
 
   {#if surface === "study"}
     <VocabularyStudy />
-  {:else}
+  {:else if surface === "pronunciation"}
     <PronunciationPractice />
+  {:else}
+    <ReadingGrammar />
   {/if}
 </main>
