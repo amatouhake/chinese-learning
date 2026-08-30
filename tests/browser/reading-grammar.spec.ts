@@ -129,6 +129,42 @@ test.describe("reading and grammar dogfood", () => {
       true,
     );
   });
+
+  test("the connected grammar action starts a session focused on the displayed topic", async ({
+    page,
+  }) => {
+    const captured = { reading: null as ReadingCard | null };
+    const requestedTopics: Array<string | null> = [];
+    page.on("response", (response) => void captureLatestReadingCard(response, captured));
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/grammar/sessions") || request.method() !== "POST") return;
+      const body = request.postDataJSON() as { topicId?: string };
+      requestedTopics.push(body.topicId ?? null);
+    });
+
+    await page.goto("/#reading");
+    await expect(page.locator(".reading-prompt h2")).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: "Grammar path" }).click();
+    await expect(page.getByRole("button", { name: "Practice this pattern" })).toBeVisible();
+    expect(requestedTopics).toContain(null);
+
+    await page.getByRole("button", { name: "Read sentences" }).click();
+    for (const label of [
+      "Reveal vocabulary",
+      "Reveal pinyin",
+      "Reveal meaning",
+      "Reveal grammar",
+    ]) {
+      await page.getByRole("button", { name: new RegExp(label) }).click();
+    }
+    await expect.poll(() => captured.reading).not.toBeNull();
+    const connectedTopic = captured.reading?.grammarTopics[0];
+    if (!connectedTopic) throw new Error("captured reading card has no connected grammar topic");
+
+    await page.getByRole("button", { name: "Open the connected grammar path" }).click();
+    await expect(page.locator(".grammar-heading h2")).toHaveText(connectedTopic.title);
+    await expect.poll(() => requestedTopics.at(-1)).toBe(connectedTopic.id);
+  });
 });
 
 async function captureGuidedCards(
@@ -148,6 +184,15 @@ async function collectGrammarCards(response: Response, cards: GrammarCard[]): Pr
   if (!response.url().endsWith("/api/sync/pull") || response.request().method() !== "POST") return;
   const payload = (await response.json()) as { grammarPack?: { cards: GrammarCard[] } | null };
   if (cards.length === 0 && payload.grammarPack) cards.push(...payload.grammarPack.cards);
+}
+
+async function captureLatestReadingCard(
+  response: Response,
+  captured: { reading: ReadingCard | null },
+): Promise<void> {
+  if (!response.url().endsWith("/api/sync/pull") || response.request().method() !== "POST") return;
+  const payload = (await response.json()) as { readingPack?: { cards: ReadingCard[] } | null };
+  captured.reading = payload.readingPack?.cards[0] ?? captured.reading;
 }
 
 function readOutbox(page: Page): Promise<AttemptInput[]> {

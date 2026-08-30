@@ -83,6 +83,46 @@ describe("reading and grammar foundation", () => {
     });
   });
 
+  test("a partial import preserves an already-active curated sentence graph", async () => {
+    const topic = BEGINNER_GRAMMAR_TOPICS[1];
+    const sentenceId = `sentence:v1:${encodeURIComponent(topic.anchorSimplified)}`;
+    const sentenceSql = `SELECT chinese, pinyin, meaning_ja, meaning_en, metadata_json,
+        content_revision, retired_at
+       FROM sentences WHERE id = ?`;
+    const linksSql = `SELECT sl.lexeme_id, sl.lexeme_reading_id, sl.position, sl.role,
+        sl.content_revision, lr.numeric_pinyin
+       FROM sentence_lexemes sl
+       JOIN lexeme_readings lr ON lr.id = sl.lexeme_reading_id
+       WHERE sl.sentence_id = ?
+       ORDER BY sl.position`;
+    const beforeSentence = await env.DB.prepare(sentenceSql).bind(sentenceId).first();
+    const beforeLinks = await env.DB.prepare(linksSql).bind(sentenceId).all();
+    expect(beforeLinks.results).toHaveLength(topic.lexemes.length);
+
+    const partial = readingGrammarInput(
+      "reading-grammar-partial-vocabulary",
+      "reading-grammar-partial-enrichment",
+      [topicEnrichment(topic)],
+    );
+    partial.lexemes = partial.lexemes.filter(
+      ({ simplified }) => simplified === topic.anchorSimplified,
+    );
+    await applyReadingGrammarImport(partial);
+
+    expect(await env.DB.prepare(sentenceSql).bind(sentenceId).first()).toEqual(beforeSentence);
+    expect((await env.DB.prepare(linksSql).bind(sentenceId).all()).results).toEqual(
+      beforeLinks.results,
+    );
+    expect(
+      await env.DB.prepare(
+        `SELECT COUNT(*) AS count FROM cards
+         WHERE id IN (?, ?) AND retired_at IS NULL`,
+      )
+        .bind(`card:${sentenceId}:sentence_reading`, `card:${topic.id}:sentence_reading`)
+        .first<{ count: number }>(),
+    ).toEqual({ count: 2 });
+  });
+
   test("persists immutable Reading and Grammar attempts without touching FSRS or vocabulary state", async () => {
     const deviceId = "guided-history-device";
     const readingSessionId = "guided-history-reading";

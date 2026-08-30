@@ -76,6 +76,14 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
   const enrichmentBySimplified = new Map(
     input.enrichments.map((enrichment) => [enrichment.simplified, enrichment]),
   );
+  const selectedSimplified = new Set(input.lexemes.map((lexeme) => lexeme.simplified));
+  const incompleteFoundationAnchors = new Set(
+    BEGINNER_GRAMMAR_TOPICS.filter(
+      (topic) =>
+        selectedSimplified.has(topic.anchorSimplified) &&
+        !topic.lexemes.every((link) => selectedSimplified.has(link.simplified)),
+    ).map((topic) => topic.anchorSimplified),
+  );
   const statements = [
     "PRAGMA foreign_keys = ON;",
     `INSERT OR IGNORE INTO content_revisions
@@ -119,6 +127,16 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
     const hskTagId = `(SELECT id FROM tags
       WHERE kind = 'hsk-2.0' AND label = ${sqlText(`level-${lexeme.hskLevel}`)})`;
     const sentenceId = `sentence:v1:${encodeIdPart(lexeme.simplified)}`;
+    // A partial import may still keep the anchor's generic example on a fresh
+    // database, but it cannot safely rewrite an active curated sentence graph
+    // without all linked lexemes and exact readings present in this revision.
+    const sentenceImportAllowed = incompleteFoundationAnchors.has(lexeme.simplified)
+      ? `(${importAllowed}) AND NOT EXISTS (
+          SELECT 1 FROM cards
+          WHERE id = ${sqlText(`card:${sentenceId}:sentence_reading`)}
+            AND retired_at IS NULL
+        )`
+      : importAllowed;
 
     statements.push(`INSERT INTO lexemes
       (id, simplified, traditional, meanings_json, pos_json, frequency_rank,
@@ -239,7 +257,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          ${revision},
          ${createdAt},
          NULL
-       WHERE ${importAllowed}
+       WHERE ${sentenceImportAllowed}
        ON CONFLICT(id) DO UPDATE SET
          chinese = excluded.chinese,
          pinyin = excluded.pinyin,
@@ -257,7 +275,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          0,
          'target',
          ${revision}
-       WHERE ${importAllowed}
+       WHERE ${sentenceImportAllowed}
        ON CONFLICT(sentence_id, lexeme_id, position) DO UPDATE SET
          lexeme_reading_id = excluded.lexeme_reading_id,
          role = excluded.role,
@@ -270,7 +288,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
             WHERE id = ${sqlText(sentenceId)}
               AND source = 'why-learn-languages-when-we-have-llms-lol'
           )
-          AND ${importAllowed};`);
+          AND ${sentenceImportAllowed};`);
       statements.push(`DELETE FROM sentence_grammar_topics
         WHERE sentence_id = ${sqlText(sentenceId)}
           AND EXISTS (
@@ -278,14 +296,14 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
             WHERE id = ${sqlText(sentenceId)}
               AND source = 'why-learn-languages-when-we-have-llms-lol'
           )
-          AND ${importAllowed};`);
+          AND ${sentenceImportAllowed};`);
       statements.push(`UPDATE sentences
         SET
           retired_at = MAX(created_at, ${createdAt}),
           content_revision = ${revision}
         WHERE id = ${sqlText(sentenceId)}
           AND source = 'why-learn-languages-when-we-have-llms-lol'
-          AND ${importAllowed};`);
+          AND ${sentenceImportAllowed};`);
     }
 
     for (const activityType of ["hanzi_to_meaning", "meaning_to_hanzi"] as const) {

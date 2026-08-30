@@ -45,26 +45,40 @@
 
   onMount(() => void initializeMode());
 
-  async function selectMode(next: SurfaceMode): Promise<void> {
+  async function selectMode(
+    next: SurfaceMode,
+    requestedGrammarTopicId: string | null = null,
+  ): Promise<void> {
     mode = next;
     session = null;
     readingCard = null;
     grammarCard = null;
     errorMessage = "";
-    await initializeMode();
+    await initializeMode(requestedGrammarTopicId);
   }
 
-  async function initializeMode(): Promise<void> {
+  async function initializeMode(requestedGrammarTopicId: string | null = null): Promise<void> {
     setLoading();
     try {
       store ??= await OfflineLearningStore.open(localStorage);
       browserState = await store.snapshot();
+      if (
+        mode === "grammar" &&
+        requestedGrammarTopicId &&
+        browserState.activeGrammarSessionId &&
+        browserState.activeGrammarTopicId !== requestedGrammarTopicId
+      ) {
+        if (browserOffline) {
+          throw new Error("Reconnect once to open this connected grammar topic.");
+        }
+        browserState = await store.clearActiveGrammarSession(browserState.activeGrammarSessionId);
+      }
       const activeId = activeSessionId();
       if (!activeId) {
         if (browserOffline) {
           throw new Error(`Reconnect once to prepare a new offline ${mode} set.`);
         }
-        await createSession();
+        await createSession(mode === "grammar" ? requestedGrammarTopicId : null);
         return;
       }
       if (!browserOffline) {
@@ -459,7 +473,9 @@
             <p class="contrast">{topic.contrastJa}</p>
           </div>
         {/each}
-        <button class="text-button" onclick={() => void selectMode("grammar")}
+        <button
+          class="text-button"
+          onclick={() => void selectMode("grammar", readingCard?.grammarTopics[0]?.id ?? null)}
           >Open the connected grammar path</button
         >
       </section>
