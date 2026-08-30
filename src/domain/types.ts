@@ -256,6 +256,8 @@ export interface GrammarPractice {
 export interface GrammarCard {
   cardId: string;
   topicId: string;
+  practiceVersionId: string;
+  practiceSentenceId: string;
   activityType: "sentence_reading";
   topic: ReadingGrammarTopic & {
     sequence: number;

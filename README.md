@@ -133,8 +133,9 @@ bun run verify:pronunciation -- \
 The pinned corpus produces 595 lexemes (150/147/298 for Levels 1/2/3), 800 active readings, 595
 examples, and 1,190 scheduled vocabulary cards with 1,190 initial card states. Five verified
 examples are activated as sentence-reading cards and linked to five grammar-topic cards through 18
-exact lexeme-reading annotations. The verifier also checks representative vocabulary, grammar and
-reading links, the current scheduler, the single content-change marker, and the
+exact lexeme-reading annotations. Five immutable grammar-practice versions bind cached exercises to
+their presented answers. The verifier also checks representative vocabulary, grammar and reading
+links, the current scheduler, the single content-change marker, and the
 commit-plus-content-digest provenance identity.
 
 The pinned pronunciation sources produce 800 exact-reading pinyin cards in each direction, 435
@@ -165,9 +166,12 @@ Reading and Grammar both use the existing non-scheduled `sentence_reading` activ
 the exact staged reveal order and an explicit 1–4 comprehension rating. Grammar records the selected
 choice, server-derived correctness, and an explicit 1–4 confidence rating. Both append immutable
 `attempts` through `POST /api/attempts`; neither creates an `fsrs_reviews` row nor mutates vocabulary
-`card_state`. Grammar additionally materializes the existing `grammar_topic_state` projection as
-`introduced`, `learning`, or `comfortable`. Late-arriving events remain immutable, while that durable
-projection follows canonical semantic event order rather than network receive order.
+`card_state`. Each Grammar attempt carries the immutable practice-version identity presented in its
+cached card, so a delayed offline answer is validated against that historical choice set even after
+new teaching content is imported. Grammar additionally materializes the existing
+`grammar_topic_state` projection as `introduced`, `learning`, or `comfortable`. Late-arriving events
+remain immutable, while that durable projection follows canonical semantic event order rather than
+network receive order.
 
 Reading and Grammar sessions and their bounded packs use the same IndexedDB, device sequence,
 outbox, push-before-pull synchronization, and `server_changes` cursor as the existing surfaces. The

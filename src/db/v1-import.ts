@@ -312,7 +312,15 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
     }
   }
 
-  statements.push(...buildReadingGrammarStatements(input, revision, importAllowed, createdAt));
+  statements.push(
+    ...buildReadingGrammarStatements(
+      input,
+      revision,
+      importAllowed,
+      identity.contentDigest,
+      createdAt,
+    ),
+  );
 
   statements.push(`UPDATE learner_settings
     SET current_content_revision = ${revision}, updated_at = ${createdAt}
@@ -375,6 +383,7 @@ function buildReadingGrammarStatements(
   input: V1ImportInput,
   revision: string,
   importAllowed: string,
+  contentDigest: string,
   createdAt: number,
 ): string[] {
   const lexemeBySimplified = new Map(input.lexemes.map((lexeme) => [lexeme.simplified, lexeme]));
@@ -386,16 +395,27 @@ function buildReadingGrammarStatements(
   for (const topic of BEGINNER_GRAMMAR_TOPICS) {
     const anchor = lexemeBySimplified.get(topic.anchorSimplified);
     if (!anchor) continue;
+    if (!topic.lexemes.every((link) => lexemeBySimplified.has(link.simplified))) {
+      // A level- or limit-scoped import can contain the anchor without all of
+      // the sentence's vocabulary. Keep generic enrichment importable, but do
+      // not activate a guided card whose exact-reading graph is incomplete.
+      continue;
+    }
     const enrichment = enrichmentBySimplified.get(topic.anchorSimplified);
-    // Small importer fixtures may intentionally omit all V1 enrichment, but an
-    // included enrichment for a foundation anchor must remain an exact reviewed
-    // match. Missing fields there are content drift, not a reason to leave a
-    // previously activated topic/card pointing at a retired example.
-    if (!enrichment) continue;
-    assertCuratedSentence(topic, enrichment);
     const sentenceId = `sentence:v1:${encodeIdPart(topic.anchorSimplified)}`;
     const sentenceCardId = `card:${sentenceId}:sentence_reading`;
     const grammarCardId = `card:${topic.id}:sentence_reading`;
+    if (!enrichment?.example_zh) {
+      statements.push(`UPDATE cards
+        SET
+          retired_at = MAX(created_at, ${createdAt}),
+          content_revision = ${revision}
+        WHERE id IN (${sqlText(sentenceCardId)}, ${sqlText(grammarCardId)})
+          AND retired_at IS NULL
+          AND ${importAllowed};`);
+      continue;
+    }
+    assertCuratedSentence(topic, enrichment);
 
     statements.push(`UPDATE sentences
       SET metadata_json = ${sqlText(
@@ -459,6 +479,19 @@ function buildReadingGrammarStatements(
      WHERE ${importAllowed}
      ON CONFLICT(sentence_id, grammar_topic_id) DO UPDATE SET
        content_revision = excluded.content_revision;`);
+    // Do not gate this immutable snapshot on importAllowed. That lets an
+    // existing installation backfill practice identities after the migration
+    // by rerunning its already-applied deterministic import.
+    statements.push(`INSERT OR IGNORE INTO grammar_practice_versions
+      (id, grammar_topic_id, sentence_id, practice_json, content_revision, created_at)
+     VALUES (
+       ${sqlText(`grammar-practice:${topic.id}:sha256:${contentDigest}`)},
+       ${sqlText(topic.id)},
+       ${sqlText(sentenceId)},
+       ${sqlText(JSON.stringify(topic.teaching.practice))},
+       ${revision},
+       ${createdAt}
+     );`);
     statements.push(`INSERT INTO cards
       (id, subject_type, sentence_id, activity_type, scheduler_eligible,
        content_revision, created_at)

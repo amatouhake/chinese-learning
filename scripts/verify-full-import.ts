@@ -19,6 +19,7 @@ export interface FullImportSummary {
   reading_cards: number;
   grammar_cards: number;
   grammar_topics: number;
+  grammar_practice_versions: number;
   grammar_sentence_links: number;
   exact_curated_lexeme_links: number;
   curated_examples: number;
@@ -128,6 +129,7 @@ export function assertFullImportSummary(value: unknown): asserts value is FullIm
     reading_cards: 5,
     grammar_cards: 5,
     grammar_topics: 5,
+    grammar_practice_versions: 5,
     grammar_sentence_links: 5,
     exact_curated_lexeme_links: 18,
     curated_examples: 5,
@@ -191,6 +193,7 @@ function verificationQuery(): string {
         AND activity_type = 'sentence_reading' AND scheduler_eligible = 0) AS grammar_cards,
     (SELECT COUNT(*) FROM grammar_topics
       WHERE source = 'chinese-learning:reading-grammar-foundation') AS grammar_topics,
+    (SELECT COUNT(*) FROM grammar_practice_versions) AS grammar_practice_versions,
     (SELECT COUNT(*) FROM sentence_grammar_topics sgt
       JOIN grammar_topics g ON g.id = sgt.grammar_topic_id
       WHERE g.source = 'chinese-learning:reading-grammar-foundation') AS grammar_sentence_links,

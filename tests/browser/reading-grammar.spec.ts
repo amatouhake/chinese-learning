@@ -85,6 +85,9 @@ test.describe("reading and grammar dogfood", () => {
     const queued = await readOutbox(page);
     expect(queued.map(({ mode }) => mode).sort()).toEqual(["grammar", "reading"]);
     expect(queued.every((attempt) => attempt.fsrsReview === undefined)).toBe(true);
+    expect(queued.find(({ mode }) => mode === "grammar")?.metadata?.practiceVersionId).toBe(
+      captured.grammar?.practiceVersionId,
+    );
     const queuedSequences = queued.map(({ deviceSeq }) => deviceSeq).toSorted((a, b) => a - b);
     expect(queuedSequences).toEqual([queuedSequences[0]!, queuedSequences[0]! + 1]);
 

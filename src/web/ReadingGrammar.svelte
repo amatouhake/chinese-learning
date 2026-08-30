@@ -231,7 +231,10 @@
       !store
     )
       return;
-    const example = grammarCard.examples[0];
+    const practiceSentenceId = grammarCard.practiceSentenceId;
+    const example = grammarCard.examples.find(
+      ({ sentenceId }) => sentenceId === practiceSentenceId,
+    );
     if (!example) return showError(new Error("This grammar topic has no linked example sentence."));
     try {
       grammarPhase = "submitting";
@@ -246,6 +249,7 @@
         metadata: {
           interaction: "grammar-choice",
           topicId: grammarCard.topicId,
+          practiceVersionId: grammarCard.practiceVersionId,
           sentenceId: example.sentenceId,
           selectedChoiceId: selectedGrammarChoice,
         },

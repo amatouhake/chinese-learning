@@ -1,5 +1,8 @@
 import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
-import { parseGrammarTeachingMetadata } from "../domain/reading-grammar";
+import {
+  parseGrammarPracticeMetadata,
+  parseGrammarTeachingMetadata,
+} from "../domain/reading-grammar";
 import type {
   CreateGrammarSessionInput,
   CreateReadingSessionInput,
@@ -72,6 +75,13 @@ interface TopicRow {
 
 interface GrammarCardRow extends TopicRow {
   card_id: string;
+  content_revision: number;
+}
+
+interface GrammarPracticeVersionRow {
+  id: string;
+  sentence_id: string;
+  practice_json: string;
 }
 
 interface ExampleRow {
@@ -341,6 +351,7 @@ function selectCard(
   return db
     .prepare(
       `SELECT c.id AS card_id, g.id, g.title, g.level, g.teaching_metadata_json,
+         g.content_revision,
          gs.status, gs.introduced_at, gs.last_studied_at, gs.self_confidence,
          gs.version, gs.server_seq
        FROM cards c
@@ -417,24 +428,42 @@ async function mapReadingCard(db: D1Database, row: ReadingCardRow): Promise<Read
 
 async function mapGrammarCard(db: D1Database, row: GrammarCardRow): Promise<GrammarCard> {
   const metadata = parseGrammarTeachingMetadata(row.teaching_metadata_json);
-  const examples = await db
-    .prepare(
-      `SELECT s.id AS sentence_id, s.chinese, s.pinyin, s.meaning_ja, s.meaning_en
-       FROM sentence_grammar_topics sgt
-       JOIN sentences s ON s.id = sgt.sentence_id
-       WHERE sgt.grammar_topic_id = ? AND s.retired_at IS NULL
-       ORDER BY s.id`,
-    )
-    .bind(row.id)
-    .all<ExampleRow>();
+  const [examples, practiceVersion] = await Promise.all([
+    db
+      .prepare(
+        `SELECT s.id AS sentence_id, s.chinese, s.pinyin, s.meaning_ja, s.meaning_en
+         FROM sentence_grammar_topics sgt
+         JOIN sentences s ON s.id = sgt.sentence_id
+         WHERE sgt.grammar_topic_id = ? AND s.retired_at IS NULL
+         ORDER BY s.id`,
+      )
+      .bind(row.id)
+      .all<ExampleRow>(),
+    db
+      .prepare(
+        `SELECT id, sentence_id, practice_json
+         FROM grammar_practice_versions
+         WHERE grammar_topic_id = ? AND content_revision = ?`,
+      )
+      .bind(row.id, row.content_revision)
+      .first<GrammarPracticeVersionRow>(),
+  ]);
+  if (!practiceVersion) {
+    throw new Error(`grammar topic ${row.id} has no immutable practice version`);
+  }
+  if (!examples.results.some(({ sentence_id }) => sentence_id === practiceVersion.sentence_id)) {
+    throw new Error(`grammar topic ${row.id} has no active practice sentence`);
+  }
   return {
     cardId: row.card_id,
     topicId: row.id,
+    practiceVersionId: practiceVersion.id,
+    practiceSentenceId: practiceVersion.sentence_id,
     activityType: "sentence_reading",
     topic: {
       ...mapTopic(row),
       sequence: metadata.sequence,
-      practice: metadata.practice,
+      practice: parseGrammarPracticeMetadata(practiceVersion.practice_json),
     },
     examples: examples.results.map((example) => ({
       sentenceId: example.sentence_id,

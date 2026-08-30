@@ -50,19 +50,7 @@ describe("v1 import identity", () => {
     const topic = BEGINNER_GRAMMAR_TOPICS[0];
     const input: V1ImportInput = {
       ...importInput([]),
-      lexemes: [
-        {
-          simplified: topic.anchorSimplified,
-          hskLevel: 1,
-          forms: [
-            {
-              traditional: topic.anchorSimplified,
-              transcriptions: { pinyin: "shì", numeric: "shi4" },
-              meanings: ["to be"],
-            },
-          ],
-        },
-      ],
+      lexemes: foundationLexemes(topic),
       enrichments: [
         {
           simplified: topic.anchorSimplified,
@@ -79,7 +67,45 @@ describe("v1 import identity", () => {
       `curated grammar sentence drifted for ${topic.id}`,
     );
   });
+
+  test("skips foundation activation when a partial import lacks sentence lexemes", async () => {
+    const topic = BEGINNER_GRAMMAR_TOPICS[1];
+    const anchor = foundationLexemes(topic).find(
+      ({ simplified }) => simplified === topic.anchorSimplified,
+    );
+    if (!anchor) throw new Error("missing topic anchor fixture");
+    const statements = await buildV1ImportStatements({
+      ...importInput([]),
+      lexemes: [anchor],
+      enrichments: [
+        {
+          simplified: topic.anchorSimplified,
+          meaning_ja: topic.teaching.summaryJa,
+          example_zh: topic.expectedSentence.chinese,
+          example_pinyin: topic.expectedSentence.pinyin,
+          example_ja: topic.expectedSentence.meaningJa,
+          example_en: topic.expectedSentence.meaningEn,
+        },
+      ],
+    });
+
+    expect(statements.join("\n")).not.toContain(topic.id);
+  });
 });
+
+function foundationLexemes(topic: (typeof BEGINNER_GRAMMAR_TOPICS)[number]): V1SourceLexeme[] {
+  return topic.lexemes.map((link) => ({
+    simplified: link.simplified,
+    hskLevel: 1,
+    forms: [
+      {
+        traditional: link.simplified,
+        transcriptions: { pinyin: link.numericPinyin, numeric: link.numericPinyin },
+        meanings: [link.senseIncludes ?? link.simplified],
+      },
+    ],
+  }));
+}
 
 function importInput(
   enrichments: V1Enrichment[],

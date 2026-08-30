@@ -12,7 +12,7 @@ import {
   ReferenceNotFoundError,
 } from "../domain/errors";
 import { normalizeUtcInstant, semanticEventOrderKey, semanticOrderKey } from "../domain/ordering";
-import { parseGrammarTeachingMetadata } from "../domain/reading-grammar";
+import { parseGrammarPracticeMetadata } from "../domain/reading-grammar";
 import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
@@ -854,36 +854,37 @@ async function validateReadingGrammarAttempt(
   }
   const selectedChoiceId = input.metadata?.selectedChoiceId;
   const sentenceId = input.metadata?.sentenceId;
+  const practiceVersionId = input.metadata?.practiceVersionId;
   if (
     input.metadata?.interaction !== "grammar-choice" ||
     input.metadata.topicId !== card.grammar_topic_id ||
     typeof selectedChoiceId !== "string" ||
-    typeof sentenceId !== "string"
+    typeof sentenceId !== "string" ||
+    typeof practiceVersionId !== "string"
   ) {
     throw new InvalidInputError(
-      "grammar attempts must preserve topic, sentence, and choice identity",
+      "grammar attempts must preserve topic, practice version, sentence, and choice identity",
     );
   }
-  const topic = await db
+  const practiceVersion = await db
     .prepare(
-      `SELECT g.teaching_metadata_json,
-         EXISTS (
-           SELECT 1 FROM sentence_grammar_topics sgt
-           WHERE sgt.grammar_topic_id = g.id AND sgt.sentence_id = ?
-         ) AS sentence_linked
-       FROM grammar_topics g WHERE g.id = ?`,
+      `SELECT sentence_id, practice_json
+       FROM grammar_practice_versions
+       WHERE id = ? AND grammar_topic_id = ?`,
     )
-    .bind(sentenceId, card.grammar_topic_id)
-    .first<{ teaching_metadata_json: string; sentence_linked: number }>();
-  if (!topic) throw new ReferenceNotFoundError("grammar topic", card.grammar_topic_id);
-  if (topic.sentence_linked !== 1) {
-    throw new InvalidInputError("grammar practice sentence is not linked to its topic");
+    .bind(practiceVersionId, card.grammar_topic_id)
+    .first<{ sentence_id: string; practice_json: string }>();
+  if (!practiceVersion) {
+    throw new ReferenceNotFoundError("grammar practice version", practiceVersionId);
   }
-  const teaching = parseGrammarTeachingMetadata(topic.teaching_metadata_json);
-  if (!teaching.practice.choices.some(({ id }) => id === selectedChoiceId)) {
+  if (practiceVersion.sentence_id !== sentenceId) {
+    throw new InvalidInputError("grammar practice sentence does not match its cached version");
+  }
+  const practice = parseGrammarPracticeMetadata(practiceVersion.practice_json);
+  if (!practice.choices.some(({ id }) => id === selectedChoiceId)) {
     throw new InvalidInputError("grammar choice is not part of the presented practice");
   }
-  if (input.correct !== (selectedChoiceId === teaching.practice.answerChoiceId)) {
+  if (input.correct !== (selectedChoiceId === practice.answerChoiceId)) {
     throw new InvalidInputError("grammar correctness disagrees with the selected choice");
   }
 }

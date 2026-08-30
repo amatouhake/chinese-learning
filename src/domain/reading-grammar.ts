@@ -29,6 +29,8 @@ export interface GrammarTeachingMetadata {
   };
 }
 
+export type GrammarPracticeMetadata = GrammarTeachingMetadata["practice"];
+
 export interface BeginnerGrammarTopic {
   id: string;
   title: string;
@@ -267,31 +269,39 @@ export function parseGrammarTeachingMetadata(json: string): GrammarTeachingMetad
     typeof record.summaryJa !== "string" ||
     typeof record.explanationJa !== "string" ||
     typeof record.contrastJa !== "string" ||
-    typeof practice !== "object" ||
-    practice === null ||
-    Array.isArray(practice)
+    !isGrammarPracticeMetadata(practice)
   ) {
     throw new Error("persisted grammar teaching metadata is invalid");
   }
-  const practiceRecord = practice as Record<string, unknown>;
-  if (
-    typeof practiceRecord.prompt !== "string" ||
-    typeof practiceRecord.answerChoiceId !== "string" ||
-    typeof practiceRecord.explanationJa !== "string" ||
-    !Array.isArray(practiceRecord.choices) ||
-    !practiceRecord.choices.every(
+  return value as GrammarTeachingMetadata;
+}
+
+export function parseGrammarPracticeMetadata(json: string): GrammarPracticeMetadata {
+  const value: unknown = JSON.parse(json);
+  if (!isGrammarPracticeMetadata(value)) {
+    throw new Error("persisted grammar practice metadata is invalid");
+  }
+  return value;
+}
+
+function isGrammarPracticeMetadata(value: unknown): value is GrammarPracticeMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.prompt === "string" &&
+    typeof record.answerChoiceId === "string" &&
+    typeof record.explanationJa === "string" &&
+    Array.isArray(record.choices) &&
+    record.choices.every(
       (choice) =>
         typeof choice === "object" &&
         choice !== null &&
         !Array.isArray(choice) &&
         typeof (choice as Record<string, unknown>).id === "string" &&
         typeof (choice as Record<string, unknown>).label === "string",
-    ) ||
-    !practiceRecord.choices.some(
-      (choice) => (choice as Record<string, unknown>).id === practiceRecord.answerChoiceId,
+    ) &&
+    record.choices.some(
+      (choice) => (choice as Record<string, unknown>).id === record.answerChoiceId,
     )
-  ) {
-    throw new Error("persisted grammar teaching metadata is invalid");
-  }
-  return value as GrammarTeachingMetadata;
+  );
 }

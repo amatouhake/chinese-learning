@@ -128,6 +128,7 @@ describe("reading and grammar foundation", () => {
       metadata: {
         interaction: "grammar-choice",
         topicId: grammarCard.topicId,
+        practiceVersionId: grammarCard.practiceVersionId,
         sentenceId: example.sentenceId,
         selectedChoiceId: grammarCard.topic.practice.answerChoiceId,
       },
@@ -205,6 +206,7 @@ describe("reading and grammar foundation", () => {
       metadata: {
         interaction: "grammar-choice",
         topicId,
+        practiceVersionId: card.practiceVersionId,
         sentenceId: example.sentenceId,
         selectedChoiceId: card.topic.practice.answerChoiceId,
       },
@@ -262,6 +264,7 @@ describe("reading and grammar foundation", () => {
       metadata: {
         interaction: "grammar-choice",
         topicId: card.topicId,
+        practiceVersionId: card.practiceVersionId,
         sentenceId: example.sentenceId,
         selectedChoiceId: card.topic.practice.answerChoiceId,
       },
@@ -275,12 +278,196 @@ describe("reading and grammar foundation", () => {
       }),
     ).rejects.toThrow("belongs to another learning mode");
   });
+
+  test("retires unusable guided cards when a complete revision drops their example", async () => {
+    const topic = BEGINNER_GRAMMAR_TOPICS[4];
+    const cardId = `card:${topic.id}:sentence_reading`;
+    const sentenceCardId = `card:sentence:v1:${encodeURIComponent(topic.anchorSimplified)}:sentence_reading`;
+    const beforeVersion = await env.DB.prepare(
+      `SELECT id FROM grammar_practice_versions
+       WHERE grammar_topic_id = ?
+       ORDER BY content_revision DESC LIMIT 1`,
+    )
+      .bind(topic.id)
+      .first<{ id: string }>();
+    if (!beforeVersion) throw new Error("missing initial grammar practice version");
+
+    const omitted = readingGrammarInput(
+      "reading-grammar-lifecycle-vocabulary",
+      "reading-grammar-lifecycle-omitted",
+      BEGINNER_GRAMMAR_TOPICS.filter(({ id }) => id !== topic.id).map(topicEnrichment),
+    );
+    await applyReadingGrammarImport(omitted);
+
+    expect(
+      await env.DB.prepare("SELECT retired_at FROM cards WHERE id = ?")
+        .bind(cardId)
+        .first<{ retired_at: number | null }>(),
+    ).toEqual({ retired_at: omitted.createdAt });
+    expect(
+      await env.DB.prepare("SELECT retired_at FROM cards WHERE id = ?")
+        .bind(sentenceCardId)
+        .first<{ retired_at: number | null }>(),
+    ).toEqual({ retired_at: omitted.createdAt });
+    expect(
+      await env.DB.prepare("SELECT id FROM grammar_practice_versions WHERE id = ?")
+        .bind(beforeVersion.id)
+        .first(),
+    ).not.toBeNull();
+
+    const deviceId = "grammar-retirement-device";
+    const emptySession = "grammar-retirement-empty-session";
+    await createGrammarSession(env.DB, {
+      sessionId: emptySession,
+      deviceId,
+      maxItems: 1,
+      topicId: topic.id,
+    });
+    expect(await getOfflineGrammarPack(env.DB, emptySession, deviceId)).toMatchObject({
+      status: "empty",
+      cards: [],
+    });
+
+    const restored = readingGrammarInput(
+      "reading-grammar-lifecycle-vocabulary",
+      "reading-grammar-lifecycle-restored",
+    );
+    await applyReadingGrammarImport(restored);
+    expect(
+      await env.DB.prepare("SELECT retired_at FROM cards WHERE id = ?")
+        .bind(cardId)
+        .first<{ retired_at: number | null }>(),
+    ).toEqual({ retired_at: null });
+    const restoredSession = "grammar-retirement-restored-session";
+    await createGrammarSession(env.DB, {
+      sessionId: restoredSession,
+      deviceId,
+      maxItems: 1,
+      topicId: topic.id,
+    });
+    const restoredCard = required(
+      (await getOfflineGrammarPack(env.DB, restoredSession, deviceId)).cards[0],
+    );
+    expect(restoredCard.practiceVersionId).not.toBe(beforeVersion.id);
+  });
+
+  test("accepts a delayed grammar attempt against its immutable cached practice version", async () => {
+    const topic = BEGINNER_GRAMMAR_TOPICS[0];
+    const deviceId = "grammar-version-device";
+    const cachedSessionId = "grammar-version-cached-session";
+    await createGrammarSession(env.DB, {
+      sessionId: cachedSessionId,
+      deviceId,
+      maxItems: 1,
+      topicId: topic.id,
+    });
+    const cachedCard = required(
+      (await getOfflineGrammarPack(env.DB, cachedSessionId, deviceId)).cards[0],
+    );
+    const current = await env.DB.prepare(
+      `SELECT teaching_metadata_json, content_revision
+       FROM grammar_topics WHERE id = ?`,
+    )
+      .bind(topic.id)
+      .first<{ teaching_metadata_json: string; content_revision: number }>();
+    if (!current) throw new Error("missing grammar topic fixture");
+
+    const changedPractice = { ...topic.teaching.practice, answerChoiceId: "you" };
+    const changedTeaching = { ...topic.teaching, practice: changedPractice };
+    const revisionResult = await env.DB.prepare(
+      `INSERT INTO content_revisions (source, source_version, description, created_at)
+       VALUES ('integration-test', 'grammar-practice-version-change', 'test fixture', ?)`,
+    )
+      .bind(timestamp("06:00"))
+      .run();
+    const changedRevision = Number(revisionResult.meta.last_row_id);
+    const changedVersionId = "grammar-practice:test:changed-answer";
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO grammar_practice_versions
+          (id, grammar_topic_id, sentence_id, practice_json, content_revision, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        changedVersionId,
+        topic.id,
+        cachedCard.practiceSentenceId,
+        JSON.stringify(changedPractice),
+        changedRevision,
+        timestamp("06:00"),
+      ),
+      env.DB.prepare(
+        `UPDATE grammar_topics
+         SET teaching_metadata_json = ?, content_revision = ?
+         WHERE id = ?`,
+      ).bind(JSON.stringify(changedTeaching), changedRevision, topic.id),
+    ]);
+
+    const changedSessionId = "grammar-version-changed-session";
+    await createGrammarSession(env.DB, {
+      sessionId: changedSessionId,
+      deviceId,
+      maxItems: 1,
+      topicId: topic.id,
+    });
+    const changedCard = required(
+      (await getOfflineGrammarPack(env.DB, changedSessionId, deviceId)).cards[0],
+    );
+    expect(changedCard).toMatchObject({
+      practiceVersionId: changedVersionId,
+      topic: { practice: { answerChoiceId: "you" } },
+    });
+
+    try {
+      expect(
+        await ingestAttempt(env.DB, {
+          eventId: "grammar-version-delayed-event",
+          deviceId,
+          deviceSeq: 1,
+          occurredAt: "2026-08-30T05:30:00Z",
+          cardId: cachedCard.cardId,
+          studySessionId: cachedSessionId,
+          mode: "grammar",
+          activityType: "sentence_reading",
+          correct: true,
+          selfRating: 3,
+          metadata: {
+            interaction: "grammar-choice",
+            topicId: topic.id,
+            practiceVersionId: cachedCard.practiceVersionId,
+            sentenceId: cachedCard.practiceSentenceId,
+            selectedChoiceId: topic.teaching.practice.answerChoiceId,
+          },
+        }),
+      ).toMatchObject({ disposition: "inserted", reviewCreated: false });
+    } finally {
+      await env.DB.prepare(
+        `UPDATE grammar_topics
+         SET teaching_metadata_json = ?, content_revision = ?
+         WHERE id = ?`,
+      )
+        .bind(current.teaching_metadata_json, current.content_revision, topic.id)
+        .run();
+    }
+  });
 });
 
 async function seedReadingGrammar(): Promise<void> {
-  const input: V1ImportInput = {
-    vocabularyVersion: "reading-grammar-integration-vocabulary",
-    v1Version: "reading-grammar-integration-enrichment",
+  await applyReadingGrammarImport(
+    readingGrammarInput(
+      "reading-grammar-integration-vocabulary",
+      "reading-grammar-integration-enrichment",
+    ),
+  );
+}
+
+function readingGrammarInput(
+  vocabularyVersion: string,
+  v1Version: string,
+  enrichments: V1ImportInput["enrichments"] = BEGINNER_GRAMMAR_TOPICS.map(topicEnrichment),
+): V1ImportInput {
+  return {
+    vocabularyVersion,
+    v1Version,
     createdAt: Date.parse("2026-08-30T00:00:00Z"),
     lexemes: [
       sourceLexeme("我", "wǒ", "wo3", "I; me; my"),
@@ -299,15 +486,22 @@ async function seedReadingGrammar(): Promise<void> {
       sourceLexeme("好", "hǎo", "hao3", "good"),
       sourceLexeme("吗", "ma", "ma5", "question particle for yes-no questions"),
     ],
-    enrichments: BEGINNER_GRAMMAR_TOPICS.map((topic) => ({
-      simplified: topic.anchorSimplified,
-      meaning_ja: topic.teaching.summaryJa,
-      example_zh: topic.expectedSentence.chinese,
-      example_pinyin: topic.expectedSentence.pinyin,
-      example_ja: topic.expectedSentence.meaningJa,
-      example_en: topic.expectedSentence.meaningEn,
-    })),
+    enrichments,
   };
+}
+
+function topicEnrichment(topic: (typeof BEGINNER_GRAMMAR_TOPICS)[number]) {
+  return {
+    simplified: topic.anchorSimplified,
+    meaning_ja: topic.teaching.summaryJa,
+    example_zh: topic.expectedSentence.chinese,
+    example_pinyin: topic.expectedSentence.pinyin,
+    example_ja: topic.expectedSentence.meaningJa,
+    example_en: topic.expectedSentence.meaningEn,
+  };
+}
+
+async function applyReadingGrammarImport(input: V1ImportInput): Promise<void> {
   const statements = await buildV1ImportStatements(input);
   for (let index = 0; index < statements.length; index += 60) {
     await env.DB.batch(
@@ -353,4 +547,8 @@ async function counts(): Promise<{
 function required<T>(value: T | null | undefined): T {
   if (value === null || value === undefined) throw new Error("missing test fixture value");
   return value;
+}
+
+function timestamp(time: string): number {
+  return Date.parse(`2026-08-30T${time}:00Z`);
 }
