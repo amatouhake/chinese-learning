@@ -21,3 +21,17 @@ export async function authorizeAttemptWrite(
   ]);
   return subtle.timingSafeEqual(providedHash, expectedHash) ? "authorized" : "unauthorized";
 }
+
+export async function authorizeStudyWrite(
+  request: Request,
+  expectedToken: string | undefined,
+  localStudyBypass: string | undefined,
+): Promise<"authorized" | "unauthorized" | "unconfigured"> {
+  const hostname = new URL(request.url).hostname;
+  if (localStudyBypass === "true" && isLoopbackHostname(hostname)) return "authorized";
+  return authorizeAttemptWrite(request.headers.get("authorization") ?? undefined, expectedToken);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}

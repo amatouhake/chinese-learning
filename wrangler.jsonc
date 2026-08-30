@@ -7,6 +7,9 @@
   "secrets": {
     "required": ["ATTEMPT_WRITE_TOKEN"],
   },
+  "vars": {
+    "LOCAL_STUDY_BYPASS": "false",
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

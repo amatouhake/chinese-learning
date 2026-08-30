@@ -8,6 +8,7 @@ export default defineConfig({
       miniflare: {
         bindings: {
           ATTEMPT_WRITE_TOKEN: "integration-test-write-token",
+          LOCAL_STUDY_BYPASS: "true",
           TEST_MIGRATIONS: await readD1Migrations(
             new URL("./migrations", import.meta.url).pathname,
           ),
