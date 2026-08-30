@@ -40,17 +40,23 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
     }
 
     state = await store.snapshot();
-    const [studySession, pronunciationSession] = await Promise.all([
+    const [studySession, pronunciationSession, readingSession, grammarSession] = await Promise.all([
       state.activeSessionId ? store.getStudySession(state.activeSessionId) : null,
       state.activePronunciationSessionId
         ? store.getPronunciationSession(state.activePronunciationSessionId)
         : null,
+      state.activeReadingSessionId ? store.getReadingSession(state.activeReadingSessionId) : null,
+      state.activeGrammarSessionId ? store.getGrammarSession(state.activeGrammarSessionId) : null,
     ]);
     const studySessionId = studySession?.id === state.activeSessionId ? studySession.id : undefined;
     const pronunciationSessionId =
       pronunciationSession?.id === state.activePronunciationSessionId
         ? pronunciationSession.id
         : undefined;
+    const readingSessionId =
+      readingSession?.id === state.activeReadingSessionId ? readingSession.id : undefined;
+    const grammarSessionId =
+      grammarSession?.id === state.activeGrammarSessionId ? grammarSession.id : undefined;
     const audioCacheFailures = new Set<string>();
     for (let page = 0; page < 100; page += 1) {
       let pull: SyncPullResponse;
@@ -61,6 +67,8 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
           deviceId: state.deviceId,
           studySessionId,
           pronunciationSessionId,
+          readingSessionId,
+          grammarSessionId,
         });
       } catch (error) {
         state = await store.snapshot();

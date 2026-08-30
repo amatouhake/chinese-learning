@@ -751,6 +751,300 @@ footer {
   line-height: 1.5;
 }
 
+.guided-header {
+  margin-bottom: 0.35rem;
+}
+
+.guided-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.3rem;
+  margin-bottom: 0.85rem;
+  padding: 0.25rem;
+  border: 1px solid #c8c0af;
+  border-radius: 0.8rem;
+  background: rgb(255 253 247 / 70%);
+}
+
+.guided-nav button {
+  min-height: 2.45rem;
+  border: 0;
+  border-radius: 0.58rem;
+  color: #617068;
+  background: transparent;
+  font-size: 0.77rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.guided-nav button.active {
+  color: #fff;
+  background: #6b5941;
+}
+
+.guided-pulse {
+  background: #80613c;
+}
+
+.reading-badge {
+  color: #76501d;
+  background: #f1e3c7;
+}
+
+.grammar-badge {
+  color: #655127;
+  background: #eee3c5;
+}
+
+.reading-card,
+.grammar-card {
+  min-height: auto;
+}
+
+.reading-prompt {
+  display: grid;
+  min-height: 13rem;
+  padding: 1.8rem 0.4rem;
+  place-content: center;
+  text-align: center;
+}
+
+.reading-prompt h2 {
+  margin: 0;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: clamp(2.25rem, 12vw, 4rem);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.reveal-panel {
+  margin-top: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid #e0d7c6;
+  border-radius: 0.85rem;
+  background: #f8f4ea;
+}
+
+.reveal-panel p,
+.reveal-panel h3 {
+  margin: 0;
+}
+
+.reveal-kicker {
+  margin-bottom: 0.6rem !important;
+  color: #8a6940;
+  font-size: 0.65rem;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.reading-note {
+  margin: -0.25rem 0 0.6rem !important;
+  color: #747d78;
+  font-size: 0.68rem;
+}
+
+.vocabulary-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.vocabulary-list div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.45rem;
+  padding: 0.55rem;
+  border-radius: 0.65rem;
+  background: #fffdf7;
+}
+
+.vocabulary-list strong {
+  grid-row: 1 / 3;
+  align-self: center;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: 1.3rem;
+}
+
+.vocabulary-list span {
+  color: #22604c;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.vocabulary-list small {
+  overflow: hidden;
+  color: #6f7772;
+  font-size: 0.67rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sentence-pinyin {
+  color: #1c604b;
+  font-size: 1.02rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.sentence-meaning {
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.sentence-meaning.secondary {
+  margin-top: 0.2rem;
+  color: #747d78;
+  font-size: 0.75rem;
+}
+
+.topic-explanation {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.topic-explanation > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.topic-explanation h3 {
+  font-size: 0.95rem;
+}
+
+.topic-explanation p,
+.grammar-lesson > p,
+.grammar-feedback > p:last-child {
+  color: #4f5f57;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.contrast {
+  color: #806050 !important;
+}
+
+code {
+  padding: 0.22rem 0.45rem;
+  border-radius: 0.4rem;
+  color: #3d583f;
+  background: #e5ebdc;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.text-button {
+  width: 100%;
+  min-height: 2.8rem;
+  margin-top: 0.65rem;
+  border: 1px solid #b7a27c;
+  border-radius: 0.7rem;
+  color: #654c27;
+  background: #fffaf0;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.staged-reveal {
+  margin-top: 0.85rem;
+}
+
+.staged-reveal small {
+  font-size: 0.68rem;
+}
+
+.guided-ratings .rating {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto;
+}
+
+.grammar-heading {
+  padding: 1.6rem 0 1rem;
+  border-bottom: 1px solid #e3ded2;
+}
+
+.grammar-heading h2 {
+  margin: 0 0 0.55rem;
+  font-size: clamp(1.55rem, 7vw, 2.2rem);
+}
+
+.grammar-heading > p {
+  margin: 0.65rem 0 0;
+  color: #68726d;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.grammar-lesson,
+.grammar-feedback {
+  padding-top: 1rem;
+}
+
+.grammar-example {
+  margin-top: 0.85rem;
+  padding: 0.9rem 1rem;
+  border-radius: 0.85rem;
+  background: #f1eee5;
+}
+
+.grammar-example p {
+  margin: 0;
+}
+
+.grammar-practice-button {
+  margin-top: 0.75rem;
+}
+
+.grammar-question {
+  display: grid;
+  min-height: 15rem;
+  place-content: center;
+  text-align: center;
+}
+
+.grammar-question h3,
+.practice-answer {
+  margin: 0;
+  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-size: clamp(2rem, 11vw, 3.4rem);
+  font-weight: 600;
+}
+
+.grammar-choices {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.grammar-feedback .feedback {
+  margin-bottom: 0.8rem;
+}
+
+.grammar-feedback .practice-answer {
+  color: #233f34;
+}
+
+@media (max-width: 28rem) {
+  .global-header {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 0.5rem 0 0.7rem;
+  }
+
+  .surface-nav button {
+    flex: 1;
+    padding-inline: 0.35rem;
+    font-size: 0.7rem;
+  }
+
+  .vocabulary-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.35;

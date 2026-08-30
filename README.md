@@ -1,14 +1,17 @@
 # Chinese Learning
 
-A locally usable, installable offline PWA for Chinese vocabulary and beginner pronunciation. It
-imports the complete HSK 2.0 Level 1–3 corpus, caches bounded study sets in the browser, and records
-both scheduled FSRS reviews and ordinary pronunciation practice as immutable attempts that safely
-synchronize after temporary network loss.
+A locally usable, installable offline PWA for Chinese vocabulary, sentence reading, beginner
+grammar, and pronunciation. It imports the complete HSK 2.0 Level 1–3 corpus, caches bounded study
+sets in the browser, and records both scheduled FSRS reviews and ordinary practice as immutable
+attempts that safely synchronize after temporary network loss.
 
-The pronunciation surface covers pinyin recognition and recall, dictionary-tone identification,
+The reading surface starts with a real Chinese sentence and reveals exact-reading vocabulary hints,
+pinyin, meaning, and a linked grammar explanation in that order. The first grammar path covers five
+high-value beginner patterns with real examples and a short checked practice interaction. The
+pronunciation surface covers pinyin recognition and recall, dictionary-tone identification,
 two-syllable tone pairs, source-audio perception where the recording can be mapped safely, and
-speak–compare–self-rate production. Reading, grammar, dashboard, Notion projection, background
-sync, broad content prefetch, and Remote MCP product surfaces remain deferred.
+speak–compare–self-rate production. Dashboard, Notion projection, background sync, broad content
+prefetch, and Remote MCP product surfaces remain deferred.
 
 ## Stack and topology
 
@@ -21,7 +24,8 @@ sync, broad content prefetch, and Remote MCP product surfaces remain deferred.
 Routes are split as follows:
 
 - `/` — Svelte SPA through Worker Static Assets
-- `/api/*` — Hono Worker API (vocabulary and pronunciation sessions, canonical attempts)
+- `/api/*` — Hono Worker API (vocabulary, reading, grammar, and pronunciation sessions plus
+  canonical attempts)
 - `/mcp` — reserved Worker boundary; currently returns `501`
 
 ## Fresh local setup
@@ -64,19 +68,21 @@ bunx wrangler d1 execute chinese-learning --local --file .generated/pronunciatio
 bun run dev:worker
 ```
 
-Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page immediately
-offers separate Study and Pronunciation tabs. Vocabulary starts a 10-card session: due cards are
-selected first, followed by deterministic new cards. Reveal the answer, rate it with the four FSRS
-choices, and continue. Pronunciation starts from a low-friction focus chooser and offers repeatable
-audio plus a compact sound-system reference. `bun run dev` serves only the Vite frontend, so use
-`bun run dev:worker` for the real D1-backed flow and staged media.
+Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page offers Study,
+Reading, and Pronunciation surfaces. Vocabulary starts a 10-card session: due cards are selected
+first, followed by deterministic new cards. Reading starts Chinese-first, then reveals vocabulary,
+pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its Grammar path teaches
+one linked pattern, reveals the example only on request, then checks one bounded completion exercise
+and records explicit confidence. Pronunciation starts from a low-friction focus chooser and offers
+repeatable audio plus a compact sound-system reference. `bun run dev` serves only the Vite frontend,
+so use `bun run dev:worker` for the real D1-backed flow and staged media.
 
 After the first online study set is prepared, the browser can install the app and continue that
-bounded Vocabulary set without a connection, including across reloads. A prepared Pronunciation
-set also works offline; listening cards are available only when their exact-reading audio was
-successfully staged in Cache Storage. An uncached recording is clearly marked and can be skipped
-without blocking the rest of the set. Reconnecting the page pushes durable attempts before pulling
-canonical learner/content changes.
+bounded Vocabulary set without a connection, including across reloads. Prepared Reading, Grammar,
+and Pronunciation sets also work offline. Listening cards are available only when their exact-reading
+audio was successfully staged in Cache Storage. An uncached recording is clearly marked and can be
+skipped without blocking the rest of the set. Reconnecting the page pushes durable attempts before
+pulling canonical learner/content changes.
 
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
 when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
@@ -104,9 +110,11 @@ Install the browser binary once with
 `PLAYWRIGHT_BROWSERS_PATH=.generated/playwright-browsers bunx playwright install chromium` before
 running `test:browser`. The browser suite starts the real local Worker and uses Playwright's network
 simulation to study online, disconnect, queue multiple Vocabulary and Pronunciation events, reload
-offline, retry a partial push, reconnect, and verify convergence with local D1. It also covers
-multi-tab sequence allocation, legacy-state migration, cached versus uncached audio, a late-arriving
-review, a mixed ten-item phone session, the polyphonic `的`, and the tone-pair reference.
+offline, retry a partial push, reconnect, and verify convergence with local D1. Phone and desktop
+coverage also checks the Chinese-first reveal order, the systematic grammar path, offline Reading
+and Grammar attempts, reload, and reconnect. The suite additionally covers multi-tab sequence
+allocation, legacy-state migration, cached versus uncached audio, a late-arriving review, a mixed
+ten-item phone session, the polyphonic `的`, and the tone-pair reference.
 
 To re-run the exact full-corpus gate against an isolated temporary D1 database (without touching
 the app's local study data):
@@ -123,9 +131,12 @@ bun run verify:pronunciation -- \
 ```
 
 The pinned corpus produces 595 lexemes (150/147/298 for Levels 1/2/3), 800 active readings, 595
-examples, and 1,190 scheduled vocabulary cards with 1,190 initial card states. The verifier also
-checks representative vocabulary, the current scheduler, the single content-change marker, and
-the commit-plus-content-digest provenance identity.
+examples, and 1,190 scheduled vocabulary cards with 1,190 initial card states. Five verified
+examples are activated as sentence-reading cards and linked to five grammar-topic cards through 18
+exact lexeme-reading annotations. Five immutable grammar-practice versions bind cached exercises to
+their presented answers. The verifier also checks representative vocabulary, grammar and reading
+links, the current scheduler, the single content-change marker, and the
+commit-plus-content-digest provenance identity.
 
 The pinned pronunciation sources produce 800 exact-reading pinyin cards in each direction, 435
 single-tone cards, 346 exact two-syllable tone-pair cards, 858 audio-perception cards, and 800
@@ -136,6 +147,36 @@ and locks those coverage counts. Its JSON output lists every ambiguous and missi
 It also reports 141 multi-reading lexemes and 51 cases where the upstream first form is a capitalized
 proper-name reading (for example `还` starts with surname `Huán`), so source order is never treated as
 a verified beginner-reading choice.
+
+## Reading and grammar model
+
+Reading uses five concise examples already present in the pinned imported corpus: `我是学生。`,
+`我有两个姐姐。`, `我在家。`, `我不喝咖啡。`, and `你好吗？`. The importer fails closed if the
+Chinese, pinyin, Japanese meaning, or English meaning of an expected example drifts. Each displayed
+vocabulary hint points to a concrete `lexeme_reading`, not merely a Hanzi string, and keeps its token
+position and learner-facing role. Sentence-to-topic links use the existing relational model.
+
+The systematic grammar path is `是` noun linking, `有` possession/existence, `在` location, `不`
+habitual negation, then `吗` yes/no questions. This is intentionally a narrow beginner foundation:
+each topic has an original Japanese explanation, pattern and contrast note, one real linked example,
+and one server-checked multiple-choice completion. It reinforces the same sentences instead of
+introducing a parallel textbook or authoring system.
+
+Reading and Grammar both use the existing non-scheduled `sentence_reading` activity. Reading records
+the exact staged reveal order and an explicit 1–4 comprehension rating. Grammar records the selected
+choice, server-derived correctness, and an explicit 1–4 confidence rating. Both append immutable
+`attempts` through `POST /api/attempts`; neither creates an `fsrs_reviews` row nor mutates vocabulary
+`card_state`. Each Grammar attempt carries the immutable practice-version identity presented in its
+cached card, so a delayed offline answer is validated against that historical choice set even after
+new teaching content is imported. Grammar additionally materializes the existing
+`grammar_topic_state` projection as `introduced`, `learning`, or `comfortable`. Late-arriving events
+remain immutable, while that durable projection follows canonical semantic event order rather than
+network receive order.
+
+Reading and Grammar sessions and their bounded packs use the same IndexedDB, device sequence,
+outbox, push-before-pull synchronization, and `server_changes` cursor as the existing surfaces. The
+currently prepared content remains usable through temporary network loss and reload. No parallel
+history or synchronization channel exists.
 
 ## Pronunciation practice model
 
@@ -246,10 +287,10 @@ write set back before the service retries from canonical history.
 
 `server_changes.seq` is the monotonic pull-sync cursor. `content_revisions` and
 `learner_settings.current_content_revision` establish the distinct content revision boundary.
-`POST /api/sync/pull` reports both boundaries and supplies only the current active session's bounded
-Vocabulary and Pronunciation packs. An older scheduled attempt that arrives after a newer review is
-inserted as its original immutable fact; the existing deterministic server replay recomputes the
-canonical `card_state`, which the next pull applies locally.
+`POST /api/sync/pull` reports both boundaries and supplies only the current active sessions' bounded
+Vocabulary, Reading, Grammar, and Pronunciation packs. An older scheduled attempt that arrives after
+a newer review is inserted as its original immutable fact; the existing deterministic server replay
+recomputes the canonical `card_state`, which the next pull applies locally.
 
 ## V1 content import
 

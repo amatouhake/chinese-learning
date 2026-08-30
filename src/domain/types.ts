@@ -197,6 +197,104 @@ export interface PronunciationNextResult {
   card: PronunciationCard | null;
 }
 
+export interface GrammarTopicStateView {
+  grammarTopicId: string;
+  status: "introduced" | "learning" | "comfortable" | null;
+  introducedAt: number | null;
+  lastStudiedAt: number | null;
+  selfConfidence: number | null;
+  version: number;
+  serverSeq: number | null;
+}
+
+export interface ReadingVocabularyHint {
+  lexemeId: string;
+  readingId: string;
+  simplified: string;
+  traditional: string | null;
+  pinyin: string;
+  numericPinyin: string;
+  meanings: StudyMeaning[];
+  position: number;
+  role: string | null;
+}
+
+export interface ReadingGrammarTopic {
+  id: string;
+  title: string;
+  level: string | null;
+  pattern: string;
+  summaryJa: string;
+  explanationJa: string;
+  contrastJa: string;
+  state: GrammarTopicStateView | null;
+}
+
+export interface ReadingCard {
+  cardId: string;
+  sentenceId: string;
+  activityType: "sentence_reading";
+  sentence: {
+    chinese: string;
+    pinyin: string;
+    meaningJa: string;
+    meaningEn: string;
+    source: string;
+    sourceRef: string | null;
+  };
+  vocabulary: ReadingVocabularyHint[];
+  grammarTopics: ReadingGrammarTopic[];
+}
+
+export interface GrammarPractice {
+  prompt: string;
+  choices: Array<{ id: string; label: string }>;
+  answerChoiceId: string;
+  explanationJa: string;
+}
+
+export interface GrammarCard {
+  cardId: string;
+  topicId: string;
+  practiceVersionId: string;
+  practiceSentenceId: string;
+  activityType: "sentence_reading";
+  topic: ReadingGrammarTopic & {
+    sequence: number;
+    practice: GrammarPractice;
+  };
+  examples: Array<{
+    sentenceId: string;
+    chinese: string;
+    pinyin: string;
+    meaningJa: string;
+    meaningEn: string;
+  }>;
+}
+
+export interface GuidedSessionView {
+  id: string;
+  deviceId: string;
+  mode: "reading" | "grammar";
+  maxItems: number;
+  completedItems: number;
+  focusTopicId: string | null;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface ReadingNextResult {
+  status: "card" | "empty" | "completed";
+  session: GuidedSessionView;
+  card: ReadingCard | null;
+}
+
+export interface GrammarNextResult {
+  status: "card" | "empty" | "completed";
+  session: GuidedSessionView;
+  card: GrammarCard | null;
+}
+
 export interface OfflineStudyPack {
   status: "cards" | "empty" | "completed";
   session: StudySessionView;
@@ -207,6 +305,18 @@ export interface OfflinePronunciationPack {
   status: "cards" | "empty" | "completed";
   session: PronunciationSessionView;
   cards: PronunciationCard[];
+}
+
+export interface OfflineReadingPack {
+  status: "cards" | "empty" | "completed";
+  session: GuidedSessionView;
+  cards: ReadingCard[];
+}
+
+export interface OfflineGrammarPack {
+  status: "cards" | "empty" | "completed";
+  session: GuidedSessionView;
+  cards: GrammarCard[];
 }
 
 export interface SyncAttemptChange {
@@ -230,14 +340,14 @@ export interface SyncSessionChange {
   seq: number;
   entityType: "study_session";
   sessionId: string;
-  mode: "study" | "pronunciation";
+  mode: "study" | "pronunciation" | "reading" | "grammar";
   endedAt: number | null;
 }
 
 export interface SyncOtherLearnerChange {
   seq: number;
   entityType: "grammar_topic_state";
-  entityId: string;
+  state: GrammarTopicStateView;
 }
 
 export type SyncLearnerChange =
@@ -259,6 +369,8 @@ export interface SyncPullResponse {
   contentChanges: SyncContentChange[];
   studyPack: OfflineStudyPack | null;
   pronunciationPack: OfflinePronunciationPack | null;
+  readingPack: OfflineReadingPack | null;
+  grammarPack: OfflineGrammarPack | null;
 }
 
 export function isActivityType(value: unknown): value is ActivityType {

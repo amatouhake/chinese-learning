@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  buildV1ImportStatements,
   deriveV1ImportIdentity,
   type V1Enrichment,
   type V1ImportInput,
   type V1SourceLexeme,
 } from "../../src/db/v1-import";
+import { BEGINNER_GRAMMAR_TOPICS } from "../../src/domain/reading-grammar";
 
 describe("v1 import identity", () => {
   test("rejects duplicate enrichment identities before deriving a revision", async () => {
@@ -43,7 +45,67 @@ describe("v1 import identity", () => {
       );
     }
   });
+
+  test("fails closed when an included foundation example drifts", async () => {
+    const topic = BEGINNER_GRAMMAR_TOPICS[0];
+    const input: V1ImportInput = {
+      ...importInput([]),
+      lexemes: foundationLexemes(topic),
+      enrichments: [
+        {
+          simplified: topic.anchorSimplified,
+          meaning_ja: topic.teaching.summaryJa,
+          example_zh: "这是学生。",
+          example_pinyin: topic.expectedSentence.pinyin,
+          example_ja: topic.expectedSentence.meaningJa,
+          example_en: topic.expectedSentence.meaningEn,
+        },
+      ],
+    };
+
+    await expect(buildV1ImportStatements(input)).rejects.toThrow(
+      `curated grammar sentence drifted for ${topic.id}`,
+    );
+  });
+
+  test("skips foundation activation when a partial import lacks sentence lexemes", async () => {
+    const topic = BEGINNER_GRAMMAR_TOPICS[1];
+    const anchor = foundationLexemes(topic).find(
+      ({ simplified }) => simplified === topic.anchorSimplified,
+    );
+    if (!anchor) throw new Error("missing topic anchor fixture");
+    const statements = await buildV1ImportStatements({
+      ...importInput([]),
+      lexemes: [anchor],
+      enrichments: [
+        {
+          simplified: topic.anchorSimplified,
+          meaning_ja: topic.teaching.summaryJa,
+          example_zh: topic.expectedSentence.chinese,
+          example_pinyin: topic.expectedSentence.pinyin,
+          example_ja: topic.expectedSentence.meaningJa,
+          example_en: topic.expectedSentence.meaningEn,
+        },
+      ],
+    });
+
+    expect(statements.join("\n")).not.toContain(topic.id);
+  });
 });
+
+function foundationLexemes(topic: (typeof BEGINNER_GRAMMAR_TOPICS)[number]): V1SourceLexeme[] {
+  return topic.lexemes.map((link) => ({
+    simplified: link.simplified,
+    hskLevel: 1,
+    forms: [
+      {
+        traditional: link.simplified,
+        transcriptions: { pinyin: link.numericPinyin, numeric: link.numericPinyin },
+        meanings: [link.senseIncludes ?? link.simplified],
+      },
+    ],
+  }));
+}
 
 function importInput(
   enrichments: V1Enrichment[],
