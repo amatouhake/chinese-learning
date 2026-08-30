@@ -1,3 +1,5 @@
+import { normalizeNumericPinyin } from "../domain/pronunciation";
+
 export interface V1SourceForm {
   traditional?: string;
   transcriptions: {
@@ -173,6 +175,13 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          content_revision = excluded.content_revision,
          retired_at = NULL;`);
     }
+
+    statements.push(`UPDATE lexeme_readings
+      SET is_preferred = 0
+      WHERE lexeme_id = ${sqlText(lexemeId)}
+        AND source = 'complete-hsk-vocabulary'
+        AND retired_at IS NULL
+        AND ${importAllowed};`);
 
     statements.push(`UPDATE lexeme_readings
       SET is_preferred = 1
@@ -382,23 +391,7 @@ function compareCanonicalJson(left: unknown, right: unknown): number {
   return 0;
 }
 
-export function normalizeNumericPinyin(
-  numericPinyin: string,
-): Array<{ syllable: string; tone: number | null }> {
-  return numericPinyin
-    .trim()
-    .toLowerCase()
-    .split(/[\s'’·-]+/u)
-    .filter(Boolean)
-    .map((token) => {
-      const match = /^(.*?)([1-5])$/.exec(token);
-      return match
-        ? { syllable: match[1] ?? token, tone: Number(match[2]) }
-        : { syllable: token, tone: null };
-    });
-}
-
-function uniqueReadings(
+export function uniqueReadings(
   lexeme: V1SourceLexeme,
   lexemeId: string,
 ): Array<{ id: string; form: V1SourceForm }> {

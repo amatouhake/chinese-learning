@@ -1,4 +1,10 @@
 import type { FSRSParameters } from "ts-fsrs";
+import type {
+  NormalizedSyllable,
+  PronunciationActivityType,
+  PronunciationFocus,
+  Tone,
+} from "./pronunciation";
 
 export const ACTIVITY_TYPES = [
   "hanzi_to_meaning",
@@ -138,6 +144,57 @@ export interface StudyNextResult {
   status: "card" | "empty" | "completed";
   session: StudySessionView;
   card: StudyCard | null;
+}
+
+export interface PronunciationMedia {
+  id: string;
+  url: string;
+  license: string;
+  attribution: string;
+}
+
+export interface PronunciationChoice {
+  id: string;
+  label: string;
+}
+
+export interface PronunciationCard {
+  cardId: string;
+  readingId: string;
+  activityType: PronunciationActivityType;
+  lexeme: {
+    simplified: string;
+    traditional: string | null;
+    meanings: string[];
+    hskLevel: number | null;
+  };
+  reading: {
+    pinyin: string;
+    numericPinyin: string;
+    untonedPinyin: string;
+    syllables: NormalizedSyllable[];
+    tone: Tone | null;
+    tonePair: [Tone, Tone] | null;
+  };
+  media: PronunciationMedia | null;
+  choices: PronunciationChoice[];
+  answerChoiceId: string | null;
+}
+
+export interface PronunciationSessionView {
+  id: string;
+  deviceId: string;
+  focus: PronunciationFocus;
+  maxItems: number;
+  completedItems: number;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface PronunciationNextResult {
+  status: "card" | "empty" | "completed";
+  session: PronunciationSessionView;
+  card: PronunciationCard | null;
 }
 
 export function isActivityType(value: unknown): value is ActivityType {

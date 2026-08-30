@@ -402,6 +402,338 @@ footer {
   text-align: center;
 }
 
+.global-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 4.5rem;
+  border-bottom: 1px solid rgb(102 112 106 / 22%);
+}
+
+.surface-nav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid #c8c0af;
+  border-radius: 0.8rem;
+  background: rgb(255 253 247 / 70%);
+}
+
+.surface-nav button {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem;
+  border: 0;
+  border-radius: 0.58rem;
+  color: #617068;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.surface-nav button.active {
+  color: #fff;
+  background: #1f654e;
+}
+
+.surface-header {
+  min-height: 3.2rem;
+  margin-bottom: 0.65rem;
+}
+
+.mode-picker {
+  padding: 1.2rem;
+  border: 1px solid #c8c0af;
+  border-radius: 1.25rem;
+  background: rgb(255 253 247 / 94%);
+  box-shadow: 0 1rem 3rem rgb(44 53 48 / 10%);
+}
+
+.mode-picker-heading h2 {
+  margin: 0.4rem 0 0.35rem;
+  font-size: clamp(1.55rem, 7vw, 2.25rem);
+}
+
+.mode-picker-heading > p:last-child {
+  margin: 0;
+  color: #68726d;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.focus-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1.1rem;
+}
+
+.focus-grid button {
+  display: grid;
+  gap: 0.16rem;
+  min-height: 4.1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #d4cbbb;
+  border-radius: 0.85rem;
+  background: #fffdf7;
+  text-align: left;
+  cursor: pointer;
+}
+
+.focus-grid button.recommended {
+  border-color: #2c755b;
+  color: #fff;
+  background: #24674f;
+}
+
+.focus-grid strong {
+  font-size: 0.92rem;
+}
+
+.focus-grid span {
+  color: #737e78;
+  font-size: 0.72rem;
+}
+
+.focus-grid .recommended span {
+  color: #dbece4;
+}
+
+.sound-badge {
+  color: #5c466f;
+  background: #ebe0f0;
+}
+
+.pronunciation-pulse {
+  background: #71517f;
+}
+
+.pronunciation-prompt {
+  min-height: 14rem;
+  padding-bottom: 1.2rem;
+}
+
+.untoned,
+.production-pinyin,
+.sense-hint,
+.audio-error {
+  margin: 0.65rem 0 0;
+}
+
+.untoned,
+.production-pinyin {
+  color: #1c604b;
+  font-size: 1.18rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.sense-hint {
+  max-width: 25rem;
+  color: #6d7771;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.audio-error {
+  color: #a33c31;
+  font-size: 0.75rem;
+}
+
+.audio-button {
+  display: grid;
+  width: 8.5rem;
+  height: 8.5rem;
+  margin: 0 auto;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: #694b77;
+  place-content: center;
+  cursor: pointer;
+  box-shadow: 0 0.9rem 2rem rgb(78 48 92 / 22%);
+}
+
+.audio-button span {
+  font-size: 2.2rem;
+  transform: translateX(0.12rem);
+}
+
+.audio-button strong {
+  margin-top: 0.35rem;
+  font-size: 0.76rem;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.choice-grid button {
+  min-height: 4rem;
+  padding: 0.65rem;
+  border: 1px solid #d4cbbb;
+  border-radius: 0.8rem;
+  background: #fffdf7;
+  font-weight: 750;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.choice-grid.pair-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.36rem;
+}
+
+.choice-grid.pair-grid button {
+  min-height: 2.9rem;
+  padding: 0.3rem 0.1rem;
+  font-size: 0.77rem;
+}
+
+.pronunciation-answer {
+  border-top: 1px solid #e3ded2;
+}
+
+.pronunciation-answer .answer-heading {
+  border-top: 0;
+}
+
+.numeric-pinyin {
+  margin: 0.2rem 0 0;
+  color: #78817c;
+  font-size: 0.72rem;
+}
+
+.feedback {
+  width: fit-content;
+  margin: 0.8rem 0 0;
+  padding: 0.3rem 0.65rem;
+  border-radius: 99rem;
+  color: #9a4035;
+  background: #f4dfd7;
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.feedback.correct {
+  color: #24614b;
+  background: #dceadf;
+}
+
+.reading-senses {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.8rem 0;
+}
+
+.reading-senses p,
+.media-credit,
+.safe-degrade {
+  margin: 0;
+}
+
+.reading-senses p {
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.audio-replay-small {
+  width: 100%;
+  min-height: 3rem;
+  border: 1px solid #bba8c4;
+  border-radius: 0.75rem;
+  color: #5d416b;
+  background: #f4edf6;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.media-credit,
+.safe-degrade {
+  padding-top: 0.4rem;
+  color: #7a817d;
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.binary-grid,
+.production-ratings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+}
+
+.binary-grid button,
+.production-ratings button {
+  min-height: 3.75rem;
+  border: 1px solid #d4cbbb;
+  border-radius: 0.8rem;
+  background: #fffdf7;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.binary-grid .missed {
+  color: #9a4035;
+}
+
+.binary-grid .got-it {
+  color: #24614b;
+}
+
+.production-ratings button {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.65rem;
+  text-align: left;
+}
+
+.production-ratings span {
+  color: #78817c;
+  font-size: 0.67rem;
+}
+
+.continue-button {
+  margin-top: 0.9rem;
+}
+
+.sound-reference {
+  margin-top: 0.8rem;
+  border: 1px solid #c8c0af;
+  border-radius: 0.9rem;
+  background: rgb(255 253 247 / 72%);
+}
+
+.sound-reference summary {
+  padding: 0.85rem 1rem;
+  color: #4d6258;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.reference-content {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0 1rem 1rem;
+}
+
+.reference-content h3 {
+  margin: 0 0 0.25rem;
+  color: #315849;
+  font-size: 0.78rem;
+}
+
+.reference-content p {
+  margin: 0.2rem 0 0;
+  color: #68726d;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.35;
@@ -435,6 +767,26 @@ footer {
   .rating kbd {
     grid-row: auto;
     justify-self: center;
+  }
+
+  .focus-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .focus-grid button.recommended {
+    grid-column: 1 / 3;
+  }
+
+  .choice-grid:not(.pair-grid) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .production-ratings {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .reference-content {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

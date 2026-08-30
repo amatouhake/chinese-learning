@@ -1,15 +1,23 @@
 import type { AttemptInput } from "../domain/types";
 import { parseAttemptInput } from "../domain/validation";
+import { PRONUNCIATION_FOCUSES, type PronunciationFocus } from "../domain/pronunciation";
 
 export const STUDY_STORAGE_KEY = "chinese-learning.study-browser.v1";
 export const STUDY_STORAGE_LOCK = `${STUDY_STORAGE_KEY}.lock`;
 
 export interface BrowserStudyState {
-  version: 1;
+  version: 3;
   deviceId: string;
   nextDeviceSeq: number;
   activeSessionId: string | null;
+  activePronunciationSessionId: string | null;
+  activePronunciationFocus: PronunciationFocus | null;
   pendingAttempt: AttemptInput | null;
+}
+
+export interface ActivePronunciationSession {
+  sessionId: string;
+  focus: PronunciationFocus;
 }
 
 export interface StorageLike {
@@ -40,17 +48,76 @@ export async function loadOrCreateBrowserStudyState(
 ): Promise<BrowserStudyState> {
   return lockManager.request(STUDY_STORAGE_LOCK, () => {
     const persisted = storage.getItem(STUDY_STORAGE_KEY);
-    if (persisted !== null) return parseBrowserStudyState(persisted);
+    if (persisted !== null) {
+      const state = parseBrowserStudyState(persisted);
+      if ((JSON.parse(persisted) as { version?: unknown }).version !== state.version) {
+        persist(storage, state);
+      }
+      return state;
+    }
 
     const state: BrowserStudyState = {
-      version: 1,
+      version: 3,
       deviceId: `browser:${createId()}`,
       nextDeviceSeq: 1,
       activeSessionId: null,
+      activePronunciationSessionId: null,
+      activePronunciationFocus: null,
       pendingAttempt: null,
     };
     persist(storage, state);
     return state;
+  });
+}
+
+export async function setActivePronunciationSession(
+  storage: StorageLike,
+  state: BrowserStudyState,
+  activeSession: ActivePronunciationSession | null,
+  lockManager: StudyLockManager = browserStudyLockManager(),
+): Promise<BrowserStudyState> {
+  if (activeSession !== null && activeSession.sessionId.trim().length === 0) {
+    throw new Error("pronunciation session ID must be non-empty");
+  }
+  if (
+    activeSession !== null &&
+    !(PRONUNCIATION_FOCUSES as readonly string[]).includes(activeSession.focus)
+  ) {
+    throw new Error("pronunciation session focus is invalid");
+  }
+  const sessionId = activeSession?.sessionId ?? null;
+  const focus = activeSession?.focus ?? null;
+  return lockManager.request(STUDY_STORAGE_LOCK, () => {
+    const latest = loadExistingState(storage);
+    requireSameDevice(state, latest);
+    if (
+      latest.pendingAttempt?.mode === "pronunciation" &&
+      (sessionId !== latest.activePronunciationSessionId ||
+        focus !== latest.activePronunciationFocus)
+    ) {
+      throw new Error("cannot replace a pronunciation session while its attempt is pending");
+    }
+    if (
+      latest.activePronunciationSessionId !== state.activePronunciationSessionId ||
+      latest.activePronunciationFocus !== state.activePronunciationFocus
+    ) {
+      return latest;
+    }
+    if (
+      sessionId !== null &&
+      latest.activePronunciationSessionId !== null &&
+      (sessionId !== latest.activePronunciationSessionId ||
+        focus !== latest.activePronunciationFocus)
+    ) {
+      return latest;
+    }
+    const next = {
+      ...latest,
+      activePronunciationSessionId: sessionId,
+      activePronunciationFocus: focus,
+    };
+    persist(storage, next);
+    return next;
   });
 }
 
@@ -96,8 +163,14 @@ export async function stageStudyAttempt(
     requireSameDevice(state, latest);
     if (latest.pendingAttempt) throw new Error("a study review is already pending delivery");
     requireCurrentStateForStaging(state, latest);
-    if (!latest.activeSessionId || draft.studySessionId !== latest.activeSessionId) {
-      throw new Error("a study review must belong to the active session");
+    const activeSessionId =
+      draft.mode === "pronunciation"
+        ? latest.activePronunciationSessionId
+        : draft.mode === "study"
+          ? latest.activeSessionId
+          : null;
+    if (!activeSessionId || draft.studySessionId !== activeSessionId) {
+      throw new Error("a learning attempt must belong to its active session");
     }
     if (latest.nextDeviceSeq >= Number.MAX_SAFE_INTEGER) {
       throw new Error("browser device sequence is exhausted");
@@ -179,6 +252,8 @@ function requireCurrentStateForStaging(state: BrowserStudyState, latest: Browser
   if (
     state.nextDeviceSeq !== latest.nextDeviceSeq ||
     state.activeSessionId !== latest.activeSessionId ||
+    state.activePronunciationSessionId !== latest.activePronunciationSessionId ||
+    state.activePronunciationFocus !== latest.activePronunciationFocus ||
     state.pendingAttempt?.eventId !== latest.pendingAttempt?.eventId
   ) {
     throw new Error("study state changed in another tab; reload before rating this card");
@@ -196,8 +271,17 @@ function parseBrowserStudyState(json: string): BrowserStudyState {
     throw new Error("stored study identity has an invalid shape; refusing to replace it");
   }
   const record = value as Record<string, unknown>;
+  const supportedVersion = record.version === 1 || record.version === 2 || record.version === 3;
+  const activePronunciationSessionId =
+    record.version === 1 ? null : record.activePronunciationSessionId;
+  const activePronunciationFocus =
+    record.version === 3
+      ? record.activePronunciationFocus
+      : activePronunciationSessionId === null
+        ? null
+        : "mixed";
   if (
-    record.version !== 1 ||
+    !supportedVersion ||
     typeof record.deviceId !== "string" ||
     record.deviceId.trim().length === 0 ||
     !Number.isSafeInteger(record.nextDeviceSeq) ||
@@ -205,6 +289,13 @@ function parseBrowserStudyState(json: string): BrowserStudyState {
     !(
       record.activeSessionId === null ||
       (typeof record.activeSessionId === "string" && record.activeSessionId.trim().length > 0)
+    ) ||
+    !(
+      (activePronunciationSessionId === null && activePronunciationFocus === null) ||
+      (typeof activePronunciationSessionId === "string" &&
+        activePronunciationSessionId.trim().length > 0 &&
+        typeof activePronunciationFocus === "string" &&
+        (PRONUNCIATION_FOCUSES as readonly string[]).includes(activePronunciationFocus))
     )
   ) {
     throw new Error("stored study identity is invalid; refusing to replace it");
@@ -220,17 +311,22 @@ function parseBrowserStudyState(json: string): BrowserStudyState {
     if (
       pendingAttempt.deviceId !== record.deviceId ||
       pendingAttempt.deviceSeq >= (record.nextDeviceSeq as number) ||
-      pendingAttempt.studySessionId !== record.activeSessionId
+      pendingAttempt.studySessionId !==
+        (pendingAttempt.mode === "pronunciation"
+          ? activePronunciationSessionId
+          : record.activeSessionId)
     ) {
       throw new Error("stored pending study review conflicts with browser identity");
     }
   }
 
   return {
-    version: 1,
+    version: 3,
     deviceId: record.deviceId,
     nextDeviceSeq: record.nextDeviceSeq as number,
     activeSessionId: record.activeSessionId as string | null,
+    activePronunciationSessionId: activePronunciationSessionId as string | null,
+    activePronunciationFocus: activePronunciationFocus as PronunciationFocus | null,
     pendingAttempt,
   };
 }

@@ -46,6 +46,23 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Audio sources
 
-The v1 project references `audio-cmn` (CC-BY-SA). No audio files or derived audio assets are present
-in this repository. Any later media import must preserve its attribution/share-alike obligations and
-remain separate from the application code license.
+### audio-cmn
+
+- Source: <https://github.com/hugolpz/audio-cmn>
+- Role: Mandarin word recordings used for the pronunciation listening and compare steps
+- Source revision: `ff9ed3d0c631195bd2c06f39450f3264c7124040`
+- Imported path: `64k/hsk/cmn-{Hanzi}.mp3`
+- License: Creative Commons Attribution-ShareAlike (CC BY-SA), as declared by the source
+- Attribution in the source: Yue Tan; collected for the Spoken Wikipedia Corpora (SWAC)
+
+The corpus is not committed here. The pronunciation importer reads a separately pinned checkout,
+verifies each contributing worktree file against the Git blob at the revision above, and copies only
+reliably mapped recordings to ignored `.generated/public/media/` for local delivery. The generated
+report retains the source commits and explicit ambiguous/missing issue lists. Each D1 media record
+retains the source name, license, attribution, source path, commit, byte length, digest, and stable
+content identity. Those staged audio files retain CC BY-SA and are not relicensed by the
+application's MIT license.
+
+Because these word files are named by Hanzi rather than a reading identifier, the importer refuses
+to attach a file to a lexeme with multiple active readings. This avoids making a false provenance
+claim about the recording's pronunciation.

@@ -21,6 +21,7 @@
     "src/**/*.svelte",
     "tests/**/*.ts",
     "scripts/**/*.ts",
+    "playwright.config.ts",
     "vite.config.ts",
     "vitest.config.ts",
     "worker-configuration.d.ts"
