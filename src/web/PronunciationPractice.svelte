@@ -4,7 +4,7 @@
   import type { PronunciationFocus } from "../domain/pronunciation";
   import type { PronunciationCard, PronunciationSessionView } from "../domain/types";
   import { isPronunciationAudioCached } from "./audio-cache";
-  import { postJson } from "./api";
+  import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
   import { synchronizeLearning } from "./sync";
 
@@ -34,7 +34,8 @@
   let promptStartedAt = 0;
   let answerSaved = false;
   let wasCorrect: boolean | null = null;
-  let isOffline = !navigator.onLine;
+  let browserOffline = !navigator.onLine;
+  let isOffline = browserOffline;
   let audioAvailableOffline = true;
   let syncMessage = "Choose a focus to prepare its offline set.";
 
@@ -53,7 +54,7 @@
       if (!browserState.activePronunciationFocus) {
         throw new Error("The active pronunciation session has no practice focus.");
       }
-      if (!isOffline) {
+      if (!browserOffline) {
         try {
           await ensureSession(
             browserState.activePronunciationSessionId,
@@ -65,8 +66,10 @@
           if (!(await store.getPronunciationSession(browserState.activePronunciationSessionId))) {
             throw error;
           }
-          isOffline = true;
-          syncMessage = "Network unavailable · using the cached pronunciation set";
+          isOffline = browserOffline || !(error instanceof ApiError);
+          syncMessage = isOffline
+            ? "Network unavailable · using the cached pronunciation set"
+            : "Service unavailable · using the cached pronunciation set";
         }
       }
       await loadNextCard();
@@ -79,7 +82,7 @@
     phase = "loading";
     errorMessage = "";
     try {
-      if (isOffline) throw new Error("Reconnect to prepare a new pronunciation offline set.");
+      if (browserOffline) throw new Error("Reconnect to prepare a new pronunciation offline set.");
       store ??= await OfflineLearningStore.open(localStorage);
       browserState ??= await store.snapshot();
       browserState = await store.setActivePronunciationSession(
@@ -121,10 +124,9 @@
     }
     phase = "loading";
     const sessionId = browserState.activePronunciationSessionId;
-    const [cachedSession, cachedCard, pending] = await Promise.all([
+    const [cachedSession, cachedCard] = await Promise.all([
       store.getPronunciationSession(sessionId),
       store.getCachedPronunciationCard(sessionId),
-      store.countPendingAttempts(sessionId),
     ]);
     if (!cachedSession) {
       throw new Error(
@@ -133,10 +135,7 @@
           : "The canonical pronunciation set has not been pulled yet.",
       );
     }
-    session = {
-      ...cachedSession,
-      completedItems: Math.min(cachedSession.maxItems, cachedSession.completedItems + pending),
-    };
+    session = cachedSession;
     card = cachedCard;
     answerSaved = false;
     wasCorrect = null;
@@ -207,7 +206,7 @@
         metadata: result.metadata,
       });
       browserState = staged.state;
-      if (!isOffline) await syncNow();
+      if (!browserOffline) await syncNow();
       answerSaved = true;
       if (session && isOffline) {
         session = { ...session, completedItems: session.completedItems + 1 };
@@ -219,9 +218,10 @@
   }
 
   async function syncNow(): Promise<void> {
-    if (!store || isOffline) return;
+    if (!store || browserOffline) return;
     const result = await synchronizeLearning(store);
     browserState = result.state;
+    isOffline = browserOffline || result.networkUnavailable;
     if (result.error) {
       syncMessage = `${result.pending} queued · ${result.error}`;
       return;
@@ -242,6 +242,7 @@
   }
 
   async function handleOnline(): Promise<void> {
+    browserOffline = false;
     isOffline = false;
     syncMessage = "Connection restored · synchronizing…";
     try {
@@ -255,6 +256,7 @@
   }
 
   function handleOffline(): void {
+    browserOffline = true;
     isOffline = true;
     syncMessage = `${browserState?.pendingCount ?? 0} queued · offline`;
   }
@@ -363,7 +365,7 @@
       {#each focuses as focus}
         <button
           class:recommended={focus.id === "mixed"}
-          disabled={isOffline}
+          disabled={browserOffline}
           onclick={() => void createNewSession(focus.id)}
         >
           <strong>{focus.label}</strong><span>{focus.hint}</span>

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
 
   import type { FsrsRating, StudyCard, StudySessionView } from "../domain/types";
-  import { postJson } from "./api";
+  import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
   import { synchronizeLearning } from "./sync";
 
@@ -22,7 +22,8 @@
   let errorMessage = "";
   let promptStartedAt = 0;
   let syncMessage = "Preparing offline cache…";
-  let isOffline = !navigator.onLine;
+  let browserOffline = !navigator.onLine;
+  let isOffline = browserOffline;
 
   onMount(() => void initializeStudy());
 
@@ -33,7 +34,7 @@
       store ??= await OfflineLearningStore.open(localStorage);
       browserState = await store.snapshot();
       if (!browserState.activeSessionId) {
-        if (isOffline) {
+        if (browserOffline) {
           errorMessage = "Reconnect once to prepare a new offline vocabulary set.";
           phase = "error";
           return;
@@ -41,14 +42,16 @@
         await createNewSession();
         return;
       }
-      if (!isOffline) {
+      if (!browserOffline) {
         try {
           await ensureSession(browserState.activeSessionId, browserState.deviceId);
           await syncNow();
         } catch (error) {
           if (!(await store.getStudySession(browserState.activeSessionId))) throw error;
-          isOffline = true;
-          syncMessage = "Network unavailable · using the cached vocabulary set";
+          isOffline = browserOffline || !(error instanceof ApiError);
+          syncMessage = isOffline
+            ? "Network unavailable · using the cached vocabulary set"
+            : "Service unavailable · using the cached vocabulary set";
         }
       }
       await loadNextCard();
@@ -61,7 +64,7 @@
     phase = "loading";
     errorMessage = "";
     try {
-      if (isOffline) throw new Error("Reconnect to prepare another offline vocabulary set.");
+      if (browserOffline) throw new Error("Reconnect to prepare another offline vocabulary set.");
       store ??= await OfflineLearningStore.open(localStorage);
       browserState ??= await store.snapshot();
       browserState = await store.setActiveStudySession(`study-session:${crypto.randomUUID()}`);
@@ -91,10 +94,9 @@
     }
     phase = "loading";
     const sessionId = browserState.activeSessionId;
-    const [cachedSession, cachedCard, pending] = await Promise.all([
+    const [cachedSession, cachedCard] = await Promise.all([
       store.getStudySession(sessionId),
       store.getCachedStudyCard(sessionId),
-      store.countPendingAttempts(sessionId),
     ]);
     if (!cachedSession) {
       throw new Error(
@@ -103,10 +105,7 @@
           : "The canonical vocabulary set has not been pulled yet.",
       );
     }
-    session = {
-      ...cachedSession,
-      reviewedCards: Math.min(cachedSession.maxCards, cachedSession.reviewedCards + pending),
-    };
+    session = cachedSession;
     card = cachedCard;
     if (cachedCard) {
       promptStartedAt = performance.now();
@@ -135,7 +134,7 @@
         fsrsReview: { rating, schedulerConfigId: card.schedulerConfigId },
       });
       browserState = staged.state;
-      if (!isOffline) await syncNow();
+      if (!browserOffline) await syncNow();
       await loadNextCard();
     } catch (error) {
       showError(error);
@@ -143,9 +142,10 @@
   }
 
   async function syncNow(): Promise<void> {
-    if (!store || isOffline) return;
+    if (!store || browserOffline) return;
     const result = await synchronizeLearning(store);
     browserState = result.state;
+    isOffline = browserOffline || result.networkUnavailable;
     if (result.error) {
       syncMessage = `${result.pending} queued · ${result.error}`;
       return;
@@ -155,6 +155,7 @@
   }
 
   async function handleOnline(): Promise<void> {
+    browserOffline = false;
     isOffline = false;
     syncMessage = "Connection restored · synchronizing…";
     try {
@@ -167,6 +168,7 @@
   }
 
   function handleOffline(): void {
+    browserOffline = true;
     isOffline = true;
     syncMessage = `${browserState?.pendingCount ?? 0} queued · offline`;
   }

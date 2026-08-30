@@ -11,6 +11,7 @@ export interface LearningSyncResult {
   audioCacheFailures: string[];
   error: string | null;
   retryable: boolean;
+  networkUnavailable: boolean;
 }
 
 export function synchronizeLearning(store: OfflineLearningStore): Promise<LearningSyncResult> {
@@ -33,6 +34,7 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
           audioCacheFailures: [],
           error: error instanceof Error ? error.message : "Pending events could not be pushed.",
           retryable: !(error instanceof ApiError) || error.status >= 500,
+          networkUnavailable: !(error instanceof ApiError),
         };
       }
     }
@@ -70,6 +72,7 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
           audioCacheFailures: [...audioCacheFailures],
           error: error instanceof Error ? error.message : "Canonical changes could not be pulled.",
           retryable: !(error instanceof ApiError) || error.status >= 500,
+          networkUnavailable: !(error instanceof ApiError),
         };
       }
 
@@ -87,6 +90,7 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
           audioCacheFailures: [...audioCacheFailures],
           error: null,
           retryable: false,
+          networkUnavailable: false,
         };
       }
     }

@@ -1,7 +1,7 @@
 import { getOfflinePronunciationPack } from "./pronunciation";
 import { getOfflineStudyPack } from "./study";
 import type { SyncPullInput } from "../domain/sync-validation";
-import type { MaterializedCardState, SyncLearnerChange, SyncPullResponse } from "../domain/types";
+import type { SyncLearnerChange, SyncPullResponse } from "../domain/types";
 
 const PULL_LIMIT = 100;
 
@@ -11,38 +11,29 @@ interface ChangeRow {
   entity_id: string;
   operation: "upsert" | "delete";
   content_revision: number | null;
-}
-
-interface AttemptChangeRow {
-  event_id: string;
-  device_id: string;
-  device_seq: number;
-  card_id: string;
-  occurred_at: number;
-  review_created: number;
-}
-
-interface CardStateRow {
-  card_id: string;
-  due_at: number;
-  stability: number;
-  difficulty: number;
-  elapsed_days: number;
-  scheduled_days: number;
-  learning_steps: number;
-  reps: number;
-  lapses: number;
-  state: number;
-  last_review_at: number | null;
-  version: number;
-  server_seq: number | null;
-  rebuilt_at: number;
-}
-
-interface SessionChangeRow {
-  id: string;
-  mode: "study" | "pronunciation";
-  ended_at: number | null;
+  attempt_event_id: string | null;
+  attempt_device_id: string | null;
+  attempt_device_seq: number | null;
+  attempt_card_id: string | null;
+  attempt_occurred_at: number | null;
+  attempt_review_created: number;
+  state_card_id: string | null;
+  state_due_at: number | null;
+  state_stability: number | null;
+  state_difficulty: number | null;
+  state_elapsed_days: number | null;
+  state_scheduled_days: number | null;
+  state_learning_steps: number | null;
+  state_reps: number | null;
+  state_lapses: number | null;
+  state_state: number | null;
+  state_last_review_at: number | null;
+  state_version: number | null;
+  state_server_seq: number | null;
+  state_rebuilt_at: number | null;
+  session_id: string | null;
+  session_mode: string | null;
+  session_ended_at: number | null;
 }
 
 export async function pullSyncChanges(
@@ -52,10 +43,40 @@ export async function pullSyncChanges(
   const [changeResult, settings] = await Promise.all([
     db
       .prepare(
-        `SELECT seq, entity_type, entity_id, operation, content_revision
-         FROM server_changes
-         WHERE seq > ?
-         ORDER BY seq
+        `SELECT sc.seq, sc.entity_type, sc.entity_id, sc.operation, sc.content_revision,
+           a.event_id AS attempt_event_id,
+           a.device_id AS attempt_device_id,
+           a.device_seq AS attempt_device_seq,
+           a.card_id AS attempt_card_id,
+           a.occurred_at AS attempt_occurred_at,
+           CASE WHEN r.attempt_id IS NULL THEN 0 ELSE 1 END AS attempt_review_created,
+           cs.card_id AS state_card_id,
+           cs.due_at AS state_due_at,
+           cs.stability AS state_stability,
+           cs.difficulty AS state_difficulty,
+           cs.elapsed_days AS state_elapsed_days,
+           cs.scheduled_days AS state_scheduled_days,
+           cs.learning_steps AS state_learning_steps,
+           cs.reps AS state_reps,
+           cs.lapses AS state_lapses,
+           cs.state AS state_state,
+           cs.last_review_at AS state_last_review_at,
+           cs.version AS state_version,
+           cs.server_seq AS state_server_seq,
+           cs.rebuilt_at AS state_rebuilt_at,
+           ss.id AS session_id,
+           ss.mode AS session_mode,
+           ss.ended_at AS session_ended_at
+         FROM server_changes sc
+         LEFT JOIN attempts a
+           ON sc.entity_type = 'attempt' AND a.event_id = sc.entity_id
+         LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
+         LEFT JOIN card_state cs
+           ON sc.entity_type = 'card_state' AND cs.card_id = sc.entity_id
+         LEFT JOIN study_sessions ss
+           ON sc.entity_type = 'study_session' AND ss.id = sc.entity_id
+         WHERE sc.seq > ?
+         ORDER BY sc.seq
          LIMIT ?`,
       )
       .bind(input.cursor, PULL_LIMIT + 1)
@@ -81,7 +102,7 @@ export async function pullSyncChanges(
       });
       continue;
     }
-    learnerChanges.push(await mapLearnerChange(db, row));
+    learnerChanges.push(mapLearnerChange(row));
   }
 
   const currentContentRevision = settings?.current_content_revision ?? null;
@@ -106,76 +127,80 @@ export async function pullSyncChanges(
   };
 }
 
-async function mapLearnerChange(db: D1Database, row: ChangeRow): Promise<SyncLearnerChange> {
+function mapLearnerChange(row: ChangeRow): SyncLearnerChange {
   if (row.entity_type === "attempt") {
-    const attempt = await db
-      .prepare(
-        `SELECT a.event_id, a.device_id, a.device_seq, a.card_id, a.occurred_at,
-           CASE WHEN r.attempt_id IS NULL THEN 0 ELSE 1 END AS review_created
-         FROM attempts a
-         LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
-         WHERE a.event_id = ?`,
-      )
-      .bind(row.entity_id)
-      .first<AttemptChangeRow>();
-    if (!attempt) throw new Error(`attempt change ${row.seq} has no canonical attempt`);
+    if (
+      row.attempt_event_id === null ||
+      row.attempt_device_id === null ||
+      row.attempt_device_seq === null ||
+      row.attempt_card_id === null ||
+      row.attempt_occurred_at === null
+    ) {
+      throw new Error(`attempt change ${row.seq} has no canonical attempt`);
+    }
     return {
       seq: row.seq,
       entityType: "attempt",
-      eventId: attempt.event_id,
-      deviceId: attempt.device_id,
-      deviceSeq: attempt.device_seq,
-      cardId: attempt.card_id,
-      occurredAt: attempt.occurred_at,
-      reviewCreated: attempt.review_created === 1,
+      eventId: row.attempt_event_id,
+      deviceId: row.attempt_device_id,
+      deviceSeq: row.attempt_device_seq,
+      cardId: row.attempt_card_id,
+      occurredAt: row.attempt_occurred_at,
+      reviewCreated: row.attempt_review_created === 1,
     };
   }
   if (row.entity_type === "card_state") {
-    const state = await db
-      .prepare(
-        `SELECT card_id, due_at, stability, difficulty, elapsed_days, scheduled_days,
-           learning_steps, reps, lapses, state, last_review_at, version, server_seq, rebuilt_at
-         FROM card_state WHERE card_id = ?`,
-      )
-      .bind(row.entity_id)
-      .first<CardStateRow>();
-    if (!state) throw new Error(`card-state change ${row.seq} has no canonical state`);
-    return { seq: row.seq, entityType: "card_state", cardState: mapCardState(state) };
+    if (
+      row.state_card_id === null ||
+      row.state_due_at === null ||
+      row.state_stability === null ||
+      row.state_difficulty === null ||
+      row.state_elapsed_days === null ||
+      row.state_scheduled_days === null ||
+      row.state_learning_steps === null ||
+      row.state_reps === null ||
+      row.state_lapses === null ||
+      row.state_state === null ||
+      row.state_version === null ||
+      row.state_rebuilt_at === null
+    ) {
+      throw new Error(`card-state change ${row.seq} has no canonical state`);
+    }
+    return {
+      seq: row.seq,
+      entityType: "card_state",
+      cardState: {
+        cardId: row.state_card_id,
+        dueAt: row.state_due_at,
+        stability: row.state_stability,
+        difficulty: row.state_difficulty,
+        elapsedDays: row.state_elapsed_days,
+        scheduledDays: row.state_scheduled_days,
+        learningSteps: row.state_learning_steps,
+        reps: row.state_reps,
+        lapses: row.state_lapses,
+        state: row.state_state,
+        lastReviewAt: row.state_last_review_at,
+        version: row.state_version,
+        serverSeq: row.state_server_seq,
+        rebuiltAt: row.state_rebuilt_at,
+      },
+    };
   }
   if (row.entity_type === "study_session") {
-    const session = await db
-      .prepare("SELECT id, mode, ended_at FROM study_sessions WHERE id = ?")
-      .bind(row.entity_id)
-      .first<SessionChangeRow>();
-    if (!session || (session.mode !== "study" && session.mode !== "pronunciation")) {
+    if (
+      row.session_id === null ||
+      (row.session_mode !== "study" && row.session_mode !== "pronunciation")
+    ) {
       throw new Error(`study-session change ${row.seq} has no supported session`);
     }
     return {
       seq: row.seq,
       entityType: "study_session",
-      sessionId: session.id,
-      mode: session.mode,
-      endedAt: session.ended_at,
+      sessionId: row.session_id,
+      mode: row.session_mode,
+      endedAt: row.session_ended_at,
     };
   }
   return { seq: row.seq, entityType: "grammar_topic_state", entityId: row.entity_id };
-}
-
-function mapCardState(row: CardStateRow): MaterializedCardState {
-  return {
-    cardId: row.card_id,
-    dueAt: row.due_at,
-    stability: row.stability,
-    difficulty: row.difficulty,
-    elapsedDays: row.elapsed_days,
-    scheduledDays: row.scheduled_days,
-    learningSteps: row.learning_steps,
-    reps: row.reps,
-    lapses: row.lapses,
-    state: row.state,
-    lastReviewAt: row.last_review_at,
-    version: row.version,
-    serverSeq: row.server_seq,
-    rebuiltAt: row.rebuilt_at,
-  };
 }

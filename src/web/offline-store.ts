@@ -182,7 +182,7 @@ export class OfflineLearningStore {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
       await this.reconcileLegacyStateUnderLock();
       const transaction = this.db.transaction(
-        [META_STORE, OUTBOX_STORE, STUDY_CARD_STORE, PRONUNCIATION_CARD_STORE],
+        [META_STORE, OUTBOX_STORE, STUDY_CARD_STORE, PRONUNCIATION_CARD_STORE, SESSION_STORE],
         "readwrite",
       );
       const metaStore = transaction.objectStore(META_STORE);
@@ -225,6 +225,7 @@ export class OfflineLearningStore {
       };
       transaction.objectStore(OUTBOX_STORE).add(attempt);
       cardStore.delete(cardKey(sessionId, draft.cardId));
+      await advanceCachedSessionProgress(transaction, attempt, true);
       const next: PersistedMeta = {
         ...latest,
         revision: latest.revision + 1,
@@ -417,8 +418,17 @@ export class OfflineLearningStore {
   private rememberSession(session: CachedSession): Promise<void> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
       await this.reconcileLegacyStateUnderLock();
-      const transaction = this.db.transaction(SESSION_STORE, "readwrite");
-      transaction.objectStore(SESSION_STORE).put(session);
+      const transaction = this.db.transaction([SESSION_STORE, OUTBOX_STORE], "readwrite");
+      const pending = (await request(
+        transaction.objectStore(OUTBOX_STORE).getAll(),
+      )) as AttemptInput[];
+      const pendingCount = pending.filter(
+        (attempt) => attempt.studySessionId === session.session.id,
+      ).length;
+      await putMergedSession(
+        transaction.objectStore(SESSION_STORE),
+        sessionWithPendingFloor(session, pendingCount),
+      );
       await transactionDone(transaction);
     });
   }
@@ -427,7 +437,7 @@ export class OfflineLearningStore {
     const legacyJson = this.storage.getItem(STUDY_STORAGE_KEY);
     const legacy = legacyJson === null ? null : parseBrowserStudyState(legacyJson);
     const transaction = this.db.transaction(
-      [META_STORE, OUTBOX_STORE, STUDY_CARD_STORE, PRONUNCIATION_CARD_STORE],
+      [META_STORE, OUTBOX_STORE, STUDY_CARD_STORE, PRONUNCIATION_CARD_STORE, SESSION_STORE],
       "readwrite",
     );
     const metaStore = transaction.objectStore(META_STORE);
@@ -462,6 +472,7 @@ export class OfflineLearningStore {
           pending.mode === "study" ? STUDY_CARD_STORE : PRONUNCIATION_CARD_STORE,
         );
         cardStore.delete(cardKey(pending.studySessionId ?? "", pending.cardId));
+        await advanceCachedSessionProgress(transaction, pending, false);
         imported = true;
       }
     }
@@ -586,7 +597,7 @@ async function replaceStudyPack(
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
   });
-  transaction.objectStore(SESSION_STORE).put({
+  await putMergedSession(transaction.objectStore(SESSION_STORE), {
     key: sessionKey("study", session.id),
     mode: "study",
     session,
@@ -603,10 +614,102 @@ async function replacePronunciationPack(
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
   });
-  transaction.objectStore(SESSION_STORE).put({
+  await putMergedSession(transaction.objectStore(SESSION_STORE), {
     key: sessionKey("pronunciation", session.id),
     mode: "pronunciation",
     session,
+  } satisfies CachedPronunciationSession);
+}
+
+async function putMergedSession(store: IDBObjectStore, incoming: CachedSession): Promise<void> {
+  const existing = (await request(store.get(incoming.key))) as CachedSession | undefined;
+  if (!existing) {
+    store.put(incoming);
+    return;
+  }
+  if (existing.mode !== incoming.mode) {
+    throw new Error("cached learning session mode changed unexpectedly");
+  }
+  if (incoming.mode === "study") {
+    const previous = existing as CachedStudySession;
+    store.put({
+      ...incoming,
+      session: {
+        ...incoming.session,
+        reviewedCards: Math.max(incoming.session.reviewedCards, previous.session.reviewedCards),
+        endedAt: incoming.session.endedAt ?? previous.session.endedAt,
+      },
+    } satisfies CachedStudySession);
+    return;
+  }
+  const previous = existing as CachedPronunciationSession;
+  store.put({
+    ...incoming,
+    session: {
+      ...incoming.session,
+      completedItems: Math.max(incoming.session.completedItems, previous.session.completedItems),
+      endedAt: incoming.session.endedAt ?? previous.session.endedAt,
+    },
+  } satisfies CachedPronunciationSession);
+}
+
+function sessionWithPendingFloor(session: CachedSession, pendingCount: number): CachedSession {
+  if (session.mode === "study") {
+    return {
+      ...session,
+      session: {
+        ...session.session,
+        reviewedCards: Math.max(session.session.reviewedCards, pendingCount),
+      },
+    };
+  }
+  return {
+    ...session,
+    session: {
+      ...session.session,
+      completedItems: Math.max(session.session.completedItems, pendingCount),
+    },
+  };
+}
+
+async function advanceCachedSessionProgress(
+  transaction: IDBTransaction,
+  attempt: AttemptInput,
+  required: boolean,
+): Promise<void> {
+  if (!attempt.studySessionId || (attempt.mode !== "study" && attempt.mode !== "pronunciation")) {
+    if (required) {
+      transaction.abort();
+      throw new Error("a learning attempt must belong to a cached learning session");
+    }
+    return;
+  }
+  const store = transaction.objectStore(SESSION_STORE);
+  const key = sessionKey(attempt.mode, attempt.studySessionId);
+  const cached = (await request(store.get(key))) as CachedSession | undefined;
+  if (!cached || cached.mode !== attempt.mode) {
+    if (required) {
+      transaction.abort();
+      throw new Error("cached learning session changed in another tab; reload before answering");
+    }
+    return;
+  }
+  if (cached.mode === "study") {
+    store.put({
+      ...cached,
+      session: {
+        ...cached.session,
+        reviewedCards: Math.min(cached.session.maxCards, cached.session.reviewedCards + 1),
+      },
+    } satisfies CachedStudySession);
+    return;
+  }
+  store.put({
+    ...cached,
+    session: {
+      ...cached.session,
+      completedItems: Math.min(cached.session.maxItems, cached.session.completedItems + 1),
+    },
   } satisfies CachedPronunciationSession);
 }
 

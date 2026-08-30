@@ -160,6 +160,7 @@ test.describe("offline PWA foundation", () => {
     }
     await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
+    await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
 
     await page.route("**/api/sync/pull", async (route) => {
@@ -172,6 +173,9 @@ test.describe("offline PWA foundation", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
+    await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible();
+    await expect(page.getByText("10 reviews are safely synchronized.")).toBeVisible();
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
     await expect(page.locator(".sync-status")).toContainText("simulated canonical pull failure");
 
@@ -208,6 +212,9 @@ test.describe("offline PWA foundation", () => {
     }
     await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
+    await expect
+      .poll(() => cachedSessionProgress(page, "pronunciation", sessionId as string))
+      .toBe(10);
 
     await page.route("**/api/sync/pull", async (route) => {
       await route.fulfill({
@@ -219,6 +226,11 @@ test.describe("offline PWA foundation", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    await expect
+      .poll(() => cachedSessionProgress(page, "pronunciation", sessionId as string))
+      .toBe(10);
+    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect(page.getByText("10 non-FSRS attempts are safely synchronized.")).toBeVisible();
     expect((await readMeta(page)).activePronunciationSessionId).toBe(sessionId);
 
     await page.unroute("**/api/sync/pull");
@@ -267,6 +279,51 @@ test.describe("offline PWA foundation", () => {
       ),
     ).toBe(true);
     expect((await readMeta(page)).activePronunciationSessionId).toBe(failedSessionId);
+  });
+
+  test("retries transient API failures without waiting for a browser online event", async ({
+    page,
+  }) => {
+    await prepareVocabularyAndPronunciation(page);
+
+    await page.route("**/api/study/sessions", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated vocabulary service outage" }),
+      });
+    });
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await expect(page.locator(".sync-status")).toContainText(
+      "Service unavailable · using the cached vocabulary set",
+    );
+    await expect(page.locator(".sync-status")).not.toHaveClass(/offline/);
+    await page.unroute("**/api/study/sessions");
+
+    await page.getByRole("button", { name: "Reveal answer" }).click();
+    await page.getByRole("button", { name: "3: Good — Recalled" }).click();
+    await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    await expect(page.locator(".sync-status")).toContainText("synced");
+
+    await page.route("**/api/pronunciation/sessions", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated pronunciation service outage" }),
+      });
+    });
+    await page.getByRole("button", { name: "Pronunciation" }).click();
+    await expect(page.locator(".study-card")).toBeVisible();
+    await expect(page.locator(".sync-status")).toContainText(
+      "Service unavailable · using the cached pronunciation set",
+    );
+    await expect(page.locator(".sync-status")).not.toHaveClass(/offline/);
+    await page.unroute("**/api/pronunciation/sessions");
+
+    await answerPronunciationCard(page);
+    await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    await expect(page.locator(".sync-status")).toContainText("synced");
   });
 
   test("omits an uncreated vocabulary session while populating pronunciation", async ({ page }) => {
@@ -622,6 +679,35 @@ function readOutbox(page: Page): Promise<AttemptInput[]> {
       });
     },
     { dbName: DB_NAME },
+  );
+}
+
+function cachedSessionProgress(
+  page: Page,
+  mode: "study" | "pronunciation",
+  sessionId: string,
+): Promise<number | null> {
+  return page.evaluate(
+    async ({ dbName, sessionKey, field }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const open = indexedDB.open(dbName, 1);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => resolve(open.result);
+      });
+      return await new Promise<number | null>((resolve, reject) => {
+        const get = db.transaction("sessions", "readonly").objectStore("sessions").get(sessionKey);
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => {
+          const value = get.result?.session?.[field];
+          resolve(typeof value === "number" ? value : null);
+        };
+      });
+    },
+    {
+      dbName: DB_NAME,
+      sessionKey: `${mode}\u001f${sessionId}`,
+      field: mode === "study" ? "reviewedCards" : "completedItems",
+    },
   );
 }
 

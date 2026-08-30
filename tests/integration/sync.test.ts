@@ -9,6 +9,64 @@ import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
 import type { AttemptInput, StudyCard, SyncPullResponse } from "../../src/domain/types";
 
 describe("offline sync contract", () => {
+  test("bulk-loads a full learner-change page within the D1 Free query budget", async () => {
+    await env.DB.prepare(
+      `WITH RECURSIVE numbers(value) AS (
+         SELECT 1
+         UNION ALL
+         SELECT value + 1 FROM numbers WHERE value < 101
+       )
+       INSERT INTO study_sessions (id, device_id, mode, started_at, context_json)
+       SELECT printf('bulk-session-%03d', value), 'bulk-device',
+         CASE WHEN value % 2 = 0 THEN 'pronunciation' ELSE 'study' END,
+         value, '{}'
+       FROM numbers`,
+    ).run();
+    await env.DB.prepare(
+      `WITH RECURSIVE numbers(value) AS (
+         SELECT 1
+         UNION ALL
+         SELECT value + 1 FROM numbers WHERE value < 101
+       )
+       INSERT INTO server_changes
+         (change_id, entity_type, entity_id, operation, changed_at)
+       SELECT printf('bulk-change-%03d', value), 'study_session',
+         printf('bulk-session-%03d', value), 'upsert', value
+       FROM numbers`,
+    ).run();
+
+    try {
+      const measured = measurePreparedQueries(env.DB);
+      const first = await pullSyncChanges(measured.database, {
+        cursor: 0,
+        contentRevision: null,
+        deviceId: "bulk-device",
+      });
+      expect(first.learnerChanges).toHaveLength(100);
+      expect(first.hasMore).toBe(true);
+      expect(first.learnerChanges[0]).toMatchObject({
+        entityType: "study_session",
+        sessionId: "bulk-session-001",
+        mode: "study",
+      });
+      expect(measured.count()).toBe(2);
+
+      const second = await pullSyncChanges(measured.database, {
+        cursor: first.nextCursor,
+        contentRevision: first.currentContentRevision,
+        deviceId: "bulk-device",
+      });
+      expect(second.learnerChanges).toHaveLength(1);
+      expect(second.hasMore).toBe(false);
+      expect(measured.count()).toBe(4);
+    } finally {
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM server_changes WHERE change_id LIKE 'bulk-change-%'"),
+        env.DB.prepare("DELETE FROM study_sessions WHERE device_id = 'bulk-device'"),
+      ]);
+    }
+  });
+
   test("pulls bounded canonical changes by cursor and duplicate delivery adds no change", async () => {
     await applyImport("cursor", [lexeme("游标一", 1), lexeme("游标二", 2)]);
     await createStudySession(env.DB, {
@@ -294,4 +352,26 @@ function localJson(path: string, body: unknown): Promise<Response> {
       body: JSON.stringify(body),
     }),
   );
+}
+
+function measurePreparedQueries(database: D1Database): {
+  database: D1Database;
+  count: () => number;
+} {
+  let count = 0;
+  return {
+    database: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (query: string) => {
+            count += 1;
+            return target.prepare(query);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    count: () => count,
+  };
 }
