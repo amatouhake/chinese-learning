@@ -11,7 +11,8 @@ import {
   InvalidInputError,
   ReferenceNotFoundError,
 } from "../domain/errors";
-import { normalizeUtcInstant, semanticOrderKey } from "../domain/ordering";
+import { normalizeUtcInstant, semanticEventOrderKey, semanticOrderKey } from "../domain/ordering";
+import { parseGrammarTeachingMetadata } from "../domain/reading-grammar";
 import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
@@ -60,9 +61,12 @@ interface ExistingAttemptRow {
 
 interface CardRow {
   id: string;
+  subject_type: "lexeme" | "lexeme_reading" | "sentence" | "grammar_topic";
   activity_type: AttemptInput["activityType"];
   scheduler_eligible: number;
   lexeme_reading_id: string | null;
+  sentence_id: string | null;
+  grammar_topic_id: string | null;
 }
 
 interface CardStateRow {
@@ -127,11 +131,13 @@ export async function ingestAttempt(
     const existing = await findAttempt(db, input.eventId);
     if (existing) return duplicateResult(db, existing, input, occurredAt);
     await assertDeviceSequenceAvailable(db, input);
-    await assertStudySessionOwnedByDevice(db, input.studySessionId, input.deviceId);
+    await assertStudySessionOwnedByDevice(db, input.studySessionId, input.deviceId, input.mode);
 
     const card = await db
       .prepare(
-        "SELECT id, activity_type, scheduler_eligible, lexeme_reading_id FROM cards WHERE id = ?",
+        `SELECT id, subject_type, activity_type, scheduler_eligible,
+          lexeme_reading_id, sentence_id, grammar_topic_id
+         FROM cards WHERE id = ?`,
       )
       .bind(input.cardId)
       .first<CardRow>();
@@ -141,10 +147,22 @@ export async function ingestAttempt(
       throw new InvalidInputError("attempt activity does not match its card");
     }
     await validatePronunciationAttempt(db, input, card);
+    await validateReadingGrammarAttempt(db, input, card);
 
     if (!input.fsrsReview) {
       try {
-        await insertUnscheduledAttempt(db, input, occurredAt, receivedAt, options);
+        if (input.mode === "grammar" && card.grammar_topic_id !== null) {
+          await insertGrammarAttempt(
+            db,
+            input,
+            card.grammar_topic_id,
+            occurredAt,
+            receivedAt,
+            options,
+          );
+        } else {
+          await insertUnscheduledAttempt(db, input, occurredAt, receivedAt, options);
+        }
         const inserted = await findAttempt(db, input.eventId);
         if (!inserted) throw new Error("inserted attempt could not be reloaded");
         return {
@@ -255,6 +273,99 @@ async function insertUnscheduledAttempt(
       .bind(occurredAt, occurredAt),
   ];
 
+  if (options.forceFailureAfterWrites) {
+    statements.push(forcedFailureStatement(db, input.eventId));
+  }
+  await db.batch(statements);
+}
+
+async function insertGrammarAttempt(
+  db: D1Database,
+  input: AttemptInput,
+  grammarTopicId: string,
+  occurredAt: number,
+  receivedAt: number,
+  options: IngestOptions,
+): Promise<void> {
+  if (input.selfRating === undefined) {
+    throw new InvalidInputError("grammar practice requires an explicit confidence rating");
+  }
+  const attemptChangeId = `attempt:${input.eventId}`;
+  const stateChangeId = `grammar-topic-state:${input.eventId}`;
+  const orderKey = semanticEventOrderKey({
+    eventId: input.eventId,
+    deviceId: input.deviceId,
+    deviceSeq: input.deviceSeq,
+    occurredAt,
+  });
+  const status =
+    input.selfRating === 1 ? "introduced" : input.selfRating === 4 ? "comfortable" : "learning";
+  const metadata = canonicalJson({ lastPracticeOrderKey: orderKey });
+  const statements = [
+    db
+      .prepare(
+        `INSERT INTO server_changes
+          (change_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, 'attempt', ?, 'upsert', ?)`,
+      )
+      .bind(attemptChangeId, input.eventId, receivedAt),
+    db
+      .prepare(
+        `INSERT INTO server_changes
+          (change_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, 'grammar_topic_state', ?, 'upsert', ?)`,
+      )
+      .bind(stateChangeId, grammarTopicId, receivedAt),
+    attemptInsert(db, input, occurredAt, receivedAt, attemptChangeId),
+    db
+      .prepare(
+        `INSERT INTO grammar_topic_state
+          (grammar_topic_id, status, introduced_at, last_studied_at,
+           self_confidence, version, server_seq, metadata_json)
+         VALUES (?, ?, ?, ?, ?, 1,
+           (SELECT seq FROM server_changes WHERE change_id = ?), ?)
+         ON CONFLICT(grammar_topic_id) DO UPDATE SET
+           introduced_at = MIN(grammar_topic_state.introduced_at, excluded.introduced_at),
+           last_studied_at = MAX(grammar_topic_state.last_studied_at, excluded.last_studied_at),
+           status = CASE
+             WHEN json_extract(excluded.metadata_json, '$.lastPracticeOrderKey') >=
+               COALESCE(json_extract(grammar_topic_state.metadata_json, '$.lastPracticeOrderKey'), '')
+             THEN excluded.status ELSE grammar_topic_state.status
+           END,
+           self_confidence = CASE
+             WHEN json_extract(excluded.metadata_json, '$.lastPracticeOrderKey') >=
+               COALESCE(json_extract(grammar_topic_state.metadata_json, '$.lastPracticeOrderKey'), '')
+             THEN excluded.self_confidence ELSE grammar_topic_state.self_confidence
+           END,
+           metadata_json = CASE
+             WHEN json_extract(excluded.metadata_json, '$.lastPracticeOrderKey') >=
+               COALESCE(json_extract(grammar_topic_state.metadata_json, '$.lastPracticeOrderKey'), '')
+             THEN excluded.metadata_json ELSE grammar_topic_state.metadata_json
+           END,
+           version = grammar_topic_state.version + 1,
+           server_seq = excluded.server_seq`,
+      )
+      .bind(
+        grammarTopicId,
+        status,
+        occurredAt,
+        occurredAt,
+        input.selfRating / 4,
+        stateChangeId,
+        metadata,
+      ),
+    db
+      .prepare(
+        `UPDATE projection_state SET
+          dirty = 1,
+          last_attempt_at = CASE
+            WHEN last_attempt_at IS NULL OR last_attempt_at < ? THEN ?
+            ELSE last_attempt_at
+          END
+         WHERE singleton = 1`,
+      )
+      .bind(occurredAt, occurredAt),
+  ];
   if (options.forceFailureAfterWrites) {
     statements.push(forcedFailureStatement(db, input.eventId));
   }
@@ -690,6 +801,93 @@ async function validatePronunciationAttempt(
   }
 }
 
+async function validateReadingGrammarAttempt(
+  db: D1Database,
+  input: AttemptInput,
+  card: CardRow,
+): Promise<void> {
+  const guidedMode = input.mode === "reading" || input.mode === "grammar";
+  if (card.activity_type !== "sentence_reading" && !guidedMode) return;
+  if (card.activity_type !== "sentence_reading") {
+    throw new InvalidInputError("reading and grammar modes require sentence-reading activities");
+  }
+  if (!guidedMode) {
+    throw new InvalidInputError("sentence-reading activities require reading or grammar mode");
+  }
+  if (
+    card.scheduler_eligible !== 0 ||
+    input.fsrsReview !== undefined ||
+    input.expectedCardStateVersion !== undefined
+  ) {
+    throw new InvalidInputError("reading and grammar practice must not mutate FSRS state");
+  }
+  if (input.selfRating === undefined) {
+    throw new InvalidInputError("reading and grammar practice requires a self-rating");
+  }
+  if (input.score !== undefined) {
+    throw new InvalidInputError("reading and grammar practice keeps score unset");
+  }
+
+  if (input.mode === "reading") {
+    if (card.subject_type !== "sentence" || card.sentence_id === null) {
+      throw new InvalidInputError("reading mode requires a sentence card");
+    }
+    if (input.correct !== undefined) {
+      throw new InvalidInputError("sentence reading keeps self-rating separate from correctness");
+    }
+    if (
+      input.metadata?.interaction !== "staged-sentence-reading" ||
+      input.metadata.sentenceId !== card.sentence_id ||
+      JSON.stringify(input.metadata.revealOrder) !==
+        JSON.stringify(["vocabulary", "pinyin", "meaning", "grammar"])
+    ) {
+      throw new InvalidInputError("reading attempts must preserve their staged sentence reveal");
+    }
+    return;
+  }
+
+  if (card.subject_type !== "grammar_topic" || card.grammar_topic_id === null) {
+    throw new InvalidInputError("grammar mode requires a grammar-topic card");
+  }
+  if (input.correct === undefined) {
+    throw new InvalidInputError("grammar choice practice requires correctness");
+  }
+  const selectedChoiceId = input.metadata?.selectedChoiceId;
+  const sentenceId = input.metadata?.sentenceId;
+  if (
+    input.metadata?.interaction !== "grammar-choice" ||
+    input.metadata.topicId !== card.grammar_topic_id ||
+    typeof selectedChoiceId !== "string" ||
+    typeof sentenceId !== "string"
+  ) {
+    throw new InvalidInputError(
+      "grammar attempts must preserve topic, sentence, and choice identity",
+    );
+  }
+  const topic = await db
+    .prepare(
+      `SELECT g.teaching_metadata_json,
+         EXISTS (
+           SELECT 1 FROM sentence_grammar_topics sgt
+           WHERE sgt.grammar_topic_id = g.id AND sgt.sentence_id = ?
+         ) AS sentence_linked
+       FROM grammar_topics g WHERE g.id = ?`,
+    )
+    .bind(sentenceId, card.grammar_topic_id)
+    .first<{ teaching_metadata_json: string; sentence_linked: number }>();
+  if (!topic) throw new ReferenceNotFoundError("grammar topic", card.grammar_topic_id);
+  if (topic.sentence_linked !== 1) {
+    throw new InvalidInputError("grammar practice sentence is not linked to its topic");
+  }
+  const teaching = parseGrammarTeachingMetadata(topic.teaching_metadata_json);
+  if (!teaching.practice.choices.some(({ id }) => id === selectedChoiceId)) {
+    throw new InvalidInputError("grammar choice is not part of the presented practice");
+  }
+  if (input.correct !== (selectedChoiceId === teaching.practice.answerChoiceId)) {
+    throw new InvalidInputError("grammar correctness disagrees with the selected choice");
+  }
+}
+
 async function assertDeviceSequenceAvailable(db: D1Database, input: AttemptInput): Promise<void> {
   const owner = await db
     .prepare("SELECT event_id FROM attempts WHERE device_id = ? AND device_seq = ?")
@@ -706,15 +904,19 @@ async function assertStudySessionOwnedByDevice(
   db: D1Database,
   studySessionId: string | undefined,
   deviceId: string,
+  mode: AttemptInput["mode"],
 ): Promise<void> {
   if (studySessionId === undefined) return;
   const session = await db
-    .prepare("SELECT id, device_id FROM study_sessions WHERE id = ?")
+    .prepare("SELECT id, device_id, mode FROM study_sessions WHERE id = ?")
     .bind(studySessionId)
-    .first<{ id: string; device_id: string }>();
+    .first<{ id: string; device_id: string; mode: AttemptInput["mode"] }>();
   if (!session) throw new ReferenceNotFoundError("study session", studySessionId);
   if (session.device_id !== deviceId) {
     throw new ConflictError(`study session ${studySessionId} belongs to another device`);
+  }
+  if (session.mode !== mode) {
+    throw new ConflictError(`study session ${studySessionId} belongs to another learning mode`);
   }
 }
 

@@ -6,6 +6,8 @@ export interface SyncPullInput {
   deviceId: string;
   studySessionId?: string;
   pronunciationSessionId?: string;
+  readingSessionId?: string;
+  grammarSessionId?: string;
 }
 
 export function parseSyncPullInput(value: unknown): SyncPullInput {
@@ -36,6 +38,12 @@ export function parseSyncPullInput(value: unknown): SyncPullInput {
       record.pronunciationSessionId,
       "pronunciationSessionId",
     );
+  }
+  if (record.readingSessionId !== undefined) {
+    input.readingSessionId = requiredText(record.readingSessionId, "readingSessionId");
+  }
+  if (record.grammarSessionId !== undefined) {
+    input.grammarSessionId = requiredText(record.grammarSessionId, "grammarSessionId");
   }
   return input;
 }

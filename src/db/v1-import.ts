@@ -1,4 +1,10 @@
 import { normalizeNumericPinyin } from "../domain/pronunciation";
+import {
+  BEGINNER_GRAMMAR_TOPICS,
+  READING_GRAMMAR_SOURCE,
+  READING_GRAMMAR_SOURCE_REF,
+  type BeginnerGrammarTopic,
+} from "../domain/reading-grammar";
 
 export interface V1SourceForm {
   traditional?: string;
@@ -306,6 +312,8 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
     }
   }
 
+  statements.push(...buildReadingGrammarStatements(input, revision, importAllowed, createdAt));
+
   statements.push(`UPDATE learner_settings
     SET current_content_revision = ${revision}, updated_at = ${createdAt}
     WHERE singleton = 1
@@ -359,7 +367,161 @@ function canonicalImportedContent(input: V1ImportInput): string {
     v1Version: input.v1Version,
     lexemes,
     enrichments,
+    readingGrammarFoundation: BEGINNER_GRAMMAR_TOPICS,
   });
+}
+
+function buildReadingGrammarStatements(
+  input: V1ImportInput,
+  revision: string,
+  importAllowed: string,
+  createdAt: number,
+): string[] {
+  const lexemeBySimplified = new Map(input.lexemes.map((lexeme) => [lexeme.simplified, lexeme]));
+  const enrichmentBySimplified = new Map(
+    input.enrichments.map((enrichment) => [enrichment.simplified, enrichment]),
+  );
+  const statements: string[] = [];
+
+  for (const topic of BEGINNER_GRAMMAR_TOPICS) {
+    const anchor = lexemeBySimplified.get(topic.anchorSimplified);
+    if (!anchor) continue;
+    const enrichment = enrichmentBySimplified.get(topic.anchorSimplified);
+    // Small importer fixtures may intentionally omit all V1 enrichment, but an
+    // included enrichment for a foundation anchor must remain an exact reviewed
+    // match. Missing fields there are content drift, not a reason to leave a
+    // previously activated topic/card pointing at a retired example.
+    if (!enrichment) continue;
+    assertCuratedSentence(topic, enrichment);
+    const sentenceId = `sentence:v1:${encodeIdPart(topic.anchorSimplified)}`;
+    const sentenceCardId = `card:${sentenceId}:sentence_reading`;
+    const grammarCardId = `card:${topic.id}:sentence_reading`;
+
+    statements.push(`UPDATE sentences
+      SET metadata_json = ${sqlText(
+        JSON.stringify({
+          generatedBy: "LLM",
+          reviewStatus: "curated-foundation",
+          curatedBy: READING_GRAMMAR_SOURCE,
+        }),
+      )}
+      WHERE id = ${sqlText(sentenceId)}
+        AND retired_at IS NULL
+        AND ${importAllowed};`);
+    statements.push(`DELETE FROM sentence_lexemes
+      WHERE sentence_id = ${sqlText(sentenceId)}
+        AND ${importAllowed};`);
+
+    for (const link of topic.lexemes) {
+      const linkedLexeme = lexemeBySimplified.get(link.simplified);
+      if (!linkedLexeme) {
+        throw new Error(
+          `curated sentence ${topic.expectedSentence.chinese} is missing lexeme ${link.simplified}`,
+        );
+      }
+      const lexemeId = `lexeme:complete-hsk:${encodeIdPart(linkedLexeme.simplified)}`;
+      const reading = selectCuratedReading(topic, linkedLexeme, lexemeId, link);
+      statements.push(`INSERT INTO sentence_lexemes
+        (sentence_id, lexeme_id, lexeme_reading_id, position, role, content_revision)
+       SELECT
+         ${sqlText(sentenceId)},
+         ${sqlText(lexemeId)},
+         ${sqlText(reading.id)},
+         ${link.position},
+         ${sqlText(link.role)},
+         ${revision}
+       WHERE ${importAllowed};`);
+    }
+
+    statements.push(`INSERT INTO grammar_topics
+      (id, title, level, source, source_ref, teaching_metadata_json,
+       content_revision, created_at)
+     SELECT
+       ${sqlText(topic.id)},
+       ${sqlText(topic.title)},
+       ${sqlText(topic.level)},
+       ${sqlText(READING_GRAMMAR_SOURCE)},
+       ${sqlText(READING_GRAMMAR_SOURCE_REF)},
+       ${sqlText(JSON.stringify(topic.teaching))},
+       ${revision},
+       ${createdAt}
+     WHERE ${importAllowed}
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       level = excluded.level,
+       source = excluded.source,
+       source_ref = excluded.source_ref,
+       teaching_metadata_json = excluded.teaching_metadata_json,
+       content_revision = excluded.content_revision;`);
+    statements.push(`INSERT INTO sentence_grammar_topics
+      (sentence_id, grammar_topic_id, content_revision)
+     SELECT ${sqlText(sentenceId)}, ${sqlText(topic.id)}, ${revision}
+     WHERE ${importAllowed}
+     ON CONFLICT(sentence_id, grammar_topic_id) DO UPDATE SET
+       content_revision = excluded.content_revision;`);
+    statements.push(`INSERT INTO cards
+      (id, subject_type, sentence_id, activity_type, scheduler_eligible,
+       content_revision, created_at)
+     SELECT
+       ${sqlText(sentenceCardId)}, 'sentence', ${sqlText(sentenceId)},
+       'sentence_reading', 0, ${revision}, ${createdAt}
+     WHERE ${importAllowed}
+     ON CONFLICT(id) DO UPDATE SET
+       content_revision = excluded.content_revision,
+       retired_at = NULL;`);
+    statements.push(`INSERT INTO cards
+      (id, subject_type, grammar_topic_id, activity_type, scheduler_eligible,
+       content_revision, created_at)
+     SELECT
+       ${sqlText(grammarCardId)}, 'grammar_topic', ${sqlText(topic.id)},
+       'sentence_reading', 0, ${revision}, ${createdAt}
+     WHERE ${importAllowed}
+     ON CONFLICT(id) DO UPDATE SET
+       content_revision = excluded.content_revision,
+       retired_at = NULL;`);
+  }
+
+  return statements;
+}
+
+function assertCuratedSentence(
+  topic: BeginnerGrammarTopic,
+  enrichment: V1Enrichment | undefined,
+): asserts enrichment is V1Enrichment {
+  const expected = topic.expectedSentence;
+  if (
+    enrichment?.example_zh !== expected.chinese ||
+    enrichment.example_pinyin !== expected.pinyin ||
+    enrichment.example_ja !== expected.meaningJa ||
+    enrichment.example_en !== expected.meaningEn
+  ) {
+    throw new Error(
+      `curated grammar sentence drifted for ${topic.id}; review the corpus before importing`,
+    );
+  }
+}
+
+function selectCuratedReading(
+  topic: BeginnerGrammarTopic,
+  lexeme: V1SourceLexeme,
+  lexemeId: string,
+  link: BeginnerGrammarTopic["lexemes"][number],
+): { id: string; form: V1SourceForm } {
+  const candidates = uniqueReadings(lexeme, lexemeId).filter(
+    ({ form }) => form.transcriptions.numeric === link.numericPinyin,
+  );
+  const selected = link.senseIncludes
+    ? candidates.find(({ form }) =>
+        form.meanings.some((meaning) => meaning.toLowerCase().includes(link.senseIncludes!)),
+      )
+    : candidates[0];
+  if (!selected) {
+    throw new Error(
+      `curated sentence ${topic.expectedSentence.chinese} has no exact reading ` +
+        `${link.simplified}/${link.numericPinyin}`,
+    );
+  }
+  return selected;
 }
 
 async function sha256(value: string): Promise<string> {

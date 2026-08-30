@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  buildV1ImportStatements,
   deriveV1ImportIdentity,
   type V1Enrichment,
   type V1ImportInput,
   type V1SourceLexeme,
 } from "../../src/db/v1-import";
+import { BEGINNER_GRAMMAR_TOPICS } from "../../src/domain/reading-grammar";
 
 describe("v1 import identity", () => {
   test("rejects duplicate enrichment identities before deriving a revision", async () => {
@@ -42,6 +44,40 @@ describe("v1 import identity", () => {
         "duplicate lexeme identity: 重",
       );
     }
+  });
+
+  test("fails closed when an included foundation example drifts", async () => {
+    const topic = BEGINNER_GRAMMAR_TOPICS[0];
+    const input: V1ImportInput = {
+      ...importInput([]),
+      lexemes: [
+        {
+          simplified: topic.anchorSimplified,
+          hskLevel: 1,
+          forms: [
+            {
+              traditional: topic.anchorSimplified,
+              transcriptions: { pinyin: "shì", numeric: "shi4" },
+              meanings: ["to be"],
+            },
+          ],
+        },
+      ],
+      enrichments: [
+        {
+          simplified: topic.anchorSimplified,
+          meaning_ja: topic.teaching.summaryJa,
+          example_zh: "这是学生。",
+          example_pinyin: topic.expectedSentence.pinyin,
+          example_ja: topic.expectedSentence.meaningJa,
+          example_en: topic.expectedSentence.meaningEn,
+        },
+      ],
+    };
+
+    await expect(buildV1ImportStatements(input)).rejects.toThrow(
+      `curated grammar sentence drifted for ${topic.id}`,
+    );
   });
 });
 

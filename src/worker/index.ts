@@ -2,6 +2,12 @@ import { Hono, type Context } from "hono";
 
 import { ingestAttempt } from "../db/ingestion";
 import { createPronunciationSession, getNextPronunciationCard } from "../db/pronunciation";
+import {
+  createGrammarSession,
+  createReadingSession,
+  getNextGrammarCard,
+  getNextReadingCard,
+} from "../db/reading-grammar";
 import { createStudySession, getNextStudyCard } from "../db/study";
 import { pullSyncChanges } from "../db/sync";
 import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
@@ -11,6 +17,11 @@ import {
   parseNextPronunciationCardInput,
 } from "../domain/pronunciation-validation";
 import { parseAttemptInput } from "../domain/validation";
+import {
+  parseCreateGrammarSessionInput,
+  parseCreateReadingSessionInput,
+  parseNextGuidedCardInput,
+} from "../domain/reading-grammar-validation";
 import { parseSyncPullInput } from "../domain/sync-validation";
 import { authorizeStudyWrite } from "./auth";
 
@@ -137,6 +148,88 @@ app.post("/api/pronunciation/sessions/:sessionId/next", async (context) => {
       input.deviceId,
     );
     return context.json(result);
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
+});
+
+app.post("/api/reading/sessions", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    const input = parseCreateReadingSessionInput(await readJsonBody(context));
+    const result = await createReadingSession(context.env.DB, input);
+    return context.json(result, result.disposition === "created" ? 201 : 200);
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
+});
+
+app.post("/api/reading/sessions/:sessionId/next", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    const input = parseNextGuidedCardInput(await readJsonBody(context));
+    return context.json(
+      await getNextReadingCard(context.env.DB, context.req.param("sessionId"), input.deviceId),
+    );
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
+});
+
+app.post("/api/grammar/sessions", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    const input = parseCreateGrammarSessionInput(await readJsonBody(context));
+    const result = await createGrammarSession(context.env.DB, input);
+    return context.json(result, result.disposition === "created" ? 201 : 200);
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
+});
+
+app.post("/api/grammar/sessions/:sessionId/next", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    const input = parseNextGuidedCardInput(await readJsonBody(context));
+    return context.json(
+      await getNextGrammarCard(context.env.DB, context.req.param("sessionId"), input.deviceId),
+    );
   } catch (error) {
     const response = domainError(context, error);
     if (response) return response;

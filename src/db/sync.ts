@@ -1,5 +1,6 @@
 import { getOfflinePronunciationPack } from "./pronunciation";
 import { getOfflineStudyPack } from "./study";
+import { getOfflineGrammarPack, getOfflineReadingPack } from "./reading-grammar";
 import type { SyncPullInput } from "../domain/sync-validation";
 import type { SyncLearnerChange, SyncPullResponse } from "../domain/types";
 
@@ -34,6 +35,13 @@ interface ChangeRow {
   session_id: string | null;
   session_mode: string | null;
   session_ended_at: number | null;
+  grammar_topic_id: string | null;
+  grammar_status: "introduced" | "learning" | "comfortable" | null;
+  grammar_introduced_at: number | null;
+  grammar_last_studied_at: number | null;
+  grammar_self_confidence: number | null;
+  grammar_version: number | null;
+  grammar_server_seq: number | null;
 }
 
 export async function pullSyncChanges(
@@ -66,7 +74,14 @@ export async function pullSyncChanges(
            cs.rebuilt_at AS state_rebuilt_at,
            ss.id AS session_id,
            ss.mode AS session_mode,
-           ss.ended_at AS session_ended_at
+           ss.ended_at AS session_ended_at,
+           gs.grammar_topic_id,
+           gs.status AS grammar_status,
+           gs.introduced_at AS grammar_introduced_at,
+           gs.last_studied_at AS grammar_last_studied_at,
+           gs.self_confidence AS grammar_self_confidence,
+           gs.version AS grammar_version,
+           gs.server_seq AS grammar_server_seq
          FROM server_changes sc
          LEFT JOIN attempts a
            ON sc.entity_type = 'attempt' AND a.event_id = sc.entity_id
@@ -75,6 +90,8 @@ export async function pullSyncChanges(
            ON sc.entity_type = 'card_state' AND cs.card_id = sc.entity_id
          LEFT JOIN study_sessions ss
            ON sc.entity_type = 'study_session' AND ss.id = sc.entity_id
+         LEFT JOIN grammar_topic_state gs
+           ON sc.entity_type = 'grammar_topic_state' AND gs.grammar_topic_id = sc.entity_id
          WHERE sc.seq > ?
          ORDER BY sc.seq
          LIMIT ?`,
@@ -106,12 +123,18 @@ export async function pullSyncChanges(
   }
 
   const currentContentRevision = settings?.current_content_revision ?? null;
-  const [studyPack, pronunciationPack] = await Promise.all([
+  const [studyPack, pronunciationPack, readingPack, grammarPack] = await Promise.all([
     input.studySessionId
       ? getOfflineStudyPack(db, input.studySessionId, input.deviceId)
       : Promise.resolve(null),
     input.pronunciationSessionId
       ? getOfflinePronunciationPack(db, input.pronunciationSessionId, input.deviceId)
+      : Promise.resolve(null),
+    input.readingSessionId
+      ? getOfflineReadingPack(db, input.readingSessionId, input.deviceId)
+      : Promise.resolve(null),
+    input.grammarSessionId
+      ? getOfflineGrammarPack(db, input.grammarSessionId, input.deviceId)
       : Promise.resolve(null),
   ]);
 
@@ -124,6 +147,8 @@ export async function pullSyncChanges(
     contentChanges,
     studyPack,
     pronunciationPack,
+    readingPack,
+    grammarPack,
   };
 }
 
@@ -190,7 +215,10 @@ function mapLearnerChange(row: ChangeRow): SyncLearnerChange {
   if (row.entity_type === "study_session") {
     if (
       row.session_id === null ||
-      (row.session_mode !== "study" && row.session_mode !== "pronunciation")
+      (row.session_mode !== "study" &&
+        row.session_mode !== "pronunciation" &&
+        row.session_mode !== "reading" &&
+        row.session_mode !== "grammar")
     ) {
       throw new Error(`study-session change ${row.seq} has no supported session`);
     }
@@ -202,5 +230,20 @@ function mapLearnerChange(row: ChangeRow): SyncLearnerChange {
       endedAt: row.session_ended_at,
     };
   }
-  return { seq: row.seq, entityType: "grammar_topic_state", entityId: row.entity_id };
+  if (row.grammar_topic_id === null || row.grammar_version === null) {
+    throw new Error(`grammar-topic-state change ${row.seq} has no canonical state`);
+  }
+  return {
+    seq: row.seq,
+    entityType: "grammar_topic_state",
+    state: {
+      grammarTopicId: row.grammar_topic_id,
+      status: row.grammar_status,
+      introducedAt: row.grammar_introduced_at,
+      lastStudiedAt: row.grammar_last_studied_at,
+      selfConfidence: row.grammar_self_confidence,
+      version: row.grammar_version,
+      serverSeq: row.grammar_server_seq,
+    },
+  };
 }

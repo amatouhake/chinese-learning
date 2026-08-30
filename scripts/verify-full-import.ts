@@ -16,6 +16,12 @@ export interface FullImportSummary {
   active_examples: number;
   cards: number;
   card_states: number;
+  reading_cards: number;
+  grammar_cards: number;
+  grammar_topics: number;
+  grammar_sentence_links: number;
+  exact_curated_lexeme_links: number;
+  curated_examples: number;
   sample_lexemes: number;
   current_scheduler: number;
   content_changes: number;
@@ -119,6 +125,12 @@ export function assertFullImportSummary(value: unknown): asserts value is FullIm
     active_examples: 595,
     cards: 1190,
     card_states: 1190,
+    reading_cards: 5,
+    grammar_cards: 5,
+    grammar_topics: 5,
+    grammar_sentence_links: 5,
+    exact_curated_lexeme_links: 18,
+    curated_examples: 5,
     sample_lexemes: 3,
     current_scheduler: 1,
     content_changes: 1,
@@ -171,6 +183,25 @@ function verificationQuery(): string {
     (SELECT COUNT(*) FROM sentences WHERE retired_at IS NULL) AS active_examples,
     (SELECT COUNT(*) FROM cards WHERE retired_at IS NULL AND scheduler_eligible = 1) AS cards,
     (SELECT COUNT(*) FROM card_state) AS card_states,
+    (SELECT COUNT(*) FROM cards
+      WHERE retired_at IS NULL AND subject_type = 'sentence'
+        AND activity_type = 'sentence_reading' AND scheduler_eligible = 0) AS reading_cards,
+    (SELECT COUNT(*) FROM cards
+      WHERE retired_at IS NULL AND subject_type = 'grammar_topic'
+        AND activity_type = 'sentence_reading' AND scheduler_eligible = 0) AS grammar_cards,
+    (SELECT COUNT(*) FROM grammar_topics
+      WHERE source = 'chinese-learning:reading-grammar-foundation') AS grammar_topics,
+    (SELECT COUNT(*) FROM sentence_grammar_topics sgt
+      JOIN grammar_topics g ON g.id = sgt.grammar_topic_id
+      WHERE g.source = 'chinese-learning:reading-grammar-foundation') AS grammar_sentence_links,
+    (SELECT COUNT(*) FROM sentence_lexemes sl
+      JOIN sentence_grammar_topics sgt ON sgt.sentence_id = sl.sentence_id
+      JOIN grammar_topics g ON g.id = sgt.grammar_topic_id
+      WHERE g.source = 'chinese-learning:reading-grammar-foundation'
+        AND sl.lexeme_reading_id IS NOT NULL) AS exact_curated_lexeme_links,
+    (SELECT COUNT(*) FROM sentences
+      WHERE retired_at IS NULL
+        AND json_extract(metadata_json, '$.reviewStatus') = 'curated-foundation') AS curated_examples,
     (SELECT COUNT(*) FROM lexemes WHERE simplified IN ('爱', '中国', '电脑')) AS sample_lexemes,
     (SELECT COUNT(*) FROM scheduler_configs WHERE is_current = 1) AS current_scheduler,
     (SELECT COUNT(*) FROM server_changes WHERE entity_type = 'content') AS content_changes,
