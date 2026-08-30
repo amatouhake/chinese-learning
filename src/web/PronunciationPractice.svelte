@@ -111,6 +111,8 @@
       { sessionId, deviceId, focus, maxItems: 10 },
     );
     session = result.session;
+    if (!store) throw new Error("Offline storage is not ready.");
+    await store.rememberPronunciationSession(result.session);
   }
 
   async function loadNextCard(): Promise<void> {
@@ -145,7 +147,9 @@
       phase = "prompt";
       return;
     }
-    if (pending === 0) browserState = await store.clearActivePronunciationSession(sessionId);
+    if (cachedSession.endedAt !== null) {
+      browserState = await store.clearActivePronunciationSession(sessionId);
+    }
     phase = session.completedItems === 0 ? "empty" : "completed";
   }
 

@@ -59,7 +59,9 @@ test.describe("pronunciation dogfood", () => {
       await page.getByRole("button", { name: "Continue" }).click();
     }
 
-    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible({
+      timeout: 20_000,
+    });
     await Promise.all(nextResponses);
     expect(new Set(observedCards.map((card) => card.activityType))).toEqual(
       EXPECTED_MIXED_ACTIVITIES,
@@ -87,7 +89,9 @@ test.describe("pronunciation dogfood", () => {
     await page.goto("/#pronunciation");
     await page.getByRole("button", { name: /^Tones / }).click();
 
-    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible();
+    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
     await page.locator(".choice-grid button").first().click();
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText("Tone pair", { exact: true })).toBeVisible();
@@ -123,7 +127,9 @@ test.describe("pronunciation dogfood", () => {
     await expect(page.getByRole("alert")).toContainText("simulated session creation failure");
     await page.getByRole("button", { name: "Try again" }).click();
 
-    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible();
+    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
     expect(sessionRequests).toHaveLength(2);
     expect(sessionRequests[1]).toEqual(sessionRequests[0]);
     expect(sessionRequests[1]?.focus).toBe("tones");

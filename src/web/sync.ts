@@ -16,6 +16,7 @@ export interface LearningSyncResult {
 export function synchronizeLearning(store: OfflineLearningStore): Promise<LearningSyncResult> {
   return store.runSyncExclusive(async () => {
     let pushed = 0;
+    let state = await store.reconcileLegacyState();
     const pending = await store.listPendingAttempts();
     for (const attempt of pending) {
       try {
@@ -36,7 +37,18 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
       }
     }
 
-    let state = await store.snapshot();
+    state = await store.snapshot();
+    const [studySession, pronunciationSession] = await Promise.all([
+      state.activeSessionId ? store.getStudySession(state.activeSessionId) : null,
+      state.activePronunciationSessionId
+        ? store.getPronunciationSession(state.activePronunciationSessionId)
+        : null,
+    ]);
+    const studySessionId = studySession?.id === state.activeSessionId ? studySession.id : undefined;
+    const pronunciationSessionId =
+      pronunciationSession?.id === state.activePronunciationSessionId
+        ? pronunciationSession.id
+        : undefined;
     const audioCacheFailures = new Set<string>();
     for (let page = 0; page < 100; page += 1) {
       let pull: SyncPullResponse;
@@ -45,8 +57,8 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
           cursor: state.learnerCursor,
           contentRevision: state.contentRevision,
           deviceId: state.deviceId,
-          studySessionId: state.activeSessionId ?? undefined,
-          pronunciationSessionId: state.activePronunciationSessionId ?? undefined,
+          studySessionId,
+          pronunciationSessionId,
         });
       } catch (error) {
         state = await store.snapshot();

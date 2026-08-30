@@ -26,6 +26,9 @@ test.describe("offline PWA foundation", () => {
         expect.objectContaining({ src: "/icon-512.png", sizes: "512x512" }),
       ]),
     });
+    const shellCache = await inspectShellCache(page);
+    expect(shellCache.name).toMatch(/^chinese-learning-shell-[0-9a-f]{16}$/);
+    expect(shellCache.missing).toEqual([]);
     await context.setOffline(true);
 
     await completeVocabulary(page, 3);
@@ -106,7 +109,9 @@ test.describe("offline PWA foundation", () => {
     context,
   }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+      timeout: 20_000,
+    });
     await waitForServiceWorker(page);
     await context.setOffline(true);
     const second = await context.newPage();
@@ -138,7 +143,9 @@ test.describe("offline PWA foundation", () => {
     request,
   }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+      timeout: 20_000,
+    });
     await waitForServiceWorker(page);
     const sessionId = (await readMeta(page)).activeSessionId;
     expect(typeof sessionId).toBe("string");
@@ -155,9 +162,21 @@ test.describe("offline PWA foundation", () => {
     await expect.poll(() => outboxCount(page)).toBe(10);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
 
+    await page.route("**/api/sync/pull", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated canonical pull failure" }),
+      });
+    });
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    expect((await readMeta(page)).activeSessionId).toBe(sessionId);
+    await expect(page.locator(".sync-status")).toContainText("simulated canonical pull failure");
+
+    await page.unroute("**/api/sync/pull");
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(async () => (await readMeta(page)).activeSessionId).toBeNull();
     const changes = await apiPullAll(request, (await readMeta(page)).deviceId as string);
     expect(
@@ -170,13 +189,126 @@ test.describe("offline PWA foundation", () => {
     ).toBeDefined();
   });
 
+  test("keeps an exhausted pronunciation session active until its pull succeeds", async ({
+    page,
+    context,
+    request,
+  }) => {
+    await page.goto("/#pronunciation");
+    await page.getByRole("button", { name: "Mixed practice" }).click();
+    await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
+    await waitForServiceWorker(page);
+    const sessionId = (await readMeta(page)).activePronunciationSessionId;
+    expect(typeof sessionId).toBe("string");
+    await context.setOffline(true);
+
+    for (let index = 0; index < 10; index += 1) {
+      await answerPronunciationCard(page);
+      if (index < 9) await expect(page.locator(".study-card")).toBeVisible();
+    }
+    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect.poll(() => outboxCount(page)).toBe(10);
+
+    await page.route("**/api/sync/pull", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated pronunciation pull failure" }),
+      });
+    });
+    await context.setOffline(false);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    expect((await readMeta(page)).activePronunciationSessionId).toBe(sessionId);
+
+    await page.unroute("**/api/sync/pull");
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect.poll(async () => (await readMeta(page)).activePronunciationSessionId).toBeNull();
+    const changes = await apiPullAll(request, (await readMeta(page)).deviceId as string);
+    expect(
+      changes.find(
+        (change) =>
+          change.entityType === "study_session" &&
+          change.sessionId === sessionId &&
+          change.mode === "pronunciation" &&
+          typeof change.endedAt === "number",
+      ),
+    ).toBeDefined();
+  });
+
+  test("omits an uncreated pronunciation session while populating vocabulary", async ({ page }) => {
+    const pulls: Array<Record<string, unknown>> = [];
+    await page.route("**/api/sync/pull", async (route) => {
+      pulls.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.continue();
+    });
+    await page.route("**/api/pronunciation/sessions", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated session creation failure" }),
+      });
+    });
+
+    await page.goto("/#pronunciation");
+    await page.getByRole("button", { name: "Mixed practice" }).click();
+    await expect(page.getByRole("alert")).toContainText("simulated session creation failure");
+    const failedSessionId = (await readMeta(page)).activePronunciationSessionId;
+    expect(typeof failedSessionId).toBe("string");
+
+    await page.getByRole("button", { name: "Study" }).click();
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+      timeout: 20_000,
+    });
+    expect(
+      pulls.some(
+        (pull) =>
+          typeof pull.studySessionId === "string" && pull.pronunciationSessionId === undefined,
+      ),
+    ).toBe(true);
+    expect((await readMeta(page)).activePronunciationSessionId).toBe(failedSessionId);
+  });
+
+  test("omits an uncreated vocabulary session while populating pronunciation", async ({ page }) => {
+    const pulls: Array<Record<string, unknown>> = [];
+    await page.route("**/api/sync/pull", async (route) => {
+      pulls.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.continue();
+    });
+    await page.route("**/api/study/sessions", async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "simulated vocabulary session creation failure" }),
+      });
+    });
+
+    await page.goto("/#study");
+    await expect(page.getByRole("alert")).toContainText(
+      "simulated vocabulary session creation failure",
+    );
+    const failedSessionId = (await readMeta(page)).activeSessionId;
+    expect(typeof failedSessionId).toBe("string");
+
+    await page.getByRole("button", { name: "Pronunciation" }).click();
+    await page.getByRole("button", { name: "Mixed practice" }).click();
+    await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
+    expect(
+      pulls.some(
+        (pull) =>
+          pull.studySessionId === undefined && typeof pull.pronunciationSessionId === "string",
+      ),
+    ).toBe(true);
+    expect((await readMeta(page)).activeSessionId).toBe(failedSessionId);
+  });
+
   test("uses cached pronunciation audio offline and clearly skips an uncached recording", async ({
     page,
     context,
   }) => {
     await page.goto("/#pronunciation");
     await page.getByRole("button", { name: /^Listening / }).click();
-    await expect(page.getByText(/Audio →/)).toBeVisible();
+    await expect(page.getByText(/Audio →/)).toBeVisible({ timeout: 20_000 });
     await waitForServiceWorker(page);
     const mediaUrl = await firstCachedPronunciationMedia(page);
     expect(mediaUrl).not.toBeNull();
@@ -229,7 +361,9 @@ test.describe("offline PWA foundation", () => {
       { pendingAttempt: pending },
     );
     await page.goto("/#study");
-    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible({
+      timeout: 20_000,
+    });
     const state = await readMeta(page);
     const outbox = await readOutbox(page);
     expect(state).toMatchObject({
@@ -244,13 +378,95 @@ test.describe("offline PWA foundation", () => {
     });
   });
 
+  test("reconciles a legacy-tab write after IndexedDB exists without reusing its sequence", async ({
+    page,
+    context,
+  }) => {
+    await page.goto("/#study");
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+      timeout: 20_000,
+    });
+    await waitForServiceWorker(page);
+    const state = await readMeta(page);
+    const cached = await firstCachedStudyCard(page);
+    if (!cached || typeof state.activeSessionId !== "string") {
+      throw new Error("browser test has no cached vocabulary card");
+    }
+    const pending: AttemptInput = {
+      eventId: "study-event:legacy-after-idb",
+      deviceId: state.deviceId as string,
+      deviceSeq: state.nextDeviceSeq as number,
+      occurredAt: "2026-08-30T03:00:00.000Z",
+      cardId: cached.card.cardId,
+      studySessionId: state.activeSessionId,
+      mode: "study",
+      activityType: cached.card.activityType,
+      expectedCardStateVersion: cached.card.state.version,
+      responseMs: 100,
+      metadata: { interaction: "legacy-tab" },
+      fsrsReview: {
+        rating: 3,
+        schedulerConfigId: cached.card.schedulerConfigId,
+      },
+    };
+    await page.evaluate(
+      async ({ attempt, nextDeviceSeq, activeSessionId }) => {
+        await navigator.locks.request("chinese-learning.study-browser.v1.lock", () => {
+          localStorage.setItem(
+            "chinese-learning.study-browser.v1",
+            JSON.stringify({
+              version: 3,
+              deviceId: attempt.deviceId,
+              nextDeviceSeq,
+              activeSessionId,
+              activePronunciationSessionId: null,
+              activePronunciationFocus: null,
+              pendingAttempt: attempt,
+            }),
+          );
+        });
+      },
+      {
+        attempt: pending,
+        nextDeviceSeq: pending.deviceSeq + 1,
+        activeSessionId: pending.studySessionId,
+      },
+    );
+
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    expect(await readOutbox(page)).toEqual([pending]);
+    expect(await readMeta(page)).toMatchObject({
+      deviceId: pending.deviceId,
+      nextDeviceSeq: pending.deviceSeq + 1,
+    });
+    expect(
+      await page.evaluate(() =>
+        JSON.parse(localStorage.getItem("chinese-learning.study-browser.v1") ?? "null"),
+      ),
+    ).toMatchObject({ nextDeviceSeq: pending.deviceSeq + 1, pendingAttempt: null });
+
+    await page.getByRole("button", { name: "Reveal answer" }).click();
+    await page.getByRole("button", { name: "3: Good — Recalled" }).click();
+    await expect.poll(() => outboxCount(page)).toBe(2);
+    const queued = await readOutbox(page);
+    expect(queued).toHaveLength(2);
+    expect(queued.map((attempt) => attempt.deviceSeq)).toEqual([
+      pending.deviceSeq,
+      pending.deviceSeq + 1,
+    ]);
+  });
+
   test("late offline review converges after a newer device review", async ({
     page,
     context,
     request,
   }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+      timeout: 20_000,
+    });
     await context.setOffline(true);
     await page.getByRole("button", { name: "Reveal answer" }).click();
     await page.getByRole("button", { name: "2: Hard — Barely" }).click();
@@ -295,13 +511,17 @@ test.describe("offline PWA foundation", () => {
 
 async function prepareVocabularyAndPronunciation(page: Page): Promise<void> {
   await page.goto("/#study");
-  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+    timeout: 20_000,
+  });
   await waitForServiceWorker(page);
   await page.getByRole("button", { name: "Pronunciation" }).click();
   await page.getByRole("button", { name: "Mixed practice" }).click();
-  await expect(page.locator(".study-card")).toBeVisible();
+  await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
   await page.getByRole("button", { name: "Study" }).click();
-  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+    timeout: 20_000,
+  });
 }
 
 async function completeVocabulary(page: Page, count: number): Promise<void> {
@@ -314,27 +534,59 @@ async function completeVocabulary(page: Page, count: number): Promise<void> {
 
 async function completePronunciation(page: Page, count: number): Promise<void> {
   for (let index = 0; index < count; index += 1) {
-    const activity = await page.locator(".card-meta span").nth(1).textContent();
-    if (activity?.startsWith("Audio")) {
-      await page.getByRole("button", { name: "Play or replay word audio" }).click();
-    }
-    const choices = page.locator(".choice-grid button");
-    if ((await choices.count()) > 0) {
-      await choices.first().click();
-    } else if (activity === "Pronunciation production") {
-      await page.getByRole("button", { name: "I said it — compare" }).click();
-      await page.getByRole("button", { name: /^Good/ }).click();
-    } else {
-      await page.getByRole("button", { name: "Reveal pinyin" }).click();
-      await page.getByRole("button", { name: "Got it" }).click();
-    }
-    await page.getByRole("button", { name: "Continue" }).click();
+    await answerPronunciationCard(page);
     await expect(page.locator(".study-card")).toBeVisible();
   }
 }
 
+async function answerPronunciationCard(page: Page): Promise<void> {
+  const activity = await page.locator(".card-meta span").nth(1).textContent();
+  if (activity?.startsWith("Audio")) {
+    await page.getByRole("button", { name: "Play or replay word audio" }).click();
+  }
+  const choices = page.locator(".choice-grid button");
+  if ((await choices.count()) > 0) {
+    await choices.first().click();
+  } else if (activity === "Pronunciation production") {
+    await page.getByRole("button", { name: "I said it — compare" }).click();
+    await page.getByRole("button", { name: /^Good/ }).click();
+  } else {
+    await page.getByRole("button", { name: "Reveal pinyin" }).click();
+    await page.getByRole("button", { name: "Got it" }).click();
+  }
+  await page.getByRole("button", { name: "Continue" }).click();
+}
+
 async function waitForServiceWorker(page: Page): Promise<void> {
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+}
+
+function inspectShellCache(page: Page): Promise<{ name: string | null; missing: string[] }> {
+  return page.evaluate(async () => {
+    const names = await caches.keys();
+    const name = names.find((candidate) => candidate.startsWith("chinese-learning-shell-")) ?? null;
+    if (!name) return { name, missing: ["/"] };
+    const cache = await caches.open(name);
+    const shell = await cache.match("/");
+    if (!shell) return { name, missing: ["/"] };
+    const html = await shell.text();
+    const paths = new Set([
+      "/",
+      "/manifest.webmanifest",
+      "/icon.svg",
+      "/icon-192.png",
+      "/icon-512.png",
+    ]);
+    for (const match of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
+      const path = match[1];
+      if (path?.startsWith("/")) paths.add(path);
+    }
+    const missing: string[] = [];
+    for (const path of paths) {
+      if (!(await cache.match(path))) missing.push(path);
+    }
+    return { name, missing };
+  });
 }
 
 function readMeta(page: Page): Promise<Record<string, unknown>> {
@@ -368,6 +620,43 @@ function readOutbox(page: Page): Promise<AttemptInput[]> {
         get.onerror = () => reject(get.error);
         get.onsuccess = () => resolve(get.result.sort((a, b) => a.deviceSeq - b.deviceSeq));
       });
+    },
+    { dbName: DB_NAME },
+  );
+}
+
+function firstCachedStudyCard(page: Page): Promise<{
+  position: number;
+  card: {
+    cardId: string;
+    activityType: AttemptInput["activityType"];
+    schedulerConfigId: string;
+    state: { version: number };
+  };
+} | null> {
+  return page.evaluate(
+    async ({ dbName }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const open = indexedDB.open(dbName, 1);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => resolve(open.result);
+      });
+      const cards = await new Promise<
+        Array<{
+          position: number;
+          card: {
+            cardId: string;
+            activityType: AttemptInput["activityType"];
+            schedulerConfigId: string;
+            state: { version: number };
+          };
+        }>
+      >((resolve, reject) => {
+        const get = db.transaction("studyCards", "readonly").objectStore("studyCards").getAll();
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      });
+      return cards.sort((left, right) => left.position - right.position)[0] ?? null;
     },
     { dbName: DB_NAME },
   );

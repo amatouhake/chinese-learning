@@ -9,15 +9,21 @@ import type {
   SyncPullResponse,
 } from "../domain/types";
 import type { PronunciationFocus } from "../domain/pronunciation";
+import { parseAttemptInput } from "../domain/validation";
 import {
+  STUDY_STORAGE_LOCK,
   STUDY_STORAGE_KEY,
   parseBrowserStudyState,
+  type BrowserStudyState,
   type StorageLike,
   type StudyAttemptDraft,
 } from "./study-storage";
 
 export const OFFLINE_DB_NAME = "chinese-learning.offline.v1";
-export const OFFLINE_DB_LOCK = `${OFFLINE_DB_NAME}.write`;
+// The IndexedDB store deliberately shares the legacy writer lock. An older tab
+// can therefore finish one localStorage write while this release is rolling
+// out, but it cannot race a sequence reservation or reconciliation.
+export const OFFLINE_DB_LOCK = STUDY_STORAGE_LOCK;
 export const OFFLINE_SYNC_LOCK = `${OFFLINE_DB_NAME}.sync`;
 export const STUDY_IDENTITY_MIRROR_KEY = "chinese-learning.study-browser.idb-mirror.v1";
 
@@ -117,6 +123,13 @@ export class OfflineLearningStore {
     return this.locks.request(OFFLINE_SYNC_LOCK, callback);
   }
 
+  reconcileLegacyState(): Promise<BrowserOfflineState> {
+    return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
+      return this.snapshot();
+    });
+  }
+
   async snapshot(): Promise<BrowserOfflineState> {
     const transaction = this.db.transaction([META_STORE, OUTBOX_STORE], "readonly");
     const meta = await requiredMeta(transaction.objectStore(META_STORE));
@@ -144,6 +157,22 @@ export class OfflineLearningStore {
     return this.clearActiveSession("pronunciation", sessionId);
   }
 
+  rememberStudySession(session: StudySessionView): Promise<void> {
+    return this.rememberSession({
+      key: sessionKey("study", session.id),
+      mode: "study",
+      session,
+    });
+  }
+
+  rememberPronunciationSession(session: PronunciationSessionView): Promise<void> {
+    return this.rememberSession({
+      key: sessionKey("pronunciation", session.id),
+      mode: "pronunciation",
+      session,
+    });
+  }
+
   async stageAttempt(
     state: BrowserOfflineState,
     draft: StudyAttemptDraft,
@@ -151,6 +180,7 @@ export class OfflineLearningStore {
     now: () => number = () => Date.now(),
   ): Promise<StagedOfflineAttempt> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
       const transaction = this.db.transaction(
         [META_STORE, OUTBOX_STORE, STUDY_CARD_STORE, PRONUNCIATION_CARD_STORE],
         "readwrite",
@@ -201,6 +231,7 @@ export class OfflineLearningStore {
         nextDeviceSeq: latest.nextDeviceSeq + 1,
       };
       metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
       await transactionDone(transaction);
       persistIdentityMirror(this.storage, next);
       return { state: await this.snapshot(), attempt };
@@ -224,6 +255,7 @@ export class OfflineLearningStore {
 
   acknowledgeAttempt(eventId: string, result: IngestResult): Promise<void> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
       if (result.eventId !== eventId) {
         throw new Error("attempt acknowledgement does not match the queued event");
       }
@@ -236,6 +268,7 @@ export class OfflineLearningStore {
 
   async applyPull(response: SyncPullResponse): Promise<BrowserOfflineState> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
       const transaction = this.db.transaction(
         [
           META_STORE,
@@ -292,6 +325,7 @@ export class OfflineLearningStore {
         contentRevision: response.currentContentRevision,
       };
       metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
       await transactionDone(transaction);
       persistIdentityMirror(this.storage, next);
       return this.snapshot();
@@ -313,6 +347,7 @@ export class OfflineLearningStore {
 
   discardCachedPronunciationCard(sessionId: string, cardId: string): Promise<BrowserOfflineState> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
       const transaction = this.db.transaction([META_STORE, PRONUNCIATION_CARD_STORE], "readwrite");
       const metaStore = transaction.objectStore(META_STORE);
       const latest = await requiredMeta(metaStore);
@@ -346,7 +381,7 @@ export class OfflineLearningStore {
   private async ensureState(createId: () => string): Promise<void> {
     const existing = await this.readMeta();
     if (existing) {
-      persistIdentityMirror(this.storage, existing);
+      await this.reconcileLegacyStateUnderLock();
       return;
     }
     const migrated = migrateMeta(this.storage, createId);
@@ -360,7 +395,14 @@ export class OfflineLearningStore {
     if (migrated.pendingAttempt) {
       transaction.objectStore(OUTBOX_STORE).add(migrated.pendingAttempt);
     }
+    persistLegacyBridgeBeforeCommit(
+      this.storage,
+      migrated.meta,
+      transaction,
+      migrated.pendingAttempt,
+    );
     await transactionDone(transaction);
+    persistLegacyBridge(this.storage, migrated.meta);
     persistIdentityMirror(this.storage, migrated.meta);
   }
 
@@ -372,6 +414,81 @@ export class OfflineLearningStore {
     return value ?? null;
   }
 
+  private rememberSession(session: CachedSession): Promise<void> {
+    return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
+      const transaction = this.db.transaction(SESSION_STORE, "readwrite");
+      transaction.objectStore(SESSION_STORE).put(session);
+      await transactionDone(transaction);
+    });
+  }
+
+  private async reconcileLegacyStateUnderLock(): Promise<void> {
+    const legacyJson = this.storage.getItem(STUDY_STORAGE_KEY);
+    const legacy = legacyJson === null ? null : parseBrowserStudyState(legacyJson);
+    const transaction = this.db.transaction(
+      [META_STORE, OUTBOX_STORE, STUDY_CARD_STORE, PRONUNCIATION_CARD_STORE],
+      "readwrite",
+    );
+    const metaStore = transaction.objectStore(META_STORE);
+    const latest = await requiredMeta(metaStore);
+
+    if (legacy && legacy.deviceId !== latest.deviceId) {
+      transaction.abort();
+      throw new Error("stored browser identities disagree; refusing to choose a replacement");
+    }
+
+    const pending = legacy?.pendingAttempt ?? null;
+    let imported = false;
+    if (pending) {
+      const outbox = transaction.objectStore(OUTBOX_STORE);
+      const [matchingEvent, matchingSequence] = await Promise.all([
+        request(outbox.get(pending.eventId)) as Promise<AttemptInput | undefined>,
+        request(outbox.index("deviceSeq").get(pending.deviceSeq)) as Promise<
+          AttemptInput | undefined
+        >,
+      ]);
+      if (matchingEvent && !sameAttempt(matchingEvent, pending)) {
+        transaction.abort();
+        throw new Error("legacy pending event payload conflicts with the IndexedDB outbox");
+      }
+      if (matchingSequence && matchingSequence.eventId !== pending.eventId) {
+        transaction.abort();
+        throw new Error("legacy pending event reuses an IndexedDB device sequence");
+      }
+      if (!matchingEvent) {
+        outbox.add(pending);
+        const cardStore = transaction.objectStore(
+          pending.mode === "study" ? STUDY_CARD_STORE : PRONUNCIATION_CARD_STORE,
+        );
+        cardStore.delete(cardKey(pending.studySessionId ?? "", pending.cardId));
+        imported = true;
+      }
+    }
+
+    const nextDeviceSeq = Math.max(
+      latest.nextDeviceSeq,
+      legacy?.nextDeviceSeq ?? 1,
+      pending ? pending.deviceSeq + 1 : 1,
+    );
+    const changed = imported || nextDeviceSeq !== latest.nextDeviceSeq;
+    const next: PersistedMeta = changed
+      ? {
+          ...latest,
+          revision: latest.revision + 1,
+          nextDeviceSeq,
+        }
+      : latest;
+    if (changed) metaStore.put(next);
+
+    // Keep the immutable legacy fact recoverable until its IndexedDB transaction
+    // commits. A second reconciliation treats that retained copy idempotently.
+    persistLegacyBridgeBeforeCommit(this.storage, next, transaction, pending, legacy);
+    await transactionDone(transaction);
+    persistLegacyBridge(this.storage, next);
+    persistIdentityMirror(this.storage, next);
+  }
+
   private updateActiveSession(
     mode: "study" | "pronunciation",
     sessionId: string,
@@ -379,6 +496,7 @@ export class OfflineLearningStore {
   ): Promise<BrowserOfflineState> {
     if (sessionId.trim().length === 0) throw new Error("session ID must be non-empty");
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
       const transaction = this.db.transaction(META_STORE, "readwrite");
       const metaStore = transaction.objectStore(META_STORE);
       const latest = await requiredMeta(metaStore);
@@ -398,7 +516,9 @@ export class OfflineLearningStore {
           mode === "pronunciation" ? focus : latest.activePronunciationFocus,
       };
       metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
       await transactionDone(transaction);
+      persistIdentityMirror(this.storage, next);
       return this.snapshot();
     });
   }
@@ -408,6 +528,7 @@ export class OfflineLearningStore {
     sessionId: string,
   ): Promise<BrowserOfflineState> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
       const transaction = this.db.transaction(META_STORE, "readwrite");
       const metaStore = transaction.objectStore(META_STORE);
       const latest = await requiredMeta(metaStore);
@@ -426,7 +547,9 @@ export class OfflineLearningStore {
         activePronunciationFocus: mode === "pronunciation" ? null : latest.activePronunciationFocus,
       };
       metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
       await transactionDone(transaction);
+      persistIdentityMirror(this.storage, next);
       return this.snapshot();
     });
   }
@@ -534,6 +657,61 @@ function migrateMeta(
     },
     pendingAttempt: legacy?.pendingAttempt ?? null,
   };
+}
+
+function persistLegacyBridge(
+  storage: StorageLike,
+  meta: PersistedMeta,
+  pendingAttempt: AttemptInput | null = null,
+  pendingOwner?: BrowserStudyState | null,
+): void {
+  storage.setItem(
+    STUDY_STORAGE_KEY,
+    JSON.stringify({
+      version: 3,
+      deviceId: meta.deviceId,
+      nextDeviceSeq: meta.nextDeviceSeq,
+      activeSessionId: pendingOwner ? pendingOwner.activeSessionId : meta.activeSessionId,
+      activePronunciationSessionId: pendingOwner
+        ? pendingOwner.activePronunciationSessionId
+        : meta.activePronunciationSessionId,
+      activePronunciationFocus: pendingOwner
+        ? pendingOwner.activePronunciationFocus
+        : meta.activePronunciationFocus,
+      pendingAttempt,
+    } satisfies BrowserStudyState),
+  );
+}
+
+function persistLegacyBridgeBeforeCommit(
+  storage: StorageLike,
+  meta: PersistedMeta,
+  transaction: IDBTransaction,
+  pendingAttempt: AttemptInput | null = null,
+  pendingOwner?: BrowserStudyState | null,
+): void {
+  try {
+    persistLegacyBridge(storage, meta, pendingAttempt, pendingOwner);
+  } catch (error) {
+    transaction.abort();
+    throw error;
+  }
+}
+
+function sameAttempt(left: AttemptInput, right: AttemptInput): boolean {
+  return stableJson(parseAttemptInput(left)) === stableJson(parseAttemptInput(right));
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 function parseIdentityMirror(json: string | null): IdentityMirror | null {

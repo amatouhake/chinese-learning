@@ -1,5 +1,5 @@
-const SHELL_CACHE = "chinese-learning-shell-v1";
 const SHELL_CACHE_PREFIX = "chinese-learning-shell-";
+const SHELL_CACHE = `${SHELL_CACHE_PREFIX}__SHELL_VERSION__`;
 const AUDIO_CACHE = "chinese-learning-pronunciation-audio-v1";
 
 self.addEventListener("install", (event) => {
@@ -9,7 +9,6 @@ self.addEventListener("install", (event) => {
       const shell = await fetch(new Request("/", { cache: "reload" }));
       if (!shell.ok) throw new Error(`PWA shell returned ${shell.status}`);
       const html = await shell.clone().text();
-      await cache.put("/", shell);
       const paths = new Set([
         "/manifest.webmanifest",
         "/icon.svg",
@@ -20,12 +19,18 @@ self.addEventListener("install", (event) => {
         const path = match[1];
         if (path?.startsWith("/")) paths.add(path);
       }
-      await Promise.all(
+      const resources = await Promise.all(
         [...paths].map(async (path) => {
           const response = await fetch(new Request(path, { cache: "reload" }));
-          if (response.ok) await cache.put(path, response);
+          if (!response.ok)
+            throw new Error(`PWA shell resource ${path} returned ${response.status}`);
+          return { path, response };
         }),
       );
+      await Promise.all([
+        cache.put("/", shell),
+        ...resources.map(({ path, response }) => cache.put(path, response)),
+      ]);
       await self.skipWaiting();
     })(),
   );
@@ -75,7 +80,6 @@ self.addEventListener("fetch", (event) => {
         try {
           const response = await fetch(request);
           if (!response.ok) throw new Error(`PWA navigation returned ${response.status}`);
-          await caches.open(SHELL_CACHE).then((cache) => cache.put("/", response.clone()));
           return response;
         } catch {
           const cached = await caches.open(SHELL_CACHE).then((cache) => cache.match("/"));

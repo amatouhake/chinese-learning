@@ -81,6 +81,8 @@
       maxCards: 10,
     });
     session = result.session;
+    if (!store) throw new Error("Offline storage is not ready.");
+    await store.rememberStudySession(result.session);
   }
 
   async function loadNextCard(): Promise<void> {
@@ -111,7 +113,9 @@
       phase = "prompt";
       return;
     }
-    if (pending === 0) browserState = await store.clearActiveStudySession(sessionId);
+    if (cachedSession.endedAt !== null) {
+      browserState = await store.clearActiveStudySession(sessionId);
+    }
     phase = session.reviewedCards === 0 ? "empty" : "completed";
   }
 
