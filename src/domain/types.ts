@@ -146,6 +146,53 @@ export interface StudyNextResult {
   card: StudyCard | null;
 }
 
+export type ReflexActivityType =
+  "hanzi_to_meaning" | "meaning_to_hanzi" | "hanzi_to_pinyin" | "pinyin_to_hanzi";
+
+export interface ReflexChoice {
+  id: string;
+  label: string;
+}
+
+export interface ReflexHistorySummary {
+  attempts: number;
+  incorrect: number;
+  slow: number;
+  averageResponseMs: number | null;
+  lastTroubleAt: number | null;
+  priority: number;
+}
+
+export interface ReflexCard {
+  cardId: string;
+  lexemeId: string;
+  readingId: string | null;
+  activityType: ReflexActivityType;
+  prompt: string;
+  promptHint: string | null;
+  answerChoiceId: string;
+  choices: ReflexChoice[];
+  history: ReflexHistorySummary;
+}
+
+export interface ReflexSessionView {
+  id: string;
+  deviceId: string;
+  maxItems: number;
+  completedItems: number;
+  poolSize: number;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface ReflexAnswerRecord {
+  eventId: string;
+  cardId: string;
+  correct: boolean;
+  responseMs: number;
+  round: number;
+}
+
 export interface PronunciationMedia {
   id: string;
   url: string;
@@ -307,6 +354,12 @@ export interface OfflinePronunciationPack {
   cards: PronunciationCard[];
 }
 
+export interface OfflineReflexPack {
+  status: "cards" | "empty" | "completed";
+  session: ReflexSessionView;
+  cards: ReflexCard[];
+}
+
 export interface OfflineReadingPack {
   status: "cards" | "empty" | "completed";
   session: GuidedSessionView;
@@ -340,7 +393,7 @@ export interface SyncSessionChange {
   seq: number;
   entityType: "study_session";
   sessionId: string;
-  mode: "study" | "pronunciation" | "reading" | "grammar";
+  mode: "study" | "reflex" | "pronunciation" | "reading" | "grammar";
   endedAt: number | null;
 }
 
@@ -368,6 +421,7 @@ export interface SyncPullResponse {
   learnerChanges: SyncLearnerChange[];
   contentChanges: SyncContentChange[];
   studyPack: OfflineStudyPack | null;
+  reflexPack: OfflineReflexPack | null;
   pronunciationPack: OfflinePronunciationPack | null;
   readingPack: OfflineReadingPack | null;
   grammarPack: OfflineGrammarPack | null;
