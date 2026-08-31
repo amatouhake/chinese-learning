@@ -9,16 +9,16 @@ test.describe("offline PWA foundation", () => {
 
   test("persists the global sound preference across reload", async ({ page }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Sound on" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "音声オン" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Sound on" }).click();
-    await expect(page.getByRole("button", { name: "Sound off" })).toBeVisible();
+    await page.getByRole("button", { name: "音声オン" }).click();
+    await expect(page.getByRole("button", { name: "音声オフ" })).toBeVisible();
 
     await page.reload();
-    await expect(page.getByRole("button", { name: "Sound off" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "音声オフ" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Sound off" }).click();
-    await expect(page.getByRole("button", { name: "Sound on" })).toBeVisible();
+    await page.getByRole("button", { name: "音声オフ" }).click();
+    await expect(page.getByRole("button", { name: "音声オン" })).toBeVisible();
   });
 
   test("queues across offline reload, partially retries, and converges with workerd/D1", async ({
@@ -46,13 +46,13 @@ test.describe("offline PWA foundation", () => {
     await context.setOffline(true);
 
     await completeVocabulary(page, 3);
-    await page.getByRole("button", { name: "Pronunciation" }).click();
+    await page.getByRole("button", { name: "発音" }).click();
     await completePronunciation(page, 3);
     await expect(page.locator(".study-card")).toBeVisible();
     await page.reload();
     await expect(page.getByRole("heading", { name: "中文学习" })).toBeVisible();
     await completePronunciation(page, 2);
-    await page.getByRole("button", { name: "Study" }).click();
+    await page.getByRole("button", { name: "単語" }).click();
     await completeVocabulary(page, 2);
 
     const queued = await readOutbox(page);
@@ -88,12 +88,12 @@ test.describe("offline PWA foundation", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page)).toBe(9);
-    await expect(page.locator(".sync-status")).toContainText("9 queued");
+    await expect(page.locator(".sync-status")).toContainText("9件を同期待ち");
 
     await page.unroute("**/api/attempts");
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
-    await expect(page.locator(".sync-status")).toContainText("synced");
+    await expect(page.locator(".sync-status")).toContainText("同期済み");
 
     const duplicate = await postAttempt(page, queued[0]!);
     expect(duplicate).toMatchObject({ disposition: "duplicate", eventId: queued[0]!.eventId });
@@ -123,25 +123,23 @@ test.describe("offline PWA foundation", () => {
     context,
   }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
-      timeout: 20_000,
-    });
+    await startStudy(page);
     await waitForServiceWorker(page);
     await context.setOffline(true);
     const second = await context.newPage();
     await second.goto("/#study");
-    await expect(second.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await expect(second.getByRole("button", { name: "答えを見る" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Reveal answer" }).click();
-    await second.getByRole("button", { name: "Reveal answer" }).click();
-    await page.getByRole("button", { name: "3: Good — Recalled" }).click();
-    await second.getByRole("button", { name: "3: Good — Recalled" }).click();
-    await expect(second.getByRole("alert")).toContainText("study state changed in another tab");
+    await page.getByRole("button", { name: "答えを見る" }).click();
+    await second.getByRole("button", { name: "答えを見る" }).click();
+    await page.getByRole("button", { name: /思い出せた/ }).click();
+    await second.getByRole("button", { name: /思い出せた/ }).click();
+    await expect(second.getByRole("alert")).toContainText("別のタブ");
 
     await second.reload();
-    await expect(second.getByRole("button", { name: "Reveal answer" })).toBeVisible();
-    await second.getByRole("button", { name: "Reveal answer" }).click();
-    await second.getByRole("button", { name: "3: Good — Recalled" }).click();
+    await expect(second.getByRole("button", { name: "答えを見る" })).toBeVisible();
+    await second.getByRole("button", { name: "答えを見る" }).click();
+    await second.getByRole("button", { name: /思い出せた/ }).click();
     await expect.poll(() => outboxCount(second)).toBe(2);
 
     const queued = await readOutbox(second);
@@ -157,22 +155,20 @@ test.describe("offline PWA foundation", () => {
     request,
   }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
-      timeout: 20_000,
-    });
+    await startStudy(page);
     await waitForServiceWorker(page);
     const sessionId = (await readMeta(page)).activeSessionId;
     expect(typeof sessionId).toBe("string");
     await context.setOffline(true);
 
     for (let index = 0; index < 10; index += 1) {
-      await page.getByRole("button", { name: "Reveal answer" }).click();
-      await page.getByRole("button", { name: "3: Good — Recalled" }).click();
+      await page.getByRole("button", { name: "答えを見る" }).click();
+      await page.getByRole("button", { name: /思い出せた/ }).click();
       if (index < 9) {
-        await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible();
       }
     }
-    await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
     await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
@@ -188,10 +184,10 @@ test.describe("offline PWA foundation", () => {
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
     await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
-    await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible();
-    await expect(page.getByText("10 reviews are safely synchronized.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toBeVisible();
+    await expect(page.getByText("10枚を確認しました")).toBeVisible();
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
-    await expect(page.locator(".sync-status")).toContainText("simulated canonical pull failure");
+    await expect(page.locator(".sync-status")).toContainText("同期待ち");
 
     await page.unroute("**/api/sync/pull");
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
@@ -213,7 +209,7 @@ test.describe("offline PWA foundation", () => {
     request,
   }) => {
     await page.goto("/#pronunciation");
-    await page.getByRole("button", { name: "Mixed practice" }).click();
+    await page.getByRole("button", { name: "おまかせ" }).click();
     await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
     await waitForServiceWorker(page);
     const sessionId = (await readMeta(page)).activePronunciationSessionId;
@@ -224,7 +220,7 @@ test.describe("offline PWA foundation", () => {
       await answerPronunciationCard(page);
       if (index < 9) await expect(page.locator(".study-card")).toBeVisible();
     }
-    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
     await expect
       .poll(() => cachedSessionProgress(page, "pronunciation", sessionId as string))
@@ -243,8 +239,8 @@ test.describe("offline PWA foundation", () => {
     await expect
       .poll(() => cachedSessionProgress(page, "pronunciation", sessionId as string))
       .toBe(10);
-    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
-    await expect(page.getByText("10 non-FSRS attempts are safely synchronized.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
+    await expect(page.getByText("10問を確認しました")).toBeVisible();
     expect((await readMeta(page)).activePronunciationSessionId).toBe(sessionId);
 
     await page.unroute("**/api/sync/pull");
@@ -277,15 +273,17 @@ test.describe("offline PWA foundation", () => {
     });
 
     await page.goto("/#pronunciation");
-    await page.getByRole("button", { name: "Mixed practice" }).click();
+    await page.getByRole("button", { name: "おまかせ" }).click();
     await expect(page.getByRole("alert")).toContainText("simulated session creation failure");
     const failedSessionId = (await readMeta(page)).activePronunciationSessionId;
     expect(typeof failedSessionId).toBe("string");
 
-    await page.getByRole("button", { name: "Study" }).click();
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+    await page.getByRole("button", { name: "単語" }).click();
+    await expect(page.getByRole("button", { name: "練習を始める" })).toBeVisible({
       timeout: 20_000,
     });
+    await page.getByRole("button", { name: "練習を始める" }).click();
+    await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible();
     expect(
       pulls.some(
         (pull) =>
@@ -308,17 +306,17 @@ test.describe("offline PWA foundation", () => {
       });
     });
     await page.reload();
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible();
     await expect(page.locator(".sync-status")).toContainText(
-      "Service unavailable · using the cached vocabulary set",
+      "サーバーに接続できないため、保存済みの単語セットを使います",
     );
     await expect(page.locator(".sync-status")).not.toHaveClass(/offline/);
     await page.unroute("**/api/study/sessions");
 
-    await page.getByRole("button", { name: "Reveal answer" }).click();
-    await page.getByRole("button", { name: "3: Good — Recalled" }).click();
+    await page.getByRole("button", { name: "答えを見る" }).click();
+    await page.getByRole("button", { name: /思い出せた/ }).click();
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
-    await expect(page.locator(".sync-status")).toContainText("synced");
+    await expect(page.locator(".sync-status")).toContainText("同期済み");
 
     await page.route("**/api/pronunciation/sessions", async (route) => {
       await route.fulfill({
@@ -327,17 +325,17 @@ test.describe("offline PWA foundation", () => {
         body: JSON.stringify({ error: "simulated pronunciation service outage" }),
       });
     });
-    await page.getByRole("button", { name: "Pronunciation" }).click();
+    await page.getByRole("button", { name: "発音" }).click();
     await expect(page.locator(".study-card")).toBeVisible();
     await expect(page.locator(".sync-status")).toContainText(
-      "Service unavailable · using the cached pronunciation set",
+      "サーバーに接続できないため、保存済みの発音セットを使います",
     );
     await expect(page.locator(".sync-status")).not.toHaveClass(/offline/);
     await page.unroute("**/api/pronunciation/sessions");
 
     await answerPronunciationCard(page);
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
-    await expect(page.locator(".sync-status")).toContainText("synced");
+    await expect(page.locator(".sync-status")).toContainText("同期済み");
   });
 
   test("omits an uncreated vocabulary session while populating pronunciation", async ({ page }) => {
@@ -355,14 +353,15 @@ test.describe("offline PWA foundation", () => {
     });
 
     await page.goto("/#study");
+    await page.getByRole("button", { name: "練習を始める" }).click();
     await expect(page.getByRole("alert")).toContainText(
       "simulated vocabulary session creation failure",
     );
     const failedSessionId = (await readMeta(page)).activeSessionId;
     expect(typeof failedSessionId).toBe("string");
 
-    await page.getByRole("button", { name: "Pronunciation" }).click();
-    await page.getByRole("button", { name: "Mixed practice" }).click();
+    await page.getByRole("button", { name: "発音" }).click();
+    await page.getByRole("button", { name: "おまかせ" }).click();
     await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
     expect(
       pulls.some(
@@ -379,8 +378,8 @@ test.describe("offline PWA foundation", () => {
     request,
   }) => {
     await page.goto("/#pronunciation");
-    await page.getByRole("button", { name: /^Listening / }).click();
-    await expect(page.getByText(/Audio →/)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: /^聞き取り/ }).click();
+    await expect(page.getByText(/音声 →/)).toBeVisible({ timeout: 20_000 });
     await waitForServiceWorker(page);
     const sessionId = (await readMeta(page)).activePronunciationSessionId;
     expect(typeof sessionId).toBe("string");
@@ -390,8 +389,8 @@ test.describe("offline PWA foundation", () => {
 
     await context.setOffline(true);
     await page.reload();
-    await expect(page.getByRole("button", { name: "Play or replay word audio" })).toBeEnabled();
-    await page.getByRole("button", { name: "Play or replay word audio" }).click();
+    await expect(page.getByRole("button", { name: "単語の音声を再生・聞き直す" })).toBeEnabled();
+    await page.getByRole("button", { name: "単語の音声を再生・聞き直す" }).click();
 
     const skippedCardIds = new Set<string>();
     for (let item = 0; item < 10; item += 1) {
@@ -402,13 +401,15 @@ test.describe("offline PWA foundation", () => {
       await deleteCachedAudio(page, current.mediaUrl);
       await page.reload();
       await expect(
-        page.getByText("This recording was not cached before network loss."),
+        page.getByText(
+          "接続が切れる前に音声を保存できませんでした。他の発音カードは続けて使えます。",
+        ),
       ).toBeVisible();
-      await page.getByRole("button", { name: "Skip uncached audio" }).click();
+      await page.getByRole("button", { name: "音声をスキップ" }).click();
       if (item < 9) await expect(page.locator(".study-card")).toBeVisible();
     }
 
-    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
     const queued = await readOutbox(page);
     expect(queued).toHaveLength(10);
@@ -425,7 +426,7 @@ test.describe("offline PWA foundation", () => {
     ).toBe(true);
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
 
     await context.setOffline(false);
@@ -480,7 +481,7 @@ test.describe("offline PWA foundation", () => {
       { pendingAttempt: pending },
     );
     await page.goto("/#study");
-    await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toBeVisible({
       timeout: 20_000,
     });
     const state = await readMeta(page);
@@ -502,9 +503,7 @@ test.describe("offline PWA foundation", () => {
     context,
   }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
-      timeout: 20_000,
-    });
+    await startStudy(page);
     await waitForServiceWorker(page);
     const state = await readMeta(page);
     const cached = await firstCachedStudyCard(page);
@@ -554,7 +553,7 @@ test.describe("offline PWA foundation", () => {
 
     await context.setOffline(true);
     await page.reload();
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible();
     expect(await readOutbox(page)).toEqual([pending]);
     expect(await readMeta(page)).toMatchObject({
       deviceId: pending.deviceId,
@@ -566,8 +565,8 @@ test.describe("offline PWA foundation", () => {
       ),
     ).toMatchObject({ nextDeviceSeq: pending.deviceSeq + 1, pendingAttempt: null });
 
-    await page.getByRole("button", { name: "Reveal answer" }).click();
-    await page.getByRole("button", { name: "3: Good — Recalled" }).click();
+    await page.getByRole("button", { name: "答えを見る" }).click();
+    await page.getByRole("button", { name: /思い出せた/ }).click();
     await expect.poll(() => outboxCount(page)).toBe(2);
     const queued = await readOutbox(page);
     expect(queued).toHaveLength(2);
@@ -583,12 +582,11 @@ test.describe("offline PWA foundation", () => {
     request,
   }) => {
     await page.goto("/#study");
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
-      timeout: 20_000,
-    });
+    await startStudy(page);
     await context.setOffline(true);
-    await page.getByRole("button", { name: "Reveal answer" }).click();
-    await page.getByRole("button", { name: "2: Hard — Barely" }).click();
+    await page.getByRole("button", { name: "答えを見る" }).click();
+    await page.locator(".rating-more summary").click();
+    await page.getByRole("button", { name: /あやふや/ }).click();
     await expect.poll(() => outboxCount(page)).toBe(1);
     const older = (await readOutbox(page)).find(
       (attempt) => attempt.mode === "study" && attempt.fsrsReview !== undefined,
@@ -630,25 +628,34 @@ test.describe("offline PWA foundation", () => {
 
 async function prepareVocabularyAndPronunciation(page: Page): Promise<void> {
   await page.goto("/#study");
-  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
-    timeout: 20_000,
-  });
+  await startStudy(page);
   await waitForServiceWorker(page);
-  await page.getByRole("button", { name: "Pronunciation" }).click();
-  await page.getByRole("button", { name: "Mixed practice" }).click();
+  await page.getByRole("button", { name: "発音" }).click();
+  await page.getByRole("button", { name: "おまかせ" }).click();
   await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "Study" }).click();
-  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+  await page.getByRole("button", { name: "単語" }).click();
+  await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible({
     timeout: 20_000,
   });
 }
 
 async function completeVocabulary(page: Page, count: number): Promise<void> {
   for (let index = 0; index < count; index += 1) {
-    await page.getByRole("button", { name: "Reveal answer" }).click();
-    await page.getByRole("button", { name: "3: Good — Recalled" }).click();
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await page.getByRole("button", { name: "答えを見る" }).click();
+    await page.getByRole("button", { name: /思い出せた/ }).click();
+    await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible();
   }
+}
+
+async function startStudy(page: Page): Promise<void> {
+  const chooser = page.getByRole("button", { name: "練習を始める" });
+  await expect(page.locator(".study-launcher, .study-card, .status-panel")).toBeVisible({
+    timeout: 20_000,
+  });
+  if (await chooser.isVisible()) await chooser.click();
+  await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible({
+    timeout: 20_000,
+  });
 }
 
 async function completePronunciation(page: Page, count: number): Promise<void> {
@@ -660,20 +667,20 @@ async function completePronunciation(page: Page, count: number): Promise<void> {
 
 async function answerPronunciationCard(page: Page): Promise<void> {
   const activity = await page.locator(".card-meta span").nth(1).textContent();
-  if (activity?.startsWith("Audio")) {
-    await page.getByRole("button", { name: "Play or replay word audio" }).click();
+  if (activity?.startsWith("音声")) {
+    await page.getByRole("button", { name: "単語の音声を再生・聞き直す" }).click();
   }
   const choices = page.locator(".choice-grid button");
   if ((await choices.count()) > 0) {
     await choices.first().click();
-  } else if (activity === "Pronunciation production") {
-    await page.getByRole("button", { name: "I said it — compare" }).click();
-    await page.getByRole("button", { name: /^Good/ }).click();
+  } else if (activity === "発音して確認") {
+    await page.getByRole("button", { name: "発音した — 答えと比べる" }).click();
+    await page.getByRole("button", { name: /できた/ }).click();
   } else {
-    await page.getByRole("button", { name: "Reveal pinyin" }).click();
-    await page.getByRole("button", { name: "Got it" }).click();
+    await page.getByRole("button", { name: "ピンインを見る" }).click();
+    await page.getByRole("button", { name: "思い出せた" }).click();
   }
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
 }
 
 async function waitForServiceWorker(page: Page): Promise<void> {

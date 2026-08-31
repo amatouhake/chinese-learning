@@ -19,14 +19,13 @@ test.describe("Reflex automaticity dogfood", () => {
 
     await introduceVocabulary(page, 8);
     const stateBeforeReflex = await readCardStates(page);
-    await page.locator("#mobile-mode").selectOption("reflex");
-    await expect(page.locator("#mobile-mode")).toHaveValue("reflex");
+    await selectMobileMode(page, "瞬発");
     await expect(page.locator(".surface-nav")).toBeHidden();
-    await expect(page.getByRole("button", { name: "Sound on" })).toHaveAttribute(
+    await expect(page.getByRole("button", { name: "音声オン" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await page.getByRole("button", { name: "Start 12 quick answers" }).click();
+    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
     const sessionId = (await readMeta(page)).activeReflexSessionId;
     expect(typeof sessionId).toBe("string");
@@ -55,7 +54,7 @@ test.describe("Reflex automaticity dogfood", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
-    await expect(page.locator(".sync-status")).toContainText("synced");
+    await expect(page.locator(".sync-status")).toContainText("同期済み");
 
     const duplicate = await postAttempt(page, queuedReflex[0]!);
     expect(duplicate).toMatchObject({
@@ -68,7 +67,7 @@ test.describe("Reflex automaticity dogfood", () => {
     for (let round = 8; round <= 12; round += 1) {
       await answerReflex(page, round, true, 0, round === 12);
     }
-    await expect(page.getByRole("heading", { name: "Reflex complete" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "瞬発練習を完了" })).toBeVisible({
       timeout: 20_000,
     });
     expect((await readMeta(page)).activeReflexSessionId).toBeNull();
@@ -87,7 +86,7 @@ test.describe("Reflex automaticity dogfood", () => {
     expect(canonicalAttempts.every((change) => change.reviewCreated === false)).toBe(true);
     expect(await readCardStates(page)).toEqual(stateBeforeReflex);
 
-    await page.getByRole("button", { name: "Start another drill" }).click();
+    await page.getByRole("button", { name: "同じ練習をもう一度" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
     expect((await readMeta(page)).activeReflexSessionId).not.toBe(sessionId);
     expect(
@@ -103,27 +102,27 @@ test.describe("Reflex automaticity dogfood", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/#reflex");
-    await page.getByRole("button", { name: "Start 12 quick answers" }).click();
+    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
     await expect(page.locator(".reflex-choice-grid button")).toHaveCount(4, {
       timeout: 20_000,
     });
     await page.keyboard.press("1");
-    await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
     await page.keyboard.press("Enter");
     await expect(page.locator(".card-meta span").first()).toHaveText("2 / 12");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
 
-    await page.getByRole("button", { name: "Study" }).click();
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+    await page.getByRole("button", { name: "単語" }).click();
+    await expect(page.getByRole("button", { name: "練習を始める" })).toBeVisible({
       timeout: 20_000,
     });
-    await page.getByRole("button", { name: "Pronunciation" }).click();
-    await expect(page.getByRole("button", { name: "Mixed practice" })).toBeVisible();
-    await page.getByRole("button", { name: "Reading", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Read sentences" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Grammar path" })).toBeVisible();
+    await page.getByRole("button", { name: "発音" }).click();
+    await expect(page.getByRole("button", { name: "おまかせ" })).toBeVisible();
+    await page.getByRole("button", { name: "読解", exact: true }).click();
+    await expect(page.getByRole("button", { name: "例文を読む" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "文法コース" })).toBeVisible();
   });
 
   test("autoplays canonical pronunciation at the recall-safe phase and keeps replay available", async ({
@@ -142,8 +141,8 @@ test.describe("Reflex automaticity dogfood", () => {
     await page.evaluate(() => {
       (window as typeof window & { pronunciationPlays: string[] }).pronunciationPlays.length = 0;
     });
-    await page.locator("#mobile-mode").selectOption("reflex");
-    await page.getByRole("button", { name: "Start 12 quick answers" }).click();
+    await selectMobileMode(page, "瞬発");
+    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
 
     const observed = new Set<string>();
@@ -177,14 +176,52 @@ test.describe("Reflex automaticity dogfood", () => {
       if (hasMedia && !promptAutoplay) {
         await expect.poll(() => pronunciationPlayCount(page)).toBeGreaterThan(playsBeforeAnswer);
       }
-      await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled({
+      await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled({
         timeout: 20_000,
       });
       playsBeforeQuestion = await pronunciationPlayCount(page);
-      if (round < 12) await page.getByRole("button", { name: "Continue" }).click();
+      if (round < 12) await page.getByRole("button", { name: "次へ" }).click();
     }
 
     expect(observed.size).toBeGreaterThan(0);
+    expect(replayVerified).toBe(true);
+  });
+
+  test("消音設定は自動再生と聞き直しを止め、再読み込み後も残る", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+      const plays: string[] = [];
+      Object.assign(window, { pronunciationPlays: plays });
+      HTMLMediaElement.prototype.play = function () {
+        plays.push(this.currentSrc || this.src);
+        return Promise.resolve();
+      };
+    });
+    await page.goto("/#study");
+    await expect(page.getByRole("button", { name: "音声オン" })).toBeVisible();
+    await page.getByRole("button", { name: "音声オン" }).click();
+    await page.reload();
+    await expect(page.getByRole("button", { name: "音声オフ" })).toBeVisible();
+
+    await introduceVocabulary(page, 8);
+    await selectMobileMode(page, "瞬発");
+    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
+
+    let replayVerified = false;
+    for (let round = 1; round <= 12; round += 1) {
+      await expect(page.locator(".card-meta span").first()).toHaveText(`${round} / 12`);
+      const audio = page.locator(".reflex-audio");
+      if (!replayVerified && (await audio.count()) > 0) {
+        await audio.click();
+        replayVerified = true;
+      }
+      expect(await pronunciationPlayCount(page)).toBe(0);
+      await page.locator(".reflex-choice-grid button").first().click();
+      await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled({ timeout: 20_000 });
+      expect(await pronunciationPlayCount(page)).toBe(0);
+      if (round < 12) await page.getByRole("button", { name: "次へ" }).click();
+    }
     expect(replayVerified).toBe(true);
   });
 
@@ -194,21 +231,58 @@ test.describe("Reflex automaticity dogfood", () => {
   }) => {
     await page.goto("/#reflex");
     await context.setOffline(true);
-    await page.getByRole("button", { name: "Start 12 quick answers" }).click();
-    await expect(page.getByRole("alert")).toContainText("Reconnect to prepare a new Reflex drill");
+    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      "再接続すると、新しい瞬発練習を準備できます",
+    );
+  });
+
+  test("reserves the full feedback rail at phone widths", async ({ page }) => {
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto("/#reflex");
+      const start = page.getByRole("button", { name: "12問の瞬発練習を始める" });
+      await expect(start.or(page.locator(".reflex-card"))).toBeVisible({ timeout: 20_000 });
+      if (await start.isVisible()) await start.click();
+      await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
+
+      const before = await reflexGeometry(page);
+      await page.locator(".reflex-choice-grid button").first().click();
+      await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+      const after = await reflexGeometry(page);
+
+      for (const selector of [
+        ".reflex-prompt",
+        ".reflex-choice-grid",
+        ".reflex-feedback",
+        ".reflex-feedback .secondary-button",
+        ".audio-note",
+      ]) {
+        for (const property of ["top", "left", "height"] as const) {
+          expect(
+            Math.abs(after[selector]![property] - before[selector]![property]),
+            `${width}px ${selector} ${property}`,
+          ).toBeLessThanOrEqual(1);
+        }
+      }
+      await page.getByRole("button", { name: "次へ" }).click();
+    }
   });
 });
 
 async function introduceVocabulary(page: Page, count: number): Promise<void> {
   await page.goto("/#study");
-  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "練習を始める" })).toBeVisible({
     timeout: 20_000,
   });
+  await page.getByRole("button", { name: "練習を始める" }).click();
+  await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible({ timeout: 20_000 });
   for (let index = 0; index < count; index += 1) {
-    await page.getByRole("button", { name: "Reveal answer" }).click();
-    await page.getByRole("button", { name: "3: Good — Recalled" }).click();
-    await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible();
+    await page.getByRole("button", { name: "答えを見る" }).click();
+    await page.getByRole("button", { name: /思い出せた/ }).click();
+    await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible();
   }
+  await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
 }
 
 async function currentQuestion(page: Page): Promise<{
@@ -249,11 +323,38 @@ async function answerReflex(
   expect(index).toBeGreaterThanOrEqual(0);
   if (delayMs > 0) await page.waitForTimeout(delayMs);
   await choices.nth(index).click();
-  const continueButton = page.getByRole("button", { name: "Continue" });
+  const continueButton = page.getByRole("button", { name: "次へ" });
   await expect(continueButton).toBeEnabled({ timeout: 20_000 });
   if (final) return;
   await continueButton.click();
   await expect(page.locator(".card-meta span").first()).toHaveText(`${round + 1} / 12`);
+}
+
+async function selectMobileMode(page: Page, label: string): Promise<void> {
+  await page.locator("#mobile-mode-trigger").click();
+  await page.getByRole("menuitemradio", { name: label }).click();
+  await expect(page.locator("#mobile-mode-trigger")).toHaveText(label);
+}
+
+function reflexGeometry(
+  page: Page,
+): Promise<Record<string, { top: number; left: number; height: number }>> {
+  return page.evaluate(() => {
+    const selectors = [
+      ".reflex-prompt",
+      ".reflex-choice-grid",
+      ".reflex-feedback",
+      ".reflex-feedback .secondary-button",
+      ".audio-note",
+    ];
+    return Object.fromEntries(
+      selectors.map((selector) => {
+        const rect = document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+        if (!rect) throw new Error(`missing ${selector}`);
+        return [selector, { top: rect.top, left: rect.left, height: rect.height }];
+      }),
+    );
+  });
 }
 
 function readMeta(page: Page): Promise<Record<string, unknown>> {

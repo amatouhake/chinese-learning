@@ -129,7 +129,8 @@ shell behind. It has no dependency on remote fonts, imagery, or network-only dec
 - Midnight ink shell with a single warm paper learning stage.
 - Vermilion proof marks and cobalt/cyan reading cues used with purpose.
 - Stable answer rails that paint in place for feedback.
-- Japanese/Chinese serif display paired with a compact system UI sans.
+- Japanese/Chinese serif display paired with a compact system UI sans; the interface is
+  Japanese-first while the learning content stays faithful to its source language.
 - Sound and exact-reading media are enhancements, never hidden correctness gates.
 
 ## Colors
@@ -199,8 +200,9 @@ sans for what the interface is asking the learner to do.
 The shell uses a sticky dark header and a centered learning rail. The full application
 is capped at `78rem`; active learning surfaces are capped at `54rem` so a phone and a
 desktop both keep a clear focal stage. Desktop navigation occupies one header row. At
-phone widths it becomes a compact brand row with a five-mode selector and an icon-only
-sound control; the active surface header keeps only useful progress or sync context.
+phone widths it becomes a compact brand row with a designed five-mode menu (`単語`, `瞬発`,
+`発音`, `読解`, `進捗`) and an icon-only sound control; the active surface header keeps only
+useful progress or sync context.
 
 Active Study and Reflex cards use a warm-paper stage with a stable internal rhythm:
 metadata, prompt, answer rail, and progression. Phone choices are two columns with
@@ -275,8 +277,9 @@ frames. Avoid pills except for compact queue/status badges.
 ### Navigation
 
 - **Style:** A compact dark rail with inline SVG line icons on desktop. Narrow phones use
-  a native, touch-sized five-mode selector whose current label remains visible; the active
-  mode is never hidden behind an unlabeled icon.
+  a custom touch-sized five-mode menu whose current label remains visible and whose selected
+  item is marked in the Night Proof Desk ink-raised surface; the active mode is never hidden
+  behind an unlabeled icon.
 - **Behavior:** Navigation is available between sessions and remains quiet during a card.
   The surface header does not repeat the selected mode on a phone when the global selector
   already identifies it. Sound preference lives in the same header as a persistent toggle:
@@ -317,5 +320,6 @@ message or disappears from the ordinary card; it never borrows another reading.
   viewport when a compact alternative is available.
 - **Don't** use sound as the only correctness signal or block progress on audio playback.
 - **Don't** borrow pronunciation from a different Hanzi-reading identity.
+- **Don't** make Japanese learners parse English interface copy during a rapid drill.
 - **Don't** fill every surface with vermilion, rounded pills, or implementation-oriented
   explanatory copy.

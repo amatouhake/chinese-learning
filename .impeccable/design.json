@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-31T00:00:00.000Z",
+  "generatedAt": "2026-08-31T15:46:30Z",
   "title": "Design System: Chinese Learning",
   "extensions": {
     "colorMeta": {
@@ -126,7 +126,7 @@
       "kind": "button",
       "refersTo": "button-primary",
       "description": "The one decisive action on a status or reveal state.",
-      "html": "<button class=\"ds-primary\">Reveal answer <span>SPACE</span></button>",
+      "html": "<button class=\"ds-primary\">答えを見る <span>SPACE</span></button>",
       "css": ".ds-primary { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 3.6rem; padding: 0 1rem; border: 1px solid #f06452; border-radius: 0.7rem; color: #fff7ef; background: #c7483b; font: 760 1.08rem/1.2 system-ui, sans-serif; cursor: pointer; transition: background 180ms ease, border-color 180ms ease; } .ds-primary span { color: rgb(255 247 239 / 70%); font-size: 0.62rem; font-weight: 800; } .ds-primary:hover { background: #f06452; } .ds-primary:focus-visible { outline: 3px solid #79cbd6; outline-offset: 3px; }"
     },
     {
@@ -134,7 +134,7 @@
       "kind": "button",
       "refersTo": "button-secondary",
       "description": "A quiet continuation or retry action below a proof state.",
-      "html": "<button class=\"ds-secondary\">Continue</button>",
+      "html": "<button class=\"ds-secondary\">次へ</button>",
       "css": ".ds-secondary { min-height: 2.55rem; padding: 0 0.85rem; border: 1px solid #d9cdbc; border-radius: 0.65rem; color: #1a2028; background: #ece3d5; font: 900 0.62rem/1.2 system-ui, sans-serif; cursor: pointer; transition: border-color 180ms ease; } .ds-secondary:hover { border-color: #f06452; } .ds-secondary:focus-visible { outline: 3px solid #79cbd6; outline-offset: 3px; }"
     },
     {
@@ -142,7 +142,7 @@
       "kind": "card",
       "refersTo": "study-card",
       "description": "The single focused proof sheet used for active learning.",
-      "html": "<article class=\"ds-card\"><small>NEW · HANZI → MEANING</small><h2>学习</h2><p>to study</p></article>",
+      "html": "<article class=\"ds-card\"><small>新規 · 漢字 → 意味</small><h2>学习</h2><p>勉強する</p></article>",
       "css": ".ds-card { min-height: 18rem; padding: 1rem; border: 1px solid #303946; border-radius: 1.15rem; color: #1a2028; background: #f6f0e5; box-shadow: 0 1.2rem 3.4rem rgb(0 0 0 / 22%); } .ds-card small { color: #656e78; font: 900 0.62rem/1.2 system-ui, sans-serif; letter-spacing: 0.08em; } .ds-card h2 { margin: 4rem 0 0.35rem; font: 650 4rem/1 'Yu Mincho', serif; } .ds-card p { margin: 0; color: #1c6470; font: 800 1rem/1.4 system-ui, sans-serif; }"
     },
     {
@@ -158,7 +158,7 @@
       "kind": "button",
       "refersTo": "audio-control",
       "description": "An exact-reading playback affordance beside ordinary vocabulary.",
-      "html": "<button class=\"ds-audio\"><svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z\"/><path d=\"M13 7a4.2 4.2 0 0 1 0 6\"/></svg><span>Listen</span></button>",
+      "html": "<button class=\"ds-audio\"><svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z\"/><path d=\"M13 7a4.2 4.2 0 0 1 0 6\"/></svg><span>聞き直す</span></button>",
       "css": ".ds-audio { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; min-height: 2.8rem; padding: 0 0.8rem; border: 1px solid #1c6470; border-radius: 0.65rem; color: #1c6470; background: #d8f1f1; font: 900 0.62rem/1.2 system-ui, sans-serif; cursor: pointer; transition: background 180ms ease, border-color 180ms ease; } .ds-audio svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; } .ds-audio:hover { border-color: #79cbd6; background: #b7e6e9; } .ds-audio:focus-visible { outline: 3px solid #79cbd6; outline-offset: 3px; }"
     },
     {
@@ -166,7 +166,7 @@
       "kind": "nav",
       "refersTo": "surface-navigation",
       "description": "The quiet mode rail that keeps active practice close at hand.",
-      "html": "<nav class=\"ds-nav\"><button class=\"ds-nav-active\">Study</button><button>Reflex</button><button>Speak</button></nav>",
+      "html": "<nav class=\"ds-nav\" aria-label=\"学習モード\"><button class=\"ds-nav-active\" aria-current=\"page\">単語</button><button>瞬発</button><button>発音</button><button>読解</button><button>進捗</button></nav>",
       "css": ".ds-nav { display: flex; gap: 0.2rem; padding: 0.2rem; background: #0d1016; } .ds-nav button { min-height: 2.6rem; padding: 0.35rem 0.55rem; border: 1px solid transparent; border-radius: 0.55rem; color: #76818f; background: transparent; font: 900 0.62rem/1.2 system-ui, sans-serif; cursor: pointer; } .ds-nav button:hover { border-color: #4a5665; color: #f6f0e5; } .ds-nav .ds-nav-active { border-color: #d9cdbc; color: #0d1016; background: #f6f0e5; } .ds-nav button:focus-visible { outline: 3px solid #79cbd6; outline-offset: 3px; }"
     },
     {
@@ -174,7 +174,7 @@
       "kind": "button",
       "refersTo": "surface-navigation",
       "description": "A persistent user-controlled sound state in the global shell.",
-      "html": "<button class=\"ds-sound\" aria-pressed=\"true\"><svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z\"/><path d=\"M13 7a4.2 4.2 0 0 1 0 6\"/></svg><span>Sound</span></button>",
+      "html": "<button class=\"ds-sound\" aria-label=\"音声をオン\" aria-pressed=\"true\"><svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z\"/><path d=\"M13 7a4.2 4.2 0 0 1 0 6\"/></svg><span>音声</span></button>",
       "css": ".ds-sound { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; min-height: 2.6rem; padding: 0.35rem 0.65rem; border: 1px solid #4a5665; border-radius: 0.55rem; color: #79cbd6; background: #151a22; font: 900 0.62rem/1.2 system-ui, sans-serif; cursor: pointer; transition: border-color 180ms ease, color 180ms ease; } .ds-sound svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; } .ds-sound:hover, .ds-sound:focus-visible { border-color: #79cbd6; } .ds-sound:focus-visible { outline: 3px solid #79cbd6; outline-offset: 3px; }"
     }
   ],
@@ -185,7 +185,7 @@
       "Midnight ink shell with a single warm paper learning stage.",
       "Vermilion proof marks and cobalt/cyan reading cues used with purpose.",
       "Stable answer rails that paint in place for feedback.",
-      "Japanese/Chinese serif display paired with a compact system UI sans.",
+      "Japanese/Chinese serif display paired with a compact system UI sans; the interface is Japanese-first while the learning content stays faithful to its source language.",
       "Sound and exact-reading media are enhancements, never hidden correctness gates."
     ],
     "rules": [

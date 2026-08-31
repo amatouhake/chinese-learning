@@ -396,7 +396,7 @@ function toCandidateModel(row: ReflexCandidateRow): CandidateModel {
       return {
         row,
         prompt: meaning,
-        promptHint: "Choose the matching Hanzi",
+        promptHint: "この意味に合う漢字を選ぶ",
         choiceLabel: row.simplified,
         ambiguityKey: `${row.activity_type}\0${normalizeLabel(meaning)}`,
       };

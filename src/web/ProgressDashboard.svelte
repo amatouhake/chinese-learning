@@ -9,6 +9,11 @@
     ProgressTroubleItem,
   } from "../domain/types";
   import { postJson } from "./api";
+  import {
+    activityTypeLabel as localizedActivityLabel,
+    learnerError,
+    PRACTICE_MODE_LABELS,
+  } from "./ui-copy";
 
   let snapshot: ProgressSnapshot | null = null;
   let loading = true;
@@ -24,15 +29,15 @@
     try {
       snapshot = await postJson<ProgressSnapshot>("/api/progress", {});
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Progress could not be loaded.";
+      error = learnerError(cause, "進捗を読み込めませんでした。");
     } finally {
       loading = false;
     }
   }
 
   function formatDate(timestamp: number | null, timezone: string): string {
-    if (timestamp === null) return "No learning events yet";
-    return new Intl.DateTimeFormat("en", {
+    if (timestamp === null) return "学習記録はまだありません";
+    return new Intl.DateTimeFormat("ja-JP", {
       timeZone: timezone,
       month: "short",
       day: "numeric",
@@ -50,37 +55,37 @@
   }
 
   function formatLatency(value: number | null): string {
-    return value === null ? "—" : `${(value / 1_000).toFixed(2)}s`;
+    return value === null ? "—" : `${(value / 1_000).toFixed(2)}秒`;
   }
 
   function modeLabel(mode: PracticeMode): string {
-    return mode === "study" ? "Vocabulary / FSRS" : mode[0]!.toUpperCase() + mode.slice(1);
+    return PRACTICE_MODE_LABELS[mode];
   }
 
   function activityLabel(activity: ActivityType): string {
     const labels: Record<ActivityType, string> = {
-      hanzi_to_meaning: "Hanzi → meaning",
-      meaning_to_hanzi: "Meaning → Hanzi",
-      hanzi_to_pinyin: "Hanzi → pinyin",
-      pinyin_to_hanzi: "Pinyin → Hanzi",
-      audio_to_hanzi: "Audio → Hanzi",
-      audio_to_meaning: "Audio → meaning",
-      tone_identification: "Single tone",
-      tone_pair_identification: "Tone pair",
-      pronunciation_production: "Pronunciation production",
-      read_aloud: "Read aloud",
-      sentence_reading: "Sentence reading",
+      hanzi_to_meaning: "漢字 → 意味",
+      meaning_to_hanzi: "意味 → 漢字",
+      hanzi_to_pinyin: "漢字 → ピンイン",
+      pinyin_to_hanzi: "ピンイン → 漢字",
+      audio_to_hanzi: "音声 → 漢字",
+      audio_to_meaning: "音声 → 意味",
+      tone_identification: "声調を聞き分ける",
+      tone_pair_identification: "声調の組み合わせ",
+      pronunciation_production: "発音して確認",
+      read_aloud: "音読",
+      sentence_reading: "例文を読む",
     };
-    return labels[activity];
+    return labels[activity] ?? localizedActivityLabel(activity);
   }
 
   function evidence(item: ProgressTroubleItem): string {
-    const bits = [`${item.recentAttempts} recent attempt${item.recentAttempts === 1 ? "" : "s"}`];
+    const bits = [`最近${item.recentAttempts}回`];
     if (item.evidence.averageResponseMs !== undefined) {
-      bits.push(`${formatLatency(item.evidence.averageResponseMs)} average`);
+      bits.push(`平均 ${formatLatency(item.evidence.averageResponseMs)}`);
     }
     if (item.evidence.averageSelfRating !== undefined) {
-      bits.push(`${formatRating(item.evidence.averageSelfRating)} average rating`);
+      bits.push(`平均評価 ${formatRating(item.evidence.averageSelfRating)}`);
     }
     return bits.join(" · ");
   }
@@ -91,68 +96,67 @@
     <div class="dashboard-title">
       <span class="section-mark">05</span>
       <div>
-        <h2 id="progress-heading">Progress snapshot</h2>
-        <p>Canonical learning history, summarized without changing it.</p>
+        <h2 id="progress-heading">進捗</h2>
+        <p>学習記録を、学び方を変えずにまとめています。</p>
       </div>
     </div>
-    <button class="refresh-button" onclick={loadSnapshot} disabled={loading}>Refresh</button>
+    <button class="refresh-button" onclick={loadSnapshot} disabled={loading}>更新</button>
   </header>
 
   {#if loading && !snapshot}
     <section class="status-panel dashboard-status" aria-live="polite">
       <div class="pulse"></div>
-      <h2>Reading learning history…</h2>
-      <p>Building a fresh local snapshot from D1.</p>
+      <h2>学習記録を読み込んでいます…</h2>
+      <p>最新の進捗を準備しています。</p>
     </section>
   {:else if error && !snapshot}
     <section class="status-panel error-panel dashboard-status" role="alert">
-      <p class="status-kicker">Snapshot unavailable</p>
-      <h2>Progress could not be loaded</h2>
+      <p class="status-kicker">進捗を読み込めません</p>
+      <h2>進捗を表示できませんでした</h2>
       <p>{error}</p>
-      <button class="primary-button" onclick={loadSnapshot}>Try again</button>
+      <button class="primary-button" onclick={loadSnapshot}>もう一度試す</button>
     </section>
   {:else if snapshot}
-    <div class="freshness-strip" aria-label="Snapshot freshness">
-      <span><strong>Generated</strong> {formatDate(snapshot.generatedAt, snapshot.timezone)}</span>
+    <div class="freshness-strip" aria-label="進捗の更新情報">
+      <span><strong>更新</strong> {formatDate(snapshot.generatedAt, snapshot.timezone)}</span>
       <span
-        ><strong>Data through</strong>
+        ><strong>記録の範囲</strong>
         {formatDate(snapshot.dataThrough.changedAt, snapshot.timezone)}</span
       >
-      <span><strong>Boundary</strong> seq {snapshot.dataThrough.serverSeq ?? "—"}</span>
-      <span><strong>Projection</strong> v{snapshot.snapshotVersion}</span>
+      <span><strong>同期位置</strong> {snapshot.dataThrough.serverSeq ?? "—"}</span>
+      <span><strong>表示版</strong> v{snapshot.snapshotVersion}</span>
     </div>
 
     {#if error}
       <p class="inline-error" role="alert">
-        Refresh failed; the previous snapshot remains visible. {error}
+        更新できませんでした。前回の進捗を表示しています。{error}
       </p>
     {/if}
 
     <div class="dashboard-grid dashboard-overview">
       <article class="dashboard-card attention-card">
-        <p class="dashboard-kicker">Attention now</p>
-        <h3>{snapshot.vocabulary.dueNow} due · {snapshot.vocabulary.new} new</h3>
+        <p class="dashboard-kicker">いま確認したいこと</p>
+        <h3>復習 {snapshot.vocabulary.dueNow} · 新規 {snapshot.vocabulary.new}</h3>
         <p>
           {snapshot.troublesomeItems.length === 0
-            ? "No recent trouble signals yet. Practice will make this view more useful."
-            : `${snapshot.troublesomeItems.length} explainable weak or slow item${snapshot.troublesomeItems.length === 1 ? "" : "s"} surfaced below.`}
+            ? "最近のつまずきはまだありません。練習を続けると、ここに手がかりが集まります。"
+            : `要確認の項目が${snapshot.troublesomeItems.length}件あります。下で理由を確認できます。`}
         </p>
       </article>
 
       <article class="dashboard-card">
-        <p class="dashboard-kicker">Last 7 days</p>
+        <p class="dashboard-kicker">過去7日間</p>
         <div class="metric-row">
           <div>
-            <strong>{snapshot.overall.last7Days.answeredAttempts}</strong><span>answers</span>
+            <strong>{snapshot.overall.last7Days.answeredAttempts}</strong><span>回答</span>
           </div>
           <div>
-            <strong>{snapshot.overall.last7Days.activeDays}</strong><span>active days</span>
+            <strong>{snapshot.overall.last7Days.activeDays}</strong><span>学習日</span>
           </div>
-          <div><strong>{snapshot.overall.last7Days.sessions}</strong><span>sessions</span></div>
+          <div><strong>{snapshot.overall.last7Days.sessions}</strong><span>セッション</span></div>
         </div>
         <p class="metric-note">
-          {snapshot.overall.last7Days.scheduledReviews} scheduled FSRS reviews · calendar days in
-          {snapshot.timezone}
+          予定された復習 {snapshot.overall.last7Days.scheduledReviews}件 · {snapshot.timezone}基準
         </p>
       </article>
     </div>
@@ -160,41 +164,41 @@
     <section aria-labelledby="mode-progress-heading">
       <div class="section-heading">
         <div>
-          <h3 id="mode-progress-heading">Learning modes</h3>
-          <p class="section-context">Last 30 days</p>
+          <h3 id="mode-progress-heading">学習モード別</h3>
+          <p class="section-context">過去30日間</p>
         </div>
-        <span>{snapshot.overall.last30Days.answeredAttempts} answers</span>
+        <span>回答 {snapshot.overall.last30Days.answeredAttempts}件</span>
       </div>
 
       <div class="dashboard-grid mode-progress-grid">
         <article class="dashboard-card mode-card-progress vocabulary-progress">
           <div class="mode-card-heading">
             <div>
-              <p>Vocabulary</p>
-              <h4>FSRS state</h4>
+              <p>単語</p>
+              <h4>カードの状態</h4>
             </div>
-            <strong>{snapshot.vocabulary.dueNow} due</strong>
+            <strong>復習 {snapshot.vocabulary.dueNow}</strong>
           </div>
           <div class="compact-metrics">
-            <span><strong>{snapshot.vocabulary.new}</strong> new</span>
-            <span><strong>{snapshot.vocabulary.learning}</strong> learning</span>
-            <span><strong>{snapshot.vocabulary.review}</strong> review</span>
+            <span><strong>{snapshot.vocabulary.new}</strong> 新規</span>
+            <span><strong>{snapshot.vocabulary.learning}</strong> 学習中</span>
+            <span><strong>{snapshot.vocabulary.review}</strong> 定着</span>
           </div>
           <p class="mode-detail">
-            {snapshot.vocabulary.recentScheduledReviews} scheduled reviews · ratings A {snapshot
-              .vocabulary.recentRatings[1]} / H {snapshot.vocabulary.recentRatings[2]} / G
-            {snapshot.vocabulary.recentRatings[3]} / E {snapshot.vocabulary.recentRatings[4]}
+            予定復習 {snapshot.vocabulary.recentScheduledReviews}件 · 評価 もう一度 {snapshot
+              .vocabulary.recentRatings[1]} / あやふや {snapshot.vocabulary.recentRatings[2]} / 次へ {snapshot
+              .vocabulary.recentRatings[3]} / すぐ出た {snapshot.vocabulary.recentRatings[4]}
           </p>
         </article>
 
         <article class="dashboard-card mode-card-progress pronunciation-progress">
           <div class="mode-card-heading">
             <div>
-              <p>Pronunciation</p>
-              <h4>{snapshot.pronunciation.recentResponses} responses</h4>
+              <p>発音</p>
+              <h4>{snapshot.pronunciation.recentResponses}回答</h4>
             </div>
             {#if snapshot.pronunciation.recentSkips > 0}
-              <strong>{snapshot.pronunciation.recentSkips} audio skips</strong>
+              <strong>音声スキップ {snapshot.pronunciation.recentSkips}</strong>
             {/if}
           </div>
           <ul class="activity-summary-list">
@@ -203,16 +207,16 @@
                 <span>{activityLabel(activity.activityType)}</span>
                 <strong>
                   {#if activity.correctness}
-                    {formatPercent(activity.correctness)} recorded correctness
+                    正答率 {formatPercent(activity.correctness)}
                   {:else if activity.selfRatings}
-                    {formatRating(activity.selfRatings.average)} self-rating
+                    自己評価 {formatRating(activity.selfRatings.average)}
                   {:else}
-                    {activity.skips} skipped
+                    スキップ {activity.skips}
                   {/if}
                 </strong>
               </li>
             {:else}
-              <li class="empty-list-item">No pronunciation responses in this window.</li>
+              <li class="empty-list-item">この期間の発音記録はありません。</li>
             {/each}
           </ul>
         </article>
@@ -220,58 +224,50 @@
         <article class="dashboard-card mode-card-progress">
           <div class="mode-card-heading">
             <div>
-              <p>Reading</p>
-              <h4>{snapshot.reading.recentSentences} sentences</h4>
+              <p>読解</p>
+              <h4>{snapshot.reading.recentSentences}例文</h4>
             </div>
             <strong>{formatRating(snapshot.reading.comprehension.average)}</strong>
           </div>
           <p class="mode-detail">
-            {snapshot.reading.recentResponses} comprehension ratings · no objective correctness is inferred
+            理解度の記録 {snapshot.reading.recentResponses}件 · 正誤は判定しません
           </p>
         </article>
 
         <article class="dashboard-card mode-card-progress">
           <div class="mode-card-heading">
             <div>
-              <p>Grammar</p>
-              <h4>{snapshot.grammar.topicCounts.comfortable} comfortable</h4>
+              <p>文法</p>
+              <h4>定着 {snapshot.grammar.topicCounts.comfortable}</h4>
             </div>
-            <strong>{snapshot.grammar.topicCounts.learning} learning</strong>
+            <strong>学習中 {snapshot.grammar.topicCounts.learning}</strong>
           </div>
           <div class="dual-metric">
-            <span
-              ><strong>{formatPercent(snapshot.grammar.correctness)}</strong> recorded correctness</span
-            >
-            <span
-              ><strong>{formatRating(snapshot.grammar.confidence.average)}</strong> confidence</span
-            >
+            <span><strong>{formatPercent(snapshot.grammar.correctness)}</strong> 正答率</span>
+            <span><strong>{formatRating(snapshot.grammar.confidence.average)}</strong> 理解度</span>
           </div>
           <p class="mode-detail">
-            {snapshot.grammar.topicCounts.introduced} introduced ·
-            {snapshot.grammar.topicCounts.notIntroduced} not introduced
+            導入済み {snapshot.grammar.topicCounts.introduced} · 未導入
+            {snapshot.grammar.topicCounts.notIntroduced}
           </p>
         </article>
 
         <article class="dashboard-card mode-card-progress reflex-progress">
           <div class="mode-card-heading">
             <div>
-              <p>Reflex</p>
-              <h4>{snapshot.reflex.recentResponses} responses</h4>
+              <p>瞬発</p>
+              <h4>{snapshot.reflex.recentResponses}回答</h4>
             </div>
-            <strong>{formatLatency(snapshot.reflex.latency.averageResponseMs)} avg</strong>
+            <strong>平均 {formatLatency(snapshot.reflex.latency.averageResponseMs)}</strong>
           </div>
           <div class="dual-metric">
+            <span><strong>{formatPercent(snapshot.reflex.correctness)}</strong> 正答率</span>
             <span
-              ><strong>{formatPercent(snapshot.reflex.correctness)}</strong> recorded correctness</span
-            >
-            <span
-              ><strong>{snapshot.reflex.latency.slowResponses}</strong> at or above
-              {snapshot.reflex.latency.slowThresholdMs / 1_000}s</span
+              ><strong>{snapshot.reflex.latency.slowResponses}</strong>
+              {snapshot.reflex.latency.slowThresholdMs / 1_000}秒以上</span
             >
           </div>
-          <p class="mode-detail">
-            Automaticity evidence only; this does not affect FSRS scheduling.
-          </p>
+          <p class="mode-detail">自動化の記録のみ。FSRSの予定には影響しません。</p>
         </article>
       </div>
     </section>
@@ -279,18 +275,17 @@
     <section aria-labelledby="trouble-heading">
       <div class="section-heading">
         <div>
-          <h3 id="trouble-heading">Weak or slow material</h3>
-          <p class="section-context">Explainable signals</p>
+          <h3 id="trouble-heading">要確認の項目</h3>
+          <p class="section-context">最近のつまずきから</p>
         </div>
-        <span>Up to 8 items</span>
+        <span>最大8件</span>
       </div>
 
       {#if snapshot.troublesomeItems.length === 0}
         <article class="dashboard-card empty-dashboard-card">
-          <h4>No trouble signals yet</h4>
+          <h4>要確認の項目はまだありません</h4>
           <p>
-            Again/Hard reviews, errors, slow Reflex responses, and low confidence or self-ratings
-            will appear here with their source preserved.
+            「もう一度」「あやふや」、誤答、遅い瞬発回答、低い理解度や自己評価が、出題元とともに表示されます。
           </p>
         </article>
       {:else}
@@ -310,7 +305,7 @@
               </div>
               <footer>
                 <span>{evidence(item)}</span>
-                <span>Last practiced {formatDate(item.lastPracticedAt, snapshot.timezone)}</span>
+                <span>最終練習 {formatDate(item.lastPracticedAt, snapshot.timezone)}</span>
               </footer>
             </article>
           {/each}
@@ -319,9 +314,7 @@
     </section>
 
     <p class="snapshot-boundary-note">
-      Activity windows use semantic occurrence time. Freshness uses canonical server ingestion
-      boundaries. Audio skips remain non-answer events, Reading has no inferred correctness, Grammar
-      keeps correctness separate from confidence, and Reflex stays outside FSRS.
+      集計は実際に練習した時刻を基準にしています。音声スキップは回答に数えず、読解は正誤を推定せず、文法は正答率と理解度を分け、瞬発はFSRSの外で記録します。
     </p>
   {/if}
 </section>

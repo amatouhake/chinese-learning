@@ -72,9 +72,12 @@ bun run dev:worker
 ```
 
 Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page offers
-Progress, Study, Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a 10-card session:
-due cards are
-selected first, followed by deterministic new cards. Reflex starts a 12-answer automaticity drill
+Progress, Study, Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a bounded session
+after the learner chooses 5, 10, or 20 cards and a direction (mixed, Chinese → Japanese meaning,
+or Japanese meaning → Chinese). Due cards are selected first, with lexical variety preferred when
+the pool allows it; the completed session keeps a local review recap. Answers are staged durably in
+IndexedDB and synchronize in the background, so cached practice does not pause on a network round
+trip. Reflex starts a 12-answer automaticity drill
 once enough introduced material can supply honest distractors. Reading starts Chinese-first, then
 reveals vocabulary, pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its
 Grammar path teaches one linked pattern, reveals the example only on request, then checks one

@@ -18,46 +18,46 @@ test.describe("reading and grammar dogfood", () => {
     page.on("response", (response) => void captureGuidedCards(response, captured));
 
     await page.goto("/#reading");
-    await expect(page.getByText("Chinese first", { exact: true })).toBeVisible({
+    await expect(page.getByText("中国語から読む", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
     await expect(page.locator(".reading-prompt h2")).toBeVisible();
     await expect(page.locator(".vocabulary-reveal")).toHaveCount(0);
-    await expect(page.getByLabel("Sentence pinyin")).toHaveCount(0);
-    await expect(page.getByLabel("Sentence meaning")).toHaveCount(0);
-    await expect(page.getByLabel("Grammar explanation")).toHaveCount(0);
+    await expect(page.getByLabel("例文のピンイン")).toHaveCount(0);
+    await expect(page.getByLabel("例文の意味")).toHaveCount(0);
+    await expect(page.getByLabel("文法の説明")).toHaveCount(0);
 
-    await page.getByRole("button", { name: /Reveal vocabulary/ }).click();
+    await page.getByRole("button", { name: /単語を表示/ }).click();
     await expect(page.locator(".vocabulary-reveal")).toBeVisible();
     await expect.poll(() => isInViewport(page, ".staged-reveal")).toBe(true);
-    await expect(page.getByLabel("Sentence pinyin")).toHaveCount(0);
-    await page.getByRole("button", { name: /Reveal pinyin/ }).click();
-    await expect(page.getByLabel("Sentence pinyin")).toBeVisible();
+    await expect(page.getByLabel("例文のピンイン")).toHaveCount(0);
+    await page.getByRole("button", { name: /ピンインを表示/ }).click();
+    await expect(page.getByLabel("例文のピンイン")).toBeVisible();
     await expect.poll(() => isInViewport(page, ".staged-reveal")).toBe(true);
-    await expect(page.getByLabel("Sentence meaning")).toHaveCount(0);
-    await page.getByRole("button", { name: /Reveal meaning/ }).click();
-    await expect(page.getByLabel("Sentence meaning")).toBeVisible();
+    await expect(page.getByLabel("例文の意味")).toHaveCount(0);
+    await page.getByRole("button", { name: /意味を表示/ }).click();
+    await expect(page.getByLabel("例文の意味")).toBeVisible();
     await expect.poll(() => isInViewport(page, ".staged-reveal")).toBe(true);
-    await expect(page.getByLabel("Grammar explanation")).toHaveCount(0);
-    await page.getByRole("button", { name: /Reveal grammar/ }).click();
-    await expect(page.getByLabel("Grammar explanation")).toBeVisible();
+    await expect(page.getByLabel("文法の説明")).toHaveCount(0);
+    await page.getByRole("button", { name: /文法を表示/ }).click();
+    await expect(page.getByLabel("文法の説明")).toBeVisible();
     await expect(page.locator(".grammar-reveal code")).toBeVisible();
     await expect.poll(() => isInViewport(page, ".reading-card .rating-area")).toBe(true);
     await expect.poll(() => captured.reading).not.toBeNull();
     expect(
       captured.reading?.vocabulary.every((hint) => hint.readingId.startsWith("reading:")),
     ).toBe(true);
-    await page.getByRole("button", { name: /Mostly/ }).click();
+    await page.getByRole("button", { name: /だいたい/ }).click();
     await expect(page.locator(".reading-prompt h2")).toBeVisible();
 
-    await page.getByRole("button", { name: "Grammar path" }).click();
-    await expect(page.getByRole("button", { name: "Practice this pattern" })).toBeVisible({
+    await page.getByRole("button", { name: "文法コース", exact: true }).click();
+    await expect(page.getByRole("button", { name: "このパターンを練習する" })).toBeVisible({
       timeout: 20_000,
     });
-    await page.getByRole("button", { name: "Reveal example pinyin & meaning" }).click();
+    await page.getByRole("button", { name: "例文のピンインと意味を表示" }).click();
     await expect(page.locator(".grammar-example .example-pinyin")).toBeVisible();
-    await page.getByRole("button", { name: "Practice this pattern" }).click();
-    await expect(page.getByText("Choose the word that completes the sentence")).toBeVisible();
+    await page.getByRole("button", { name: "このパターンを練習する" }).click();
+    await expect(page.getByText("文を完成させる語を選ぶ")).toBeVisible();
     await expect.poll(() => captured.grammar).not.toBeNull();
     const grammarAnswer = captured.grammar?.topic.practice.choices.find(
       ({ id }) => id === captured.grammar?.topic.practice.answerChoiceId,
@@ -66,21 +66,16 @@ test.describe("reading and grammar dogfood", () => {
 
     await context.setOffline(true);
     await page.getByRole("button", { name: grammarAnswer.label, exact: true }).click();
-    await expect(page.getByText("Correct", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: /With help/ }).click();
-    await expect(page.getByRole("button", { name: "Practice this pattern" })).toBeVisible();
+    await expect(page.getByText("正解", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /手がかりあり/ }).click();
+    await expect(page.getByRole("button", { name: "このパターンを練習する" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Read sentences" }).click();
+    await page.getByRole("button", { name: "例文を読む" }).click();
     await expect(page.locator(".reading-prompt h2")).toBeVisible();
-    for (const label of [
-      "Reveal vocabulary",
-      "Reveal pinyin",
-      "Reveal meaning",
-      "Reveal grammar",
-    ]) {
+    for (const label of ["単語を表示", "ピンインを表示", "意味を表示", "文法を表示"]) {
       await page.getByRole("button", { name: new RegExp(label) }).click();
     }
-    await page.getByRole("button", { name: /With help/ }).click();
+    await page.getByRole("button", { name: /手がかりあり/ }).click();
     await expect.poll(() => outboxCount(page)).toBe(2);
 
     await page.reload();
@@ -98,7 +93,7 @@ test.describe("reading and grammar dogfood", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
-    await expect(page.locator(".sync-status")).toContainText("synced");
+    await expect(page.locator(".sync-status")).toContainText("同期済み");
     expect(
       consoleErrors.filter((message) => !message.includes("net::ERR_INTERNET_DISCONNECTED")),
     ).toEqual([]);
@@ -112,8 +107,8 @@ test.describe("reading and grammar dogfood", () => {
     const topics: GrammarCard[] = [];
     page.on("response", (response) => void collectGrammarCards(response, topics));
     await page.goto("/#reading");
-    await page.getByRole("button", { name: "Grammar path" }).click();
-    await expect(page.getByRole("button", { name: "Practice this pattern" })).toBeVisible({
+    await page.getByRole("button", { name: "文法コース", exact: true }).click();
+    await expect(page.getByRole("button", { name: "このパターンを練習する" })).toBeVisible({
       timeout: 20_000,
     });
     await expect.poll(() => topics.length).toBe(5);
@@ -148,24 +143,19 @@ test.describe("reading and grammar dogfood", () => {
 
     await page.goto("/#reading");
     await expect(page.locator(".reading-prompt h2")).toBeVisible({ timeout: 20_000 });
-    await page.getByRole("button", { name: "Grammar path" }).click();
-    await expect(page.getByRole("button", { name: "Practice this pattern" })).toBeVisible();
+    await page.getByRole("button", { name: "文法コース", exact: true }).click();
+    await expect(page.getByRole("button", { name: "このパターンを練習する" })).toBeVisible();
     expect(requestedTopics).toContain(null);
 
-    await page.getByRole("button", { name: "Read sentences" }).click();
-    for (const label of [
-      "Reveal vocabulary",
-      "Reveal pinyin",
-      "Reveal meaning",
-      "Reveal grammar",
-    ]) {
+    await page.getByRole("button", { name: "例文を読む" }).click();
+    for (const label of ["単語を表示", "ピンインを表示", "意味を表示", "文法を表示"]) {
       await page.getByRole("button", { name: new RegExp(label) }).click();
     }
     await expect.poll(() => captured.reading).not.toBeNull();
     const connectedTopic = captured.reading?.grammarTopics[0];
     if (!connectedTopic) throw new Error("captured reading card has no connected grammar topic");
 
-    await page.getByRole("button", { name: "Open the connected grammar path" }).click();
+    await page.getByRole("button", { name: "関連する文法コースを開く" }).click();
     await expect(page.locator(".grammar-heading h2")).toHaveText(connectedTopic.title);
     await expect.poll(() => requestedTopics.at(-1)).toBe(connectedTopic.id);
   });

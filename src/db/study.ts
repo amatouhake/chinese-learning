@@ -4,6 +4,7 @@ import type {
   StudyCard,
   StudyMeaning,
   StudyNextResult,
+  StudyDirection,
   StudySessionView,
 } from "../domain/types";
 import type { CreateStudySessionInput } from "../domain/study-validation";
@@ -18,6 +19,7 @@ interface StudySessionRow {
 
 interface StudyCardRow {
   card_id: string;
+  lexeme_id: string;
   activity_type: StudyCard["activityType"];
   due_at: number;
   reps: number;
@@ -46,6 +48,7 @@ interface SchedulerRow {
 
 interface SessionContext {
   maxCards: number;
+  direction: StudyDirection;
 }
 
 export interface StudyServiceOptions {
@@ -67,7 +70,10 @@ export async function createStudySession(
 
   const now = serverTime(options);
   const changeId = `study-session:start:${input.sessionId}`;
-  const contextJson = JSON.stringify({ maxCards: input.maxCards } satisfies SessionContext);
+  const contextJson = JSON.stringify({
+    maxCards: input.maxCards,
+    direction: input.direction ?? "mixed",
+  } satisfies SessionContext);
 
   try {
     await db.batch([
@@ -120,9 +126,15 @@ export async function getNextStudyCard(
   }
 
   const now = serverTime(options);
-  const due = await selectStudyCard(db, sessionId, now, "due");
-  const selected = due ?? (await selectStudyCard(db, sessionId, now, "new"));
-  if (!selected) {
+  const selection = await selectPreferredStudyCard(
+    db,
+    sessionId,
+    now,
+    sessionView.direction,
+    [],
+    await recentStudyLexemeIds(db, sessionId),
+  );
+  if (!selection) {
     await completeStudySession(db, session, sessionView, { now: () => now });
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
@@ -136,7 +148,7 @@ export async function getNextStudyCard(
   return {
     status: "card",
     session: sessionView,
-    card: mapStudyCard(selected, due ? "due" : "new", schedulerConfigId),
+    card: mapStudyCard(selection.card, selection.source, schedulerConfigId),
   };
 }
 
@@ -164,13 +176,24 @@ export async function getOfflineStudyPack(
   const schedulerConfigId = await currentSchedulerId(db);
   const cards: StudyCard[] = [];
   const excludedCardIds: string[] = [];
+  let recentLexemeIds = await recentStudyLexemeIds(db, sessionId);
   const remaining = sessionView.maxCards - sessionView.reviewedCards;
   for (let index = 0; index < remaining; index += 1) {
-    const due = await selectStudyCard(db, sessionId, now, "due", excludedCardIds);
-    const selected = due ?? (await selectStudyCard(db, sessionId, now, "new", excludedCardIds));
-    if (!selected) break;
-    excludedCardIds.push(selected.card_id);
-    cards.push(mapStudyCard(selected, due ? "due" : "new", schedulerConfigId));
+    const selection = await selectPreferredStudyCard(
+      db,
+      sessionId,
+      now,
+      sessionView.direction,
+      excludedCardIds,
+      recentLexemeIds,
+    );
+    if (!selection) break;
+    excludedCardIds.push(selection.card.card_id);
+    recentLexemeIds = [
+      selection.card.lexeme_id,
+      ...recentLexemeIds.filter((id) => id !== selection.card.lexeme_id),
+    ].slice(0, 2);
+    cards.push(mapStudyCard(selection.card, selection.source, schedulerConfigId));
   }
 
   if (cards.length === 0) {
@@ -191,16 +214,27 @@ async function selectStudyCard(
   now: number,
   source: "due" | "new",
   excludedCardIds: readonly string[] = [],
+  direction: StudyDirection = "mixed",
+  avoidedLexemeIds: readonly string[] = [],
 ): Promise<StudyCardRow | null> {
   const schedulingPredicate = source === "due" ? "cs.reps > 0 AND cs.due_at <= ?" : "cs.reps = 0";
+  const directionPredicate =
+    direction === "mixed"
+      ? "AND c.activity_type IN ('hanzi_to_meaning', 'meaning_to_hanzi')"
+      : "AND c.activity_type = ?";
   const exclusionPredicate =
     excludedCardIds.length === 0
       ? ""
       : `AND c.id NOT IN (${excludedCardIds.map(() => "?").join(", ")})`;
+  const avoidedLexemePredicate =
+    avoidedLexemeIds.length === 0
+      ? ""
+      : `AND l.id NOT IN (${avoidedLexemeIds.map(() => "?").join(", ")})`;
   return db
     .prepare(
       `SELECT
         c.id AS card_id,
+        l.id AS lexeme_id,
         c.activity_type,
         cs.due_at,
         cs.reps,
@@ -329,7 +363,7 @@ async function selectStudyCard(
        JOIN card_state cs ON cs.card_id = c.id
        JOIN lexemes l ON l.id = c.lexeme_id
        WHERE c.subject_type = 'lexeme'
-         AND c.activity_type IN ('hanzi_to_meaning', 'meaning_to_hanzi')
+         ${directionPredicate}
          AND c.scheduler_eligible = 1
          AND c.retired_at IS NULL
          AND ${schedulingPredicate}
@@ -338,6 +372,7 @@ async function selectStudyCard(
            WHERE a.study_session_id = ? AND a.card_id = c.id
          )
          ${exclusionPredicate}
+         ${avoidedLexemePredicate}
        ORDER BY
          ${source === "due" ? "cs.due_at," : ""}
          COALESCE(hsk_level, 2147483647),
@@ -347,8 +382,67 @@ async function selectStudyCard(
          c.id
        LIMIT 1`,
     )
-    .bind(...(source === "due" ? [now, sessionId] : [sessionId]), ...excludedCardIds)
+    .bind(
+      ...(direction === "mixed" ? [] : [direction]),
+      ...(source === "due" ? [now] : []),
+      sessionId,
+      ...excludedCardIds,
+      ...avoidedLexemeIds,
+    )
     .first<StudyCardRow>();
+}
+
+async function selectPreferredStudyCard(
+  db: D1Database,
+  sessionId: string,
+  now: number,
+  direction: StudyDirection,
+  excludedCardIds: readonly string[],
+  avoidedLexemeIds: readonly string[],
+): Promise<{ card: StudyCardRow; source: "due" | "new" } | null> {
+  const dueAwayFromRecent = await selectStudyCard(
+    db,
+    sessionId,
+    now,
+    "due",
+    excludedCardIds,
+    direction,
+    avoidedLexemeIds,
+  );
+  if (dueAwayFromRecent) return { card: dueAwayFromRecent, source: "due" };
+
+  // If the only due card is the same lexeme just shown, use a different new
+  // card when one exists. The due sibling remains eligible for the next slot.
+  const newAwayFromRecent = await selectStudyCard(
+    db,
+    sessionId,
+    now,
+    "new",
+    excludedCardIds,
+    direction,
+    avoidedLexemeIds,
+  );
+  if (newAwayFromRecent) return { card: newAwayFromRecent, source: "new" };
+
+  const dueFallback = await selectStudyCard(db, sessionId, now, "due", excludedCardIds, direction);
+  if (dueFallback) return { card: dueFallback, source: "due" };
+  const newFallback = await selectStudyCard(db, sessionId, now, "new", excludedCardIds, direction);
+  return newFallback ? { card: newFallback, source: "new" } : null;
+}
+
+async function recentStudyLexemeIds(db: D1Database, sessionId: string): Promise<string[]> {
+  const result = await db
+    .prepare(
+      `SELECT c.lexeme_id
+       FROM attempts a
+       JOIN cards c ON c.id = a.card_id
+       WHERE a.study_session_id = ?
+       ORDER BY a.occurred_at DESC, a.device_id DESC, a.device_seq DESC
+       LIMIT 2`,
+    )
+    .bind(sessionId)
+    .all<{ lexeme_id: string }>();
+  return result.results.map(({ lexeme_id }) => lexeme_id);
 }
 
 async function currentSchedulerId(db: D1Database): Promise<string> {
@@ -410,6 +504,7 @@ async function mapSession(db: D1Database, row: StudySessionRow): Promise<StudySe
     id: row.id,
     deviceId: row.device_id,
     maxCards: context.maxCards,
+    direction: context.direction,
     reviewedCards: reviewed?.count ?? 0,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -541,7 +636,19 @@ function parseSessionContext(json: string): SessionContext {
   ) {
     throw new Error("persisted study session context is invalid");
   }
-  return { maxCards: (value as { maxCards: number }).maxCards };
+  const direction = (value as Record<string, unknown>).direction;
+  if (
+    direction !== undefined &&
+    direction !== "mixed" &&
+    direction !== "hanzi_to_meaning" &&
+    direction !== "meaning_to_hanzi"
+  ) {
+    throw new Error("persisted study session direction is invalid");
+  }
+  return {
+    maxCards: (value as { maxCards: number }).maxCards,
+    direction: (direction as StudyDirection | undefined) ?? "mixed",
+  };
 }
 
 function serverTime(options: StudyServiceOptions): number {

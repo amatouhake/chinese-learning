@@ -10,8 +10,10 @@ web
 
 The primary user is a beginner-to-intermediate Chinese learner using a private,
 installable PWA for a short daily practice ritual, usually on a phone and sometimes
-on a desktop keyboard. The user wants to answer quickly, notice mistakes immediately,
-and return to difficult material without managing a complex study system.
+on a desktop keyboard. The learner-facing interface is Japanese-first; Chinese is the
+material being learned, while English may remain only in content provenance or a safe
+fallback meaning. The user wants to answer quickly, notice mistakes immediately, and
+return to difficult material without managing a complex study system.
 
 ## Product Purpose
 
@@ -33,8 +35,9 @@ converges deterministically with canonical D1 state.
 ## Operating Context
 
 Daily use is a short sequence of touch-first drills on a common phone viewport, with
-keyboard answers useful on desktop. Vocabulary sessions prioritize due cards and use
-FSRS ratings; Reflex is a fast four-choice retrieval drill over introduced material;
+keyboard answers useful on desktop. The compact Japanese-first shell names the five
+surfaces 単語, 瞬発, 発音, 読解, and 進捗. Vocabulary sessions prioritize due cards and
+use FSRS ratings; Reflex is a fast four-choice retrieval drill over introduced material;
 pronunciation, reading, and grammar are ordinary practice. The learner may lose the
 network, reload, or reopen the installed PWA between answers. Progress is a longer-form
 read-only view rather than part of the active answering surface.
