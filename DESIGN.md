@@ -124,6 +124,15 @@ surface changes, and a small number of highly legible states to make the next de
 obvious on a phone. The replacement world intentionally leaves the incumbent beige/green
 shell behind. It has no dependency on remote fonts, imagery, or network-only decoration.
 
+### Canonical App Mark
+
+The canonical mark is a local vector proof seal: a midnight-ink field frames a warm-paper
+square, a large vermilion `字` construction makes the Chinese-learning purpose legible at
+launcher scale, and two small cyan corner marks carry the reading cue into the identity.
+The full mark is designed inside the Android maskable safe zone. The header uses the same
+`/icon.svg`; the favicon, Apple touch icon, and manifest PNGs are raster derivatives of that
+source, so the installed app and the daily shell share one identity.
+
 **Key Characteristics:**
 
 - Midnight ink shell with a single warm paper learning stage.

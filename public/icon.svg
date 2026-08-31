@@ -1,6 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Chinese Learning">
-  <rect width="512" height="512" fill="#183b2f"/>
-  <circle cx="256" cy="256" r="176" fill="#efe9dc"/>
-  <path d="M157 181h198v34H157zm21 64h156v34H178zm-21 64h198v34H157z" fill="#9a4935"/>
-  <path d="M239 151h34v210h-34z" fill="#1f654e"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">中文学习</title>
+  <rect width="512" height="512" fill="#0d1016"/>
+  <rect x="56" y="56" width="400" height="400" rx="64" fill="#151a22" stroke="#4a5665" stroke-width="8"/>
+  <rect x="96" y="96" width="320" height="320" rx="40" fill="#f6f0e5"/>
+  <path d="M156 160h200M190 126h132M256 126v34M160 226h192M256 226v150M204 294h104M184 376h144" fill="none" stroke="#c7483b" stroke-linecap="round" stroke-linejoin="round" stroke-width="24"/>
+  <path d="M120 132v-12h12M392 380v12h-12" fill="none" stroke="#79cbd6" stroke-linecap="round" stroke-width="10"/>
 </svg>

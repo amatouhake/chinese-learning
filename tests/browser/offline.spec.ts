@@ -21,6 +21,37 @@ test.describe("offline PWA foundation", () => {
     await expect(page.getByRole("button", { name: "音声オン" })).toBeVisible();
   });
 
+  test("uses one Night Proof Desk mark across the header and install assets", async ({ page }) => {
+    await page.goto("/#study");
+    await expect(page.locator(".brand-seal")).toHaveAttribute("src", "/icon.svg");
+
+    const assets = await page.evaluate(async () => {
+      const sources = ["/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
+      return await Promise.all(
+        sources.map(
+          (src) =>
+            new Promise<{ src: string; width: number; height: number }>((resolve, reject) => {
+              const image = new Image();
+              image.onload = () =>
+                resolve({ src, width: image.naturalWidth, height: image.naturalHeight });
+              image.onerror = () => reject(new Error(`could not load ${src}`));
+              image.src = src;
+            }),
+        ),
+      );
+    });
+    expect(assets).toEqual([
+      { src: "/icon-192.png", width: 192, height: 192 },
+      { src: "/icon-512.png", width: 512, height: 512 },
+      { src: "/icon-maskable-512.png", width: 512, height: 512 },
+    ]);
+
+    const svg = await page.evaluate(async () => await (await fetch("/icon.svg")).text());
+    expect(svg).toContain("#0d1016");
+    expect(svg).toContain("#c7483b");
+    expect(svg).toContain("#79cbd6");
+  });
+
   test("queues across offline reload, partially retries, and converges with workerd/D1", async ({
     page,
     context,
@@ -38,6 +69,11 @@ test.describe("offline PWA foundation", () => {
       icons: expect.arrayContaining([
         expect.objectContaining({ src: "/icon-192.png", sizes: "192x192" }),
         expect.objectContaining({ src: "/icon-512.png", sizes: "512x512" }),
+        expect.objectContaining({
+          src: "/icon-maskable-512.png",
+          sizes: "512x512",
+          purpose: "maskable",
+        }),
       ]),
     });
     const shellCache = await inspectShellCache(page);
@@ -702,6 +738,7 @@ function inspectShellCache(page: Page): Promise<{ name: string | null; missing: 
       "/icon.svg",
       "/icon-192.png",
       "/icon-512.png",
+      "/icon-maskable-512.png",
     ]);
     for (const match of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
       const path = match[1];

@@ -217,6 +217,35 @@ export class OfflineLearningStore {
     return this.clearActiveSession("study", sessionId);
   }
 
+  dismissStudyResult(sessionId: string): Promise<BrowserOfflineState> {
+    if (sessionId.trim().length === 0) throw new Error("study result ID must be non-empty");
+    return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
+      const transaction = this.db.transaction(META_STORE, "readwrite");
+      const metaStore = transaction.objectStore(META_STORE);
+      const latest = await requiredMeta(metaStore);
+      const dismissesCompletedResult = latest.lastCompletedStudySessionId === sessionId;
+      const dismissesExhaustedActiveSession = latest.activeSessionId === sessionId;
+      if (!dismissesCompletedResult && !dismissesExhaustedActiveSession) {
+        await transactionDone(transaction);
+        return this.snapshot();
+      }
+      const next: PersistedMeta = {
+        ...latest,
+        revision: latest.revision + 1,
+        activeSessionId: dismissesExhaustedActiveSession ? null : latest.activeSessionId,
+        lastCompletedStudySessionId: dismissesCompletedResult
+          ? null
+          : latest.lastCompletedStudySessionId,
+      };
+      metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
+      await transactionDone(transaction);
+      persistIdentityMirror(this.storage, next);
+      return this.snapshot();
+    });
+  }
+
   clearActiveReflexSession(sessionId: string): Promise<BrowserOfflineState> {
     return this.clearActiveSession("reflex", sessionId);
   }

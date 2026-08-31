@@ -139,15 +139,11 @@ main {
 }
 
 .brand-seal {
-  display: inline-grid;
+  display: block;
   width: 2.1rem;
   height: 2.1rem;
-  border: 1px solid var(--red);
-  color: var(--red);
-  place-content: center;
-  font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", "Noto Serif SC", serif;
-  font-size: 1.18rem;
-  line-height: 1;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .surface-nav {
@@ -1269,10 +1265,8 @@ kbd {
 .study-review-list {
   display: grid;
   gap: 0.45rem;
-  max-height: 20rem;
   margin: 0;
   padding: 0;
-  overflow: auto;
   list-style: none;
 }
 

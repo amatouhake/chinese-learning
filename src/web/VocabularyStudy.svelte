@@ -132,6 +132,19 @@
     }
   }
 
+  async function changeStudySettings(): Promise<void> {
+    if (!store || !session) {
+      phase = "choose";
+      return;
+    }
+    try {
+      browserState = await store.dismissStudyResult(session.id);
+      phase = "choose";
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   async function ensureSession(
     sessionId: string,
     deviceId: string,
@@ -520,7 +533,9 @@
             (session?.maxCards ?? preferences.size) as StudySessionSize,
           )}>同じ設定でもう一度</button
       >
-      <button class="secondary-button" onclick={() => (phase = "choose")}>設定を変える</button>
+      <button class="secondary-button" onclick={() => void changeStudySettings()}
+        >設定を変える</button
+      >
     </div>
   </section>
 {:else if card && (phase === "prompt" || phase === "revealed" || phase === "advancing")}

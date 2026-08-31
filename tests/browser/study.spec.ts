@@ -82,6 +82,37 @@ test.describe("単語練習の毎日使う操作", () => {
     await expect(page.getByRole("heading", { name: "単語練習を完了" })).toBeVisible();
     await expect(page.locator(".study-review-list li")).toHaveCount(5);
     await expect(page.getByText("5枚を確認しました")).toBeVisible();
+
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      const resultList = page.locator(".study-review-list");
+      await expect(resultList).toBeVisible();
+      await expect
+        .poll(() =>
+          resultList.evaluate((element) => {
+            const style = getComputedStyle(element);
+            return { overflowY: style.overflowY, maxHeight: style.maxHeight };
+          }),
+        )
+        .toEqual({ overflowY: "visible", maxHeight: "none" });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await expect(page.getByRole("button", { name: "設定を変える" })).toBeVisible();
+    }
+
+    await page.getByRole("button", { name: "設定を変える" }).click();
+    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+
+    await context.setOffline(false);
+    await page.getByRole("button", { name: /練習を始める/ }).click();
+    await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible({
+      timeout: 20_000,
+    });
   });
 
   test("ネットワーク同期が遅くても、耐久化後は保存画面を挟まず進む", async ({ page }) => {

@@ -106,7 +106,7 @@
 <main>
   <header class="global-header">
     <a class="brand-lockup" href="#study" onclick={() => selectSurface("study")}>
-      <span class="brand-seal" aria-hidden="true">字</span>
+      <img class="brand-seal" src="/icon.svg" alt="" aria-hidden="true" />
       <span>
         <h1>中文学习</h1>
         <small>毎日の練習</small>
