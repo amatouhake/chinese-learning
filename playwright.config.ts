@@ -12,7 +12,9 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "bun run dev:worker -- --ip 127.0.0.1 --port 8787",
+    command:
+      "bun run dev:worker -- --ip 127.0.0.1 --port 8787 " +
+      "--persist-to .generated/browser-test/d1 --env-file .dev.vars.example",
     url: "http://127.0.0.1:8787/api/health",
     reuseExistingServer: false,
     timeout: 120_000,

@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
+import { expect, test, type Response } from "@playwright/test";
 
 interface ObservedCard {
   activityType: string;

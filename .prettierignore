@@ -1,6 +1,9 @@
-dist
+.generated
 .wrangler
+dist
 node_modules
+playwright-report
+test-results
 worker-configuration.d.ts
 bun.lock
 coverage

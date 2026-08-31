@@ -314,10 +314,10 @@ function parseArguments(arguments_: string[]): {
     if (values.has(key!)) throw usageError(`duplicate option: ${key}`);
     values.set(key!, value);
   }
-  const vocabularyRoot = values.get("--vocabulary-root");
-  const v1Root = values.get("--v1-root");
-  const audioRoot = values.get("--audio-root");
-  if (!vocabularyRoot || !v1Root || !audioRoot) throw usageError();
+  const vocabularyRoot =
+    values.get("--vocabulary-root") ?? join(tmpdir(), "chinese-learning-complete-hsk-vocabulary");
+  const v1Root = values.get("--v1-root") ?? join(tmpdir(), "chinese-learning-v1-source");
+  const audioRoot = values.get("--audio-root") ?? join(tmpdir(), "chinese-learning-audio-cmn");
   return { vocabularyRoot, v1Root, audioRoot };
 }
 
@@ -346,6 +346,7 @@ function usageError(reason?: string): Error {
   return new Error(
     (reason ? `${reason}\n` : "") +
       "Usage: bun run verify:pronunciation -- --vocabulary-root <pinned checkout> " +
-      "--v1-root <pinned checkout> --audio-root <pinned checkout>",
+      "--v1-root <pinned checkout> --audio-root <pinned checkout> " +
+      "(all options default to the documented temporary paths)",
   );
 }

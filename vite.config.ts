@@ -13,7 +13,9 @@ export default defineConfig({
       name: "copy-staged-local-media",
       apply: "build",
       closeBundle() {
-        const staged = resolve(".generated/public");
+        const staged = resolve(
+          process.env.CHINESE_LEARNING_STAGED_MEDIA_ROOT ?? ".generated/public",
+        );
         if (existsSync(staged)) cpSync(staged, resolve("dist"), { recursive: true });
 
         const shellFiles = [

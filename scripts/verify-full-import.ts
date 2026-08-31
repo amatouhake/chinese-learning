@@ -223,9 +223,9 @@ function parseArguments(arguments_: string[]): { vocabularyRoot: string; v1Root:
     if (values.has(key)) throw usageError(`duplicate option: ${key}`);
     values.set(key, value);
   }
-  const vocabularyRoot = values.get("--vocabulary-root");
-  const v1Root = values.get("--v1-root");
-  if (!vocabularyRoot || !v1Root) throw usageError();
+  const vocabularyRoot =
+    values.get("--vocabulary-root") ?? join(tmpdir(), "chinese-learning-complete-hsk-vocabulary");
+  const v1Root = values.get("--v1-root") ?? join(tmpdir(), "chinese-learning-v1-source");
   return { vocabularyRoot, v1Root };
 }
 
@@ -257,6 +257,6 @@ function usageError(reason?: string): Error {
   return new Error(
     (reason ? `${reason}\n` : "") +
       "Usage: bun run verify:full-import -- --vocabulary-root <pinned checkout> " +
-      "--v1-root <pinned checkout>",
+      "--v1-root <pinned checkout> (both options default to the documented temporary paths)",
   );
 }
