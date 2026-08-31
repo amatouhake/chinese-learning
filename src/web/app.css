@@ -184,6 +184,28 @@ main {
   background: var(--paper);
 }
 
+.mobile-mode-switcher {
+  display: none;
+  min-width: 0;
+}
+
+.mobile-mode-switcher select {
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0.35rem 1.8rem 0.35rem 0.7rem;
+  border: 1px solid var(--ink-line-bright);
+  border-radius: 0.55rem;
+  color: var(--paper);
+  background-color: var(--ink-raised);
+  color-scheme: dark;
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.mobile-mode-switcher select:hover {
+  border-color: var(--cyan);
+}
+
 .surface-nav svg,
 .sound-toggle svg {
   width: 1rem;
@@ -1419,6 +1441,12 @@ code {
   grid-template-rows: auto auto;
 }
 
+[data-reveal-stage],
+.staged-reveal,
+.reading-card .rating-area {
+  scroll-margin-block: 0.75rem;
+}
+
 .grammar-heading {
   padding: 1rem 0 0.8rem;
   border-bottom: 1px solid var(--paper-muted);
@@ -1906,33 +1934,60 @@ code {
   }
 
   .surface-header {
-    min-height: 3rem;
+    min-height: 2.3rem;
+    margin-top: 0.1rem;
   }
 
   .global-header {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 0.55rem;
     padding: 0.65rem 0 0.55rem;
   }
 
-  .surface-nav {
-    grid-column: 1 / -1;
-    width: 100%;
-  }
-
-  .surface-nav button {
-    flex: 1 1 0;
+  .brand-lockup {
     min-width: 0;
-    padding-inline: 0.2rem;
-    font-size: 0.61rem;
   }
 
-  .surface-nav svg {
+  .mobile-mode-switcher {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .mobile-mode-switcher select {
+    width: min(100%, 7.2rem);
+  }
+
+  .surface-nav {
     display: none;
   }
 
   .sound-toggle {
-    min-width: 4.3rem;
+    width: 2.75rem;
+    min-width: 2.75rem;
+    padding-inline: 0;
+  }
+
+  .sound-toggle span {
+    display: none;
+  }
+
+  .surface-header .surface-title,
+  .surface-heading .surface-title {
+    display: none;
+  }
+
+  .surface-heading {
+    min-height: 2.3rem;
+    margin-top: 0.1rem;
+  }
+
+  .surface-heading > .sync-status {
+    max-width: 100%;
+    margin-left: auto;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .surface-heading > div > p:last-child {
@@ -1959,8 +2014,10 @@ code {
     height: 1.9rem;
   }
 
-  .surface-nav button {
-    font-size: 0.57rem;
+  .mobile-mode-switcher select {
+    width: min(100%, 6.6rem);
+    padding-inline: 0.55rem 1.65rem;
+    font-size: 0.59rem;
   }
 
   .study-card {

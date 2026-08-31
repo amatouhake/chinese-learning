@@ -199,7 +199,8 @@ sans for what the interface is asking the learner to do.
 The shell uses a sticky dark header and a centered learning rail. The full application
 is capped at `78rem`; active learning surfaces are capped at `54rem` so a phone and a
 desktop both keep a clear focal stage. Desktop navigation occupies one header row. At
-phone widths it becomes a compact brand row plus a full-width five-mode rail.
+phone widths it becomes a compact brand row with a five-mode selector and an icon-only
+sound control; the active surface header keeps only useful progress or sync context.
 
 Active Study and Reflex cards use a warm-paper stage with a stable internal rhythm:
 metadata, prompt, answer rail, and progression. Phone choices are two columns with
@@ -273,11 +274,14 @@ frames. Avoid pills except for compact queue/status badges.
 
 ### Navigation
 
-- **Style:** A compact dark rail with inline SVG line icons on desktop and text-only
-  labels on narrow phones. The active mode becomes warm paper with ink text.
-- **Behavior:** Navigation is available between sessions; during a card, it stays quiet
-  and does not compete with the answer rail. Sound preference lives in the same header
-  as a persistent, labeled toggle.
+- **Style:** A compact dark rail with inline SVG line icons on desktop. Narrow phones use
+  a native, touch-sized five-mode selector whose current label remains visible; the active
+  mode is never hidden behind an unlabeled icon.
+- **Behavior:** Navigation is available between sessions and remains quiet during a card.
+  The surface header does not repeat the selected mode on a phone when the global selector
+  already identifies it. Sound preference lives in the same header as a persistent toggle:
+  its mobile treatment is icon-only visually but retains its accessible name, title, and
+  pressed state.
 
 ### Proof Feedback Rail
 

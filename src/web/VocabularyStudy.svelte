@@ -26,6 +26,7 @@
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
   let audioMessage = "";
+  let autoplayedCardKey: string | null = null;
 
   onMount(() => void initializeStudy());
 
@@ -113,6 +114,9 @@
     if (cachedCard) {
       promptStartedAt = performance.now();
       phase = "prompt";
+      if (cachedCard.activityType === "hanzi_to_meaning") {
+        void autoplayCardAudio();
+      }
       return;
     }
     if (cachedSession.endedAt !== null) {
@@ -213,7 +217,9 @@
     if (phase !== "prompt") return;
     prepareSound();
     phase = "revealed";
-    void playCardAudio();
+    if (card?.activityType === "meaning_to_hanzi") {
+      void autoplayCardAudio();
+    }
   }
 
   async function playCardAudio(): Promise<void> {
@@ -224,6 +230,14 @@
         ? "Pronunciation is not cached on this device."
         : "Audio unavailable.";
     }
+  }
+
+  async function autoplayCardAudio(): Promise<void> {
+    if (!card?.media || !getSoundEnabled()) return;
+    const cardKey = `${browserState?.activeSessionId ?? "study"}:${session?.reviewedCards ?? 0}:${card.cardId}`;
+    if (autoplayedCardKey === cardKey) return;
+    autoplayedCardKey = cardKey;
+    await playCardAudio();
   }
 
   function showError(error: unknown): void {
@@ -372,7 +386,9 @@
           {/each}
         </div>
       </div>
-      {#if audioMessage}<p class="audio-note" role="status">{audioMessage}</p>{/if}
+      <p class="audio-note" class:visible={Boolean(audioMessage)} role="status">
+        {audioMessage}
+      </p>
     {/if}
   </section>
 {/if}

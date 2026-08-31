@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
 
   import type { GrammarCard, GuidedSessionView, ReadingCard } from "../domain/types";
   import { ApiError, postJson } from "./api";
@@ -186,9 +186,40 @@
     grammarPhase = cachedSession.completedItems === 0 ? "empty" : "completed";
   }
 
-  function revealNext(): void {
+  async function revealNext(): Promise<void> {
     if (readingPhase !== "prompt" || revealStage >= 4) return;
     revealStage += 1;
+    await tick();
+    followReveal(revealStage);
+  }
+
+  function followReveal(stage: number): void {
+    const revealedSection = document.querySelector<HTMLElement>(
+      `.reading-card [data-reveal-stage="${stage}"]`,
+    );
+    const nextAction = document.querySelector<HTMLElement>(
+      stage === 4 ? ".reading-card .rating-area" : ".reading-card .staged-reveal",
+    );
+    if (nextAction && !isComfortablyVisible(nextAction)) {
+      nextAction.scrollIntoView({ behavior: revealScrollBehavior(), block: "nearest" });
+      return;
+    }
+    if (revealedSection && !isComfortablyVisible(revealedSection)) {
+      revealedSection.scrollIntoView({ behavior: revealScrollBehavior(), block: "nearest" });
+    }
+  }
+
+  function isComfortablyVisible(element: HTMLElement): boolean {
+    const bounds = element.getBoundingClientRect();
+    const margin = 12;
+    return bounds.top >= margin && bounds.bottom <= globalThis.innerHeight - margin;
+  }
+
+  function revealScrollBehavior(): ScrollBehavior {
+    const reducedMotion =
+      typeof globalThis.matchMedia === "function" &&
+      globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return reducedMotion ? "auto" : "smooth";
   }
 
   async function saveReading(selfRating: number): Promise<void> {
@@ -442,7 +473,11 @@
     </div>
 
     {#if revealStage >= 1}
-      <section class="reveal-panel vocabulary-reveal" aria-label="Vocabulary hints">
+      <section
+        class="reveal-panel vocabulary-reveal"
+        data-reveal-stage="1"
+        aria-label="Vocabulary hints"
+      >
         <p class="reveal-kicker">1 · Vocabulary / readings</p>
         <p class="reading-note">Dictionary readings; the sentence pinyin follows its context.</p>
         <div class="vocabulary-list">
@@ -457,20 +492,24 @@
       </section>
     {/if}
     {#if revealStage >= 2}
-      <section class="reveal-panel" aria-label="Sentence pinyin">
+      <section class="reveal-panel" data-reveal-stage="2" aria-label="Sentence pinyin">
         <p class="reveal-kicker">2 · Pinyin</p>
         <p class="sentence-pinyin">{readingCard.sentence.pinyin}</p>
       </section>
     {/if}
     {#if revealStage >= 3}
-      <section class="reveal-panel" aria-label="Sentence meaning">
+      <section class="reveal-panel" data-reveal-stage="3" aria-label="Sentence meaning">
         <p class="reveal-kicker">3 · Meaning</p>
         <p class="sentence-meaning">{readingCard.sentence.meaningJa}</p>
         <p class="sentence-meaning secondary">{readingCard.sentence.meaningEn}</p>
       </section>
     {/if}
     {#if revealStage >= 4}
-      <section class="reveal-panel grammar-reveal" aria-label="Grammar explanation">
+      <section
+        class="reveal-panel grammar-reveal"
+        data-reveal-stage="4"
+        aria-label="Grammar explanation"
+      >
         <p class="reveal-kicker">4 · Grammar</p>
         {#each readingCard.grammarTopics as topic}
           <div class="topic-explanation">
@@ -491,7 +530,7 @@
     {/if}
 
     {#if revealStage < 4}
-      <button class="reveal-button staged-reveal" onclick={revealNext}>
+      <button class="reveal-button staged-reveal" onclick={() => void revealNext()}>
         <span
           >{["Reveal vocabulary", "Reveal pinyin", "Reveal meaning", "Reveal grammar"][
             revealStage

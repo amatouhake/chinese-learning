@@ -38,6 +38,7 @@
   let isOffline = browserOffline;
   let advanceTimer: ReturnType<typeof setTimeout> | null = null;
   let audioMessage = "";
+  let autoplayedQuestionKey: string | null = null;
 
   onMount(() => {
     void initializeReflex();
@@ -155,6 +156,9 @@
     question = presentReflexQuestion(card, sessionId, session.completedItems + 1, exposure);
     promptStartedAt = performance.now();
     phase = "prompt";
+    if (shouldAutoplayOnPrompt(question.card.activityType)) {
+      void autoplayQuestionAudio();
+    }
   }
 
   async function choose(choiceId: string): Promise<void> {
@@ -167,6 +171,9 @@
     prepareSound();
     playAnswerFeedback(correct ? "correct" : "incorrect");
     phase = "feedback";
+    if (!shouldAutoplayOnPrompt(question.card.activityType)) {
+      void autoplayQuestionAudio();
+    }
     try {
       const staged = await store.stageAttempt(browserState, {
         cardId: question.card.cardId,
@@ -262,6 +269,18 @@
         ? "Pronunciation is not cached on this device."
         : "Audio unavailable.";
     }
+  }
+
+  async function autoplayQuestionAudio(): Promise<void> {
+    if (!question?.card.media || !getSoundEnabled()) return;
+    const questionKey = question.presentationId;
+    if (autoplayedQuestionKey === questionKey) return;
+    autoplayedQuestionKey = questionKey;
+    await playCardAudio();
+  }
+
+  function shouldAutoplayOnPrompt(activity: ReflexCard["activityType"]): boolean {
+    return activity === "hanzi_to_meaning" || activity === "pinyin_to_hanzi";
   }
 </script>
 

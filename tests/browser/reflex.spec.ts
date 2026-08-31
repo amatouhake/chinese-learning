@@ -19,7 +19,13 @@ test.describe("Reflex automaticity dogfood", () => {
 
     await introduceVocabulary(page, 8);
     const stateBeforeReflex = await readCardStates(page);
-    await page.getByRole("button", { name: "Reflex" }).click();
+    await page.locator("#mobile-mode").selectOption("reflex");
+    await expect(page.locator("#mobile-mode")).toHaveValue("reflex");
+    await expect(page.locator(".surface-nav")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Sound on" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await page.getByRole("button", { name: "Start 12 quick answers" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
     const sessionId = (await readMeta(page)).activeReflexSessionId;
@@ -120,6 +126,68 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("button", { name: "Grammar path" })).toBeVisible();
   });
 
+  test("autoplays canonical pronunciation at the recall-safe phase and keeps replay available", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+      const plays: string[] = [];
+      Object.assign(window, { pronunciationPlays: plays });
+      HTMLMediaElement.prototype.play = function () {
+        plays.push(this.currentSrc || this.src);
+        return Promise.resolve();
+      };
+    });
+    await introduceVocabulary(page, 8);
+    await page.evaluate(() => {
+      (window as typeof window & { pronunciationPlays: string[] }).pronunciationPlays.length = 0;
+    });
+    await page.locator("#mobile-mode").selectOption("reflex");
+    await page.getByRole("button", { name: "Start 12 quick answers" }).click();
+    await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
+
+    const observed = new Set<string>();
+    let replayVerified = false;
+    let playsBeforeQuestion = 0;
+    for (let round = 1; round <= 12; round += 1) {
+      await expect(page.locator(".card-meta span").first()).toHaveText(`${round} / 12`);
+      const card = page.locator(".reflex-card");
+      const activity = await card.getAttribute("data-activity");
+      if (!activity) throw new Error("Reflex card has no activity identity");
+      const hasMedia = (await page.locator(".reflex-audio").count()) === 1;
+      const promptAutoplay = activity === "hanzi_to_meaning" || activity === "pinyin_to_hanzi";
+      if (hasMedia && promptAutoplay) {
+        await expect.poll(() => pronunciationPlayCount(page)).toBeGreaterThan(playsBeforeQuestion);
+      } else if (hasMedia) {
+        expect(await pronunciationPlayCount(page)).toBe(playsBeforeQuestion);
+      }
+
+      if (hasMedia) {
+        observed.add(activity);
+        if (!replayVerified) {
+          const playsBeforeReplay = await pronunciationPlayCount(page);
+          await page.locator(".reflex-audio").click();
+          await expect.poll(() => pronunciationPlayCount(page)).toBeGreaterThan(playsBeforeReplay);
+          replayVerified = true;
+        }
+      }
+
+      const playsBeforeAnswer = await pronunciationPlayCount(page);
+      await page.locator(".reflex-choice-grid button").first().click();
+      if (hasMedia && !promptAutoplay) {
+        await expect.poll(() => pronunciationPlayCount(page)).toBeGreaterThan(playsBeforeAnswer);
+      }
+      await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled({
+        timeout: 20_000,
+      });
+      playsBeforeQuestion = await pronunciationPlayCount(page);
+      if (round < 12) await page.getByRole("button", { name: "Continue" }).click();
+    }
+
+    expect(observed.size).toBeGreaterThan(0);
+    expect(replayVerified).toBe(true);
+  });
+
   test("a brand-new offline drill fails clearly instead of inventing canonical material", async ({
     page,
     context,
@@ -154,6 +222,12 @@ async function currentQuestion(page: Page): Promise<{
     .locator(".reflex-choice-grid button")
     .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("data-choice-id")));
   return { cardId, answerPosition: choiceIds.indexOf(cardId) };
+}
+
+function pronunciationPlayCount(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as typeof window & { pronunciationPlays: string[] }).pronunciationPlays.length,
+  );
 }
 
 async function answerReflex(

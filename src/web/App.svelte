@@ -9,6 +9,13 @@
   import VocabularyStudy from "./VocabularyStudy.svelte";
 
   type Surface = "progress" | "study" | "reflex" | "pronunciation" | "reading";
+  const surfaceOptions: Array<{ value: Surface; label: string }> = [
+    { value: "study", label: "Study" },
+    { value: "reflex", label: "Reflex" },
+    { value: "pronunciation", label: "Speak" },
+    { value: "reading", label: "Reading" },
+    { value: "progress", label: "Progress" },
+  ];
   let surface: Surface = surfaceFromHash();
   let soundEnabled = getSoundEnabled();
 
@@ -30,6 +37,13 @@
     surface = value;
     history.replaceState(null, "", `#${value}`);
   }
+
+  function handleSurfaceChange(event: Event): void {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    if (surfaceOptions.some((option) => option.value === value)) {
+      selectSurface(value as Surface);
+    }
+  }
 </script>
 
 <svelte:window onhashchange={syncSurfaceFromHash} />
@@ -50,6 +64,19 @@
         <small>daily proof</small>
       </span>
     </a>
+    <div class="mobile-mode-switcher">
+      <select
+        id="mobile-mode"
+        value={surface}
+        onchange={handleSurfaceChange}
+        aria-label="Learning mode"
+        title="Switch learning mode"
+      >
+        {#each surfaceOptions as option}
+          <option value={option.value}>{option.label}</option>
+        {/each}
+      </select>
+    </div>
     <nav class="surface-nav" aria-label="Learning mode">
       <button class:active={surface === "study"} onclick={() => selectSurface("study")}>
         <svg aria-hidden="true" viewBox="0 0 20 20"

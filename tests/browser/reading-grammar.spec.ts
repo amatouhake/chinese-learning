@@ -29,16 +29,20 @@ test.describe("reading and grammar dogfood", () => {
 
     await page.getByRole("button", { name: /Reveal vocabulary/ }).click();
     await expect(page.locator(".vocabulary-reveal")).toBeVisible();
+    await expect.poll(() => isInViewport(page, ".staged-reveal")).toBe(true);
     await expect(page.getByLabel("Sentence pinyin")).toHaveCount(0);
     await page.getByRole("button", { name: /Reveal pinyin/ }).click();
     await expect(page.getByLabel("Sentence pinyin")).toBeVisible();
+    await expect.poll(() => isInViewport(page, ".staged-reveal")).toBe(true);
     await expect(page.getByLabel("Sentence meaning")).toHaveCount(0);
     await page.getByRole("button", { name: /Reveal meaning/ }).click();
     await expect(page.getByLabel("Sentence meaning")).toBeVisible();
+    await expect.poll(() => isInViewport(page, ".staged-reveal")).toBe(true);
     await expect(page.getByLabel("Grammar explanation")).toHaveCount(0);
     await page.getByRole("button", { name: /Reveal grammar/ }).click();
     await expect(page.getByLabel("Grammar explanation")).toBeVisible();
     await expect(page.locator(".grammar-reveal code")).toBeVisible();
+    await expect.poll(() => isInViewport(page, ".reading-card .rating-area")).toBe(true);
     await expect.poll(() => captured.reading).not.toBeNull();
     expect(
       captured.reading?.vocabulary.every((hint) => hint.readingId.startsWith("reading:")),
@@ -193,6 +197,13 @@ async function captureLatestReadingCard(
   if (!response.url().endsWith("/api/sync/pull") || response.request().method() !== "POST") return;
   const payload = (await response.json()) as { readingPack?: { cards: ReadingCard[] } | null };
   captured.reading = payload.readingPack?.cards[0] ?? captured.reading;
+}
+
+function isInViewport(page: Page, selector: string): Promise<boolean> {
+  return page.locator(selector).evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+  });
 }
 
 function readOutbox(page: Page): Promise<AttemptInput[]> {

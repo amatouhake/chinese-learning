@@ -62,9 +62,12 @@ test.describe("local progress dashboard dogfood", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    const readingButton = await page.getByRole("button", { name: "Reading" }).boundingBox();
-    expect(readingButton).not.toBeNull();
-    expect(readingButton!.x + readingButton!.width).toBeLessThanOrEqual(320);
+    await expect(page.locator("#mobile-mode")).toBeVisible();
+    await expect(page.locator("#mobile-mode option")).toHaveCount(5);
+    await expect(page.locator(".surface-nav")).toBeHidden();
+    const mobileMode = await page.locator("#mobile-mode").boundingBox();
+    expect(mobileMode).not.toBeNull();
+    expect(mobileMode!.x + mobileMode!.width).toBeLessThanOrEqual(320);
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.locator(".mode-progress-grid .mode-card-progress")).toHaveCount(5);
