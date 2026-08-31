@@ -48,7 +48,7 @@ test.describe("local progress dashboard dogfood", () => {
       });
     });
 
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 320, height: 844 });
     await page.goto("/#progress");
     await expect(page.getByRole("heading", { name: "Progress snapshot" })).toBeVisible();
     await expect(page.getByText("3 due · 17 new", { exact: true })).toBeVisible();
@@ -62,6 +62,9 @@ test.describe("local progress dashboard dogfood", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
+    const readingButton = await page.getByRole("button", { name: "Reading" }).boundingBox();
+    expect(readingButton).not.toBeNull();
+    expect(readingButton!.x + readingButton!.width).toBeLessThanOrEqual(320);
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.locator(".mode-progress-grid .mode-card-progress")).toHaveCount(5);

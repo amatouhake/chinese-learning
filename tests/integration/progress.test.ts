@@ -382,6 +382,95 @@ describe("canonical progress snapshot", () => {
       evidence: { fsrsRatings: { 1: 1, 2: 0, 3: 0, 4: 0 } },
     });
   });
+
+  test("preserves cross-mode trouble coverage when one mode has more than the global candidate cap", async () => {
+    const stressLexemes = Array.from({ length: 31 }, (_, index) =>
+      sourceLexeme(
+        `测压${String.fromCodePoint(0x3400 + index)}`,
+        "cè yā",
+        "ce4 ya1",
+        `stress fixture ${index}`,
+      ),
+    );
+    await applyImport(vocabularyInput("progress-trouble-cap", stressLexemes));
+    const cards = await env.DB.prepare(
+      `SELECT c.id, c.activity_type
+       FROM cards c JOIN lexemes l ON l.id = c.lexeme_id
+       WHERE l.simplified LIKE '测压%'
+       ORDER BY c.id LIMIT 61`,
+    ).all<{ id: string; activity_type: "hanzi_to_meaning" | "meaning_to_hanzi" }>();
+    expect(cards.results).toHaveLength(61);
+
+    for (const [index, card] of cards.results.entries()) {
+      await insertCanonicalAttempt({
+        eventId: `trouble-cap-reflex-${index}`,
+        deviceSeq: 2_000 + index,
+        occurredAt: NOW - (index + 1) * 1_000,
+        receivedAt: NOW - 500,
+        cardId: card.id,
+        mode: "reflex",
+        activityType: card.activity_type,
+        correct: false,
+        responseMs: 3_000,
+        metadata: { interaction: "offline-import" },
+      });
+    }
+
+    const sentenceCard = await env.DB.prepare(
+      `SELECT id FROM cards WHERE subject_type = 'sentence' ORDER BY id LIMIT 1`,
+    ).first<{ id: string }>();
+    if (!sentenceCard) throw new Error("fixture has no sentence card");
+    await insertCanonicalAttempt({
+      eventId: "trouble-cap-reading",
+      deviceSeq: 3_000,
+      occurredAt: NOW - 500,
+      receivedAt: NOW,
+      cardId: sentenceCard.id,
+      mode: "reading",
+      activityType: "sentence_reading",
+      selfRating: 1,
+      responseMs: 4_000,
+      metadata: { interaction: "offline-import" },
+    });
+
+    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    expect(snapshot.reflex.troublesomeItems).toHaveLength(5);
+    expect(
+      snapshot.reading.difficultSentences.some(({ cardId }) => cardId === sentenceCard.id),
+    ).toBe(true);
+    expect(
+      snapshot.troublesomeItems.some(
+        ({ cardId, mode }) => cardId === sentenceCard.id && mode === "reading",
+      ),
+    ).toBe(true);
+  });
+
+  test("excludes future-dated attempts from rolling activity and trouble", async () => {
+    await applyImport(
+      vocabularyInput("future-progress", [sourceLexeme("未", "wèi", "wei4", "future")]),
+    );
+    const card = await vocabularyCardFor("未");
+    const before = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const futureOccurredAt = NOW + DAY;
+    await insertCanonicalAttempt({
+      eventId: "future-clock-skew-attempt",
+      deviceSeq: 5_000,
+      occurredAt: futureOccurredAt,
+      receivedAt: NOW,
+      cardId: card.id,
+      mode: "reflex",
+      activityType: card.activity_type,
+      correct: false,
+      responseMs: 4_000,
+      metadata: { interaction: "offline-import" },
+    });
+
+    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    expect(snapshot.overall).toEqual(before.overall);
+    expect(snapshot.reflex).toEqual(before.reflex);
+    expect(snapshot.troublesomeItems).toEqual(before.troublesomeItems);
+    expect(snapshot.dataThrough.latestAttemptOccurredAt).toBe(futureOccurredAt);
+  });
 });
 
 const DAY = 24 * 60 * 60 * 1_000;

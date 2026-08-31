@@ -16,6 +16,7 @@ const RECENT_DAYS = 30;
 const SNAPSHOT_VERSION = 1 as const;
 const TROUBLE_LIMIT = 8;
 const PER_MODE_TROUBLE_LIMIT = 5;
+const PRACTICE_TROUBLE_CANDIDATES_PER_MODE = 15;
 
 export interface ProgressSnapshotOptions {
   now?: () => number;
@@ -193,11 +194,11 @@ export async function getProgressSnapshot(
            MAX(CASE WHEN r.attempt_id IS NOT NULL THEN a.occurred_at END)
              AS last_fsrs_review_at
          FROM attempts a LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
-         WHERE a.occurred_at >= ?
+         WHERE a.occurred_at >= ? AND a.occurred_at <= ?
          GROUP BY a.mode, a.activity_type
          ORDER BY a.mode, a.activity_type`,
       )
-      .bind(REFLEX_SLOW_RESPONSE_MS, recentCutoff),
+      .bind(REFLEX_SLOW_RESPONSE_MS, recentCutoff, generatedAt),
     db
       .prepare(
         `SELECT
@@ -211,10 +212,10 @@ export async function getProgressSnapshot(
            END AS answered,
            CASE WHEN r.attempt_id IS NULL THEN 0 ELSE 1 END AS scheduled_review
          FROM attempts a LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
-         WHERE a.occurred_at >= ?
+         WHERE a.occurred_at >= ? AND a.occurred_at <= ?
          ORDER BY a.occurred_at, a.event_id`,
       )
-      .bind(recentCutoff),
+      .bind(recentCutoff, generatedAt),
     db.prepare(
       `SELECT g.id, g.title, state.status, state.self_confidence, state.last_studied_at
        FROM grammar_topics g
@@ -251,7 +252,7 @@ export async function getProgressSnapshot(
          JOIN card_state cs ON cs.card_id = c.id
          JOIN lexemes l ON l.id = c.lexeme_id
          LEFT JOIN attempts a ON a.card_id = c.id AND a.mode = 'study'
-           AND a.occurred_at >= ?
+           AND a.occurred_at >= ? AND a.occurred_at <= ?
          LEFT JOIN fsrs_reviews review ON review.attempt_id = a.event_id
          WHERE c.subject_type = 'lexeme'
            AND c.activity_type IN ('hanzi_to_meaning', 'meaning_to_hanzi')
@@ -267,10 +268,11 @@ export async function getProgressSnapshot(
            c.id
          LIMIT 40`,
       )
-      .bind(recentCutoff),
+      .bind(recentCutoff, generatedAt),
     db
       .prepare(
-        `SELECT
+        `WITH trouble AS (
+         SELECT
            c.id AS card_id,
            a.mode,
            a.activity_type,
@@ -307,7 +309,12 @@ export async function getProgressSnapshot(
            0 AS fsrs_4,
            0 AS lapses,
            NULL AS due_at,
-           MAX(a.occurred_at) AS last_practiced_at
+           MAX(a.occurred_at) AS last_practiced_at,
+           (SUM(CASE WHEN a.correct = 0 THEN 4 ELSE 0 END)
+             + SUM(CASE WHEN a.self_rating IN (1, 2) THEN 3 ELSE 0 END)
+             + SUM(CASE
+               WHEN a.mode = 'reflex' AND a.response_ms >= ? THEN 2 ELSE 0
+             END)) AS priority
          FROM attempts a
          JOIN cards c ON c.id = a.card_id
          LEFT JOIN lexemes lexeme ON lexeme.id = c.lexeme_id
@@ -315,7 +322,7 @@ export async function getProgressSnapshot(
          LEFT JOIN lexemes reading_lexeme ON reading_lexeme.id = reading.lexeme_id
          LEFT JOIN sentences sentence ON sentence.id = c.sentence_id
          LEFT JOIN grammar_topics grammar ON grammar.id = c.grammar_topic_id
-         WHERE a.occurred_at >= ? AND a.mode <> 'study'
+         WHERE a.occurred_at >= ? AND a.occurred_at <= ? AND a.mode <> 'study'
            AND NOT (
              a.mode = 'pronunciation'
              AND json_extract(a.metadata_json, '$.interaction') = 'skip-uncached-audio'
@@ -326,21 +333,25 @@ export async function getProgressSnapshot(
            OR SUM(CASE
              WHEN a.mode = 'reflex' AND a.response_ms >= ? THEN 1 ELSE 0
            END) > 0
-         ORDER BY
-           (SUM(CASE WHEN a.correct = 0 THEN 4 ELSE 0 END)
-             + SUM(CASE WHEN a.self_rating IN (1, 2) THEN 3 ELSE 0 END)
-             + SUM(CASE
-               WHEN a.mode = 'reflex' AND a.response_ms >= ? THEN 2 ELSE 0
-             END)) DESC,
-           last_practiced_at DESC,
-           c.id
-         LIMIT 60`,
+         ), ranked AS (
+           SELECT trouble.*,
+             ROW_NUMBER() OVER (
+               PARTITION BY mode
+               ORDER BY priority DESC, last_practiced_at DESC, card_id
+             ) AS mode_rank
+           FROM trouble
+         )
+         SELECT * FROM ranked
+         WHERE mode_rank <= ?
+         ORDER BY priority DESC, last_practiced_at DESC, card_id`,
       )
       .bind(
         REFLEX_SLOW_RESPONSE_MS,
+        REFLEX_SLOW_RESPONSE_MS,
         recentCutoff,
+        generatedAt,
         REFLEX_SLOW_RESPONSE_MS,
-        REFLEX_SLOW_RESPONSE_MS,
+        PRACTICE_TROUBLE_CANDIDATES_PER_MODE,
       ),
   ]);
 
@@ -517,7 +528,9 @@ function buildWindow(
   timezone: string,
 ): ProgressWindow {
   const cutoff = generatedAt - days * DAY_MS;
-  const selected = markers.filter(({ occurred_at }) => occurred_at >= cutoff);
+  const selected = markers.filter(
+    ({ occurred_at }) => occurred_at >= cutoff && occurred_at <= generatedAt,
+  );
   const activeDays = new Set<string>();
   const sessions = new Set<string>();
   const byMode = emptyModeCounts();
