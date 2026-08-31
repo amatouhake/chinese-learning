@@ -12,8 +12,9 @@ pronunciation surface covers pinyin recognition and recall, dictionary-tone iden
 two-syllable tone pairs, source-audio perception where the recording can be mapped safely, and
 speak–compare–self-rate production. Reflex provides short four-choice retrieval drills over already
 introduced material, adapting only within and between Reflex sessions without changing vocabulary
-scheduling. Dashboard, Notion projection, background sync, broad content prefetch, and Remote MCP
-product surfaces remain deferred.
+scheduling. A local Progress dashboard now summarizes all five learning modes from one canonical,
+read-only D1 progress snapshot. Notion projection, broad content prefetch, and Remote MCP product
+surfaces remain deferred.
 
 ## Stack and topology
 
@@ -26,8 +27,8 @@ product surfaces remain deferred.
 Routes are split as follows:
 
 - `/` — Svelte SPA through Worker Static Assets
-- `/api/*` — Hono Worker API (vocabulary, Reflex, reading, grammar, and pronunciation sessions plus
-  canonical attempts)
+- `/api/*` — Hono Worker API (the read-only progress snapshot; vocabulary, Reflex, reading, grammar,
+  and pronunciation sessions; and canonical attempts)
 - `/mcp` — reserved Worker boundary; currently returns `501`
 
 ## Fresh local setup
@@ -70,8 +71,9 @@ bunx wrangler d1 execute chinese-learning --local --file .generated/pronunciatio
 bun run dev:worker
 ```
 
-Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page offers Study,
-Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a 10-card session: due cards are
+Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page offers
+Progress, Study, Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a 10-card session:
+due cards are
 selected first, followed by deterministic new cards. Reflex starts a 12-answer automaticity drill
 once enough introduced material can supply honest distractors. Reading starts Chinese-first, then
 reveals vocabulary, pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its
@@ -301,6 +303,35 @@ Cache Storage cache rather than being added by a generic runtime media cache.
 Wrangler declares the token as a required encrypted secret; local development reads the private
 value from `.dev.vars`, while tests use only a disposable binding. Production Cloudflare Access
 remains a separate deferred deployment concern rather than being assumed by the Worker.
+
+## Local progress read model
+
+`getProgressSnapshot()` in `src/db/progress.ts` is the canonical domain aggregation used by the
+local dashboard and reserved for later Notion/MCP consumers. `POST /api/progress` exposes that same
+snapshot through the existing authenticated local-study boundary; the POST transport exists only
+to reuse the loopback request guard and performs no writes.
+
+The version-1 snapshot includes:
+
+- generated time, highest included `server_changes.seq`, latest server change/attempt receipt, latest
+  semantic attempt occurrence, projection version, and learner timezone;
+- rolling 7/30-day attempt, answer, scheduled-review, active-day, session, and per-mode volume;
+- current scheduled vocabulary counts plus recent FSRS ratings and cards with recent Again/Hard or
+  lifetime lapse evidence;
+- pronunciation results per activated activity, keeping objective correctness, production
+  self-ratings, and non-answer audio skips separate;
+- sentence-reading volume and comprehension self-ratings without inferred correctness;
+- grammar topic state, objective practice correctness, and confidence as separate measures;
+- Reflex correctness and latency/slow-response evidence without feeding FSRS; and
+- a deterministic, bounded cross-mode trouble list whose reasons and source activity remain visible.
+
+Rolling activity windows are selected by `attempts.occurred_at`. Active calendar days are formatted
+in the configured learner IANA timezone (`Asia/Tokyo` by default). Freshness/data-through metadata
+uses canonical server ingestion boundaries (`server_changes.seq`/`changed_at` and
+`attempts.received_at`), so a delayed offline event refreshes the boundary without being moved into
+the wrong study window. The read path issues one constant-size D1 batch of set-oriented queries; an
+occurrence-time index bounds recent-history scans. It creates no analytics facts, cache rows,
+attempts, reviews, sessions, or state updates.
 
 ## Durable learning model
 
