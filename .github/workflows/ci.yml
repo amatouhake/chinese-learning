@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 15
     env:
       ATTEMPT_WRITE_TOKEN: ci-only-build-placeholder
-      XDG_CONFIG_HOME: ${{ runner.temp }}/wrangler-config
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -33,6 +32,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run the repository quality gate
+        env:
+          XDG_CONFIG_HOME: ${{ runner.temp }}/wrangler-config
         run: bun run check
 
   browser:
