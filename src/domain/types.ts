@@ -372,6 +372,135 @@ export interface OfflineGrammarPack {
   cards: GrammarCard[];
 }
 
+export interface ProgressWindow {
+  days: 7 | 30;
+  attempts: number;
+  answeredAttempts: number;
+  scheduledReviews: number;
+  activeDays: number;
+  sessions: number;
+  byMode: Record<PracticeMode, number>;
+}
+
+export interface ProgressCorrectness {
+  responses: number;
+  correct: number;
+  rate: number | null;
+}
+
+export interface ProgressSelfRatings {
+  responses: number;
+  average: number | null;
+  low: number;
+  distribution: Record<FsrsRating, number>;
+}
+
+export interface ProgressTroubleItem {
+  id: string;
+  cardId: string;
+  mode: PracticeMode;
+  activityType: ActivityType;
+  label: string;
+  detail: string | null;
+  recentAttempts: number;
+  lastPracticedAt: number | null;
+  reasons: string[];
+  evidence: {
+    errors?: number;
+    slowResponses?: number;
+    averageResponseMs?: number | null;
+    selfRatings?: number;
+    averageSelfRating?: number | null;
+    fsrsRatings?: Record<FsrsRating, number>;
+    lapses?: number;
+    dueAt?: number;
+  };
+}
+
+export interface PronunciationProgressActivity {
+  activityType: PronunciationActivityType;
+  responses: number;
+  skips: number;
+  distinctItems: number;
+  correctness: ProgressCorrectness | null;
+  selfRatings: ProgressSelfRatings | null;
+  averageResponseMs: number | null;
+  lastPracticedAt: number | null;
+}
+
+export interface ProgressSnapshot {
+  snapshotVersion: 1;
+  generatedAt: number;
+  timezone: string;
+  dataThrough: {
+    serverSeq: number | null;
+    changedAt: number | null;
+    latestAttemptReceivedAt: number | null;
+    latestAttemptOccurredAt: number | null;
+  };
+  overall: {
+    last7Days: ProgressWindow;
+    last30Days: ProgressWindow;
+  };
+  vocabulary: {
+    totalScheduledCards: number;
+    dueNow: number;
+    new: number;
+    learning: number;
+    review: number;
+    recentScheduledReviews: number;
+    recentRatings: Record<FsrsRating, number>;
+    lastReviewedAt: number | null;
+    troublesomeCards: ProgressTroubleItem[];
+  };
+  pronunciation: {
+    recentResponses: number;
+    recentSkips: number;
+    byActivity: PronunciationProgressActivity[];
+    troublesomeItems: ProgressTroubleItem[];
+  };
+  reading: {
+    recentResponses: number;
+    recentSentences: number;
+    comprehension: ProgressSelfRatings;
+    lastPracticedAt: number | null;
+    difficultSentences: ProgressTroubleItem[];
+  };
+  grammar: {
+    topicCounts: {
+      total: number;
+      notIntroduced: number;
+      introduced: number;
+      learning: number;
+      comfortable: number;
+    };
+    topics: Array<{
+      id: string;
+      title: string;
+      status: "introduced" | "learning" | "comfortable" | null;
+      confidence: number | null;
+      lastStudiedAt: number | null;
+    }>;
+    recentResponses: number;
+    correctness: ProgressCorrectness;
+    confidence: ProgressSelfRatings;
+    lastPracticedAt: number | null;
+    troublesomeTopics: ProgressTroubleItem[];
+  };
+  reflex: {
+    recentResponses: number;
+    correctness: ProgressCorrectness;
+    latency: {
+      averageResponseMs: number | null;
+      slowResponses: number;
+      slowThresholdMs: number;
+    };
+    lastPracticedAt: number | null;
+    troublesomeItems: ProgressTroubleItem[];
+  };
+  troublesomeItems: ProgressTroubleItem[];
+}
+
 export interface SyncAttemptChange {
   seq: number;
   entityType: "attempt";

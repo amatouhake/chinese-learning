@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 
 import { ingestAttempt } from "../db/ingestion";
+import { getProgressSnapshot } from "../db/progress";
 import { createPronunciationSession, getNextPronunciationCard } from "../db/pronunciation";
 import {
   createGrammarSession,
@@ -36,6 +37,19 @@ app.get("/api/health", (context) =>
     service: "chinese-learning",
   }),
 );
+
+app.post("/api/progress", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  context.header("Cache-Control", "no-store");
+  return context.json(await getProgressSnapshot(context.env.DB));
+});
 
 app.post("/api/attempts", async (context) => {
   const authorization = await authorizeStudyWrite(
