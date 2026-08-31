@@ -6,6 +6,9 @@ import type {
   MaterializedCardState,
   PronunciationCard,
   PronunciationSessionView,
+  ReflexAnswerRecord,
+  ReflexCard,
+  ReflexSessionView,
   ReadingCard,
   StudyCard,
   StudySessionView,
@@ -46,6 +49,7 @@ interface PersistedMeta {
   deviceId: string;
   nextDeviceSeq: number;
   activeSessionId: string | null;
+  activeReflexSessionId: string | null;
   activePronunciationSessionId: string | null;
   activePronunciationFocus: PronunciationFocus | null;
   activeReadingSessionId: string | null;
@@ -71,6 +75,13 @@ interface CachedPronunciationCard {
   sessionId: string;
   position: number;
   card: PronunciationCard;
+}
+
+interface CachedReflexCard {
+  key: string;
+  sessionId: string;
+  position: number;
+  card: ReflexCard;
 }
 
 interface CachedReadingCard {
@@ -99,13 +110,21 @@ interface CachedPronunciationSession {
   session: PronunciationSessionView;
 }
 
+interface CachedReflexSession {
+  key: string;
+  mode: "reflex";
+  session: ReflexSessionView;
+  answers: ReflexAnswerRecord[];
+}
+
 interface CachedGuidedSession {
   key: string;
   mode: "reading" | "grammar";
   session: GuidedSessionView;
 }
 
-type CachedSession = CachedStudySession | CachedPronunciationSession | CachedGuidedSession;
+type CachedSession =
+  CachedStudySession | CachedReflexSession | CachedPronunciationSession | CachedGuidedSession;
 
 export interface StagedOfflineAttempt {
   state: BrowserOfflineState;
@@ -168,6 +187,10 @@ export class OfflineLearningStore {
     return this.updateActiveSession("study", sessionId, null, null);
   }
 
+  setActiveReflexSession(sessionId: string): Promise<BrowserOfflineState> {
+    return this.updateActiveSession("reflex", sessionId, null, null);
+  }
+
   setActivePronunciationSession(
     sessionId: string,
     focus: PronunciationFocus,
@@ -177,6 +200,10 @@ export class OfflineLearningStore {
 
   clearActiveStudySession(sessionId: string): Promise<BrowserOfflineState> {
     return this.clearActiveSession("study", sessionId);
+  }
+
+  clearActiveReflexSession(sessionId: string): Promise<BrowserOfflineState> {
+    return this.clearActiveSession("reflex", sessionId);
   }
 
   clearActivePronunciationSession(sessionId: string): Promise<BrowserOfflineState> {
@@ -204,6 +231,15 @@ export class OfflineLearningStore {
       key: sessionKey("study", session.id),
       mode: "study",
       session,
+    });
+  }
+
+  rememberReflexSession(session: ReflexSessionView): Promise<void> {
+    return this.rememberSession({
+      key: sessionKey("reflex", session.id),
+      mode: "reflex",
+      session,
+      answers: [],
     });
   }
 
@@ -241,13 +277,15 @@ export class OfflineLearningStore {
       const sessionId =
         draft.mode === "study"
           ? latest.activeSessionId
-          : draft.mode === "pronunciation"
-            ? latest.activePronunciationSessionId
-            : draft.mode === "reading"
-              ? latest.activeReadingSessionId
-              : draft.mode === "grammar"
-                ? latest.activeGrammarSessionId
-                : null;
+          : draft.mode === "reflex"
+            ? latest.activeReflexSessionId
+            : draft.mode === "pronunciation"
+              ? latest.activePronunciationSessionId
+              : draft.mode === "reading"
+                ? latest.activeReadingSessionId
+                : draft.mode === "grammar"
+                  ? latest.activeGrammarSessionId
+                  : null;
       if (!sessionId || draft.studySessionId !== sessionId) {
         transaction.abort();
         throw new Error("a learning attempt must belong to its active cached session");
@@ -278,7 +316,7 @@ export class OfflineLearningStore {
         occurredAt: new Date(occurredAt).toISOString(),
       };
       transaction.objectStore(OUTBOX_STORE).add(attempt);
-      cardStore.delete(cardKey(sessionId, draft.cardId));
+      if (draft.mode !== "reflex") cardStore.delete(cardKey(sessionId, draft.cardId));
       await advanceCachedSessionProgress(transaction, attempt, true);
       const next: PersistedMeta = {
         ...latest,
@@ -361,6 +399,13 @@ export class OfflineLearningStore {
           response.studyPack.cards.filter((card) => !pendingCardIds.has(card.cardId)),
         );
       }
+      if (response.reflexPack) {
+        await replaceReflexPack(
+          transaction,
+          response.reflexPack.session,
+          response.reflexPack.cards,
+        );
+      }
       if (response.pronunciationPack) {
         const pendingCardIds = new Set(
           pendingAttempts
@@ -424,6 +469,11 @@ export class OfflineLearningStore {
     return cards.sort((left, right) => left.position - right.position)[0]?.card ?? null;
   }
 
+  async getCachedReflexCards(sessionId: string): Promise<ReflexCard[]> {
+    const cards = await this.getSessionCards<CachedReflexCard>(PRONUNCIATION_CARD_STORE, sessionId);
+    return cards.sort((left, right) => left.position - right.position).map(({ card }) => card);
+  }
+
   async getCachedReadingCard(sessionId: string): Promise<ReadingCard | null> {
     const cards = await this.getSessionCards<CachedReadingCard>(
       PRONUNCIATION_CARD_STORE,
@@ -452,6 +502,14 @@ export class OfflineLearningStore {
     );
   }
 
+  getReflexSession(
+    sessionId: string,
+  ): Promise<{ session: ReflexSessionView; answers: ReflexAnswerRecord[] } | null> {
+    return this.getCachedSession<CachedReflexSession>("reflex", sessionId).then((value) =>
+      value ? { session: value.session, answers: value.answers } : null,
+    );
+  }
+
   getReadingSession(sessionId: string): Promise<GuidedSessionView | null> {
     return this.getCachedSession<CachedGuidedSession>("reading", sessionId).then(
       (value) => value?.session ?? null,
@@ -476,6 +534,7 @@ export class OfflineLearningStore {
     const existing = await this.readMeta();
     if (existing) {
       if (
+        existing.activeReflexSessionId === undefined ||
         existing.activeReadingSessionId === undefined ||
         existing.activeGrammarSessionId === undefined ||
         existing.activeGrammarTopicId === undefined
@@ -484,6 +543,7 @@ export class OfflineLearningStore {
         transaction.objectStore(META_STORE).put({
           ...existing,
           revision: existing.revision + 1,
+          activeReflexSessionId: existing.activeReflexSessionId ?? null,
           activeReadingSessionId: existing.activeReadingSessionId ?? null,
           activeGrammarSessionId: existing.activeGrammarSessionId ?? null,
           activeGrammarTopicId: existing.activeGrammarTopicId ?? null,
@@ -609,7 +669,7 @@ export class OfflineLearningStore {
   }
 
   private updateActiveSession(
-    mode: "study" | "pronunciation" | "reading" | "grammar",
+    mode: "study" | "reflex" | "pronunciation" | "reading" | "grammar",
     sessionId: string,
     focus: PronunciationFocus | null,
     topicId: string | null,
@@ -629,6 +689,7 @@ export class OfflineLearningStore {
         ...latest,
         revision: latest.revision + 1,
         activeSessionId: mode === "study" ? sessionId : latest.activeSessionId,
+        activeReflexSessionId: mode === "reflex" ? sessionId : latest.activeReflexSessionId,
         activePronunciationSessionId:
           mode === "pronunciation" ? sessionId : latest.activePronunciationSessionId,
         activePronunciationFocus:
@@ -646,7 +707,7 @@ export class OfflineLearningStore {
   }
 
   private clearActiveSession(
-    mode: "study" | "pronunciation" | "reading" | "grammar",
+    mode: "study" | "reflex" | "pronunciation" | "reading" | "grammar",
     sessionId: string,
   ): Promise<BrowserOfflineState> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
@@ -663,6 +724,7 @@ export class OfflineLearningStore {
         ...latest,
         revision: latest.revision + 1,
         activeSessionId: mode === "study" ? null : latest.activeSessionId,
+        activeReflexSessionId: mode === "reflex" ? null : latest.activeReflexSessionId,
         activePronunciationSessionId:
           mode === "pronunciation" ? null : latest.activePronunciationSessionId,
         activePronunciationFocus: mode === "pronunciation" ? null : latest.activePronunciationFocus,
@@ -734,6 +796,24 @@ async function replacePronunciationPack(
   } satisfies CachedPronunciationSession);
 }
 
+async function replaceReflexPack(
+  transaction: IDBTransaction,
+  session: ReflexSessionView,
+  cards: ReflexCard[],
+): Promise<void> {
+  const store = transaction.objectStore(PRONUNCIATION_CARD_STORE);
+  await deleteSessionCards(store, session.id);
+  cards.forEach((card, position) => {
+    store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
+  });
+  await putMergedSession(transaction.objectStore(SESSION_STORE), {
+    key: sessionKey("reflex", session.id),
+    mode: "reflex",
+    session,
+    answers: [],
+  } satisfies CachedReflexSession);
+}
+
 async function replaceGuidedPack(
   transaction: IDBTransaction,
   session: GuidedSessionView,
@@ -772,6 +852,19 @@ async function putMergedSession(store: IDBObjectStore, incoming: CachedSession):
     } satisfies CachedStudySession);
     return;
   }
+  if (incoming.mode === "reflex") {
+    const previous = existing as CachedReflexSession;
+    store.put({
+      ...incoming,
+      session: {
+        ...incoming.session,
+        completedItems: Math.max(incoming.session.completedItems, previous.session.completedItems),
+        endedAt: incoming.session.endedAt ?? previous.session.endedAt,
+      },
+      answers: previous.answers,
+    } satisfies CachedReflexSession);
+    return;
+  }
   const previous = existing as CachedPronunciationSession | CachedGuidedSession;
   store.put({
     ...incoming,
@@ -802,6 +895,15 @@ function sessionWithPendingFloor(session: CachedSession, pendingCount: number): 
       },
     };
   }
+  if (session.mode === "reflex") {
+    return {
+      ...session,
+      session: {
+        ...session.session,
+        completedItems: Math.max(session.session.completedItems, pendingCount),
+      },
+    };
+  }
   return {
     ...session,
     session: {
@@ -819,6 +921,7 @@ async function advanceCachedSessionProgress(
   if (
     !attempt.studySessionId ||
     (attempt.mode !== "study" &&
+      attempt.mode !== "reflex" &&
       attempt.mode !== "pronunciation" &&
       attempt.mode !== "reading" &&
       attempt.mode !== "grammar")
@@ -847,6 +950,36 @@ async function advanceCachedSessionProgress(
         reviewedCards: Math.min(cached.session.maxCards, cached.session.reviewedCards + 1),
       },
     } satisfies CachedStudySession);
+    return;
+  }
+  if (cached.mode === "reflex") {
+    const round = attempt.metadata?.round;
+    if (
+      attempt.correct === undefined ||
+      attempt.responseMs === undefined ||
+      typeof round !== "number" ||
+      !Number.isSafeInteger(round)
+    ) {
+      transaction.abort();
+      throw new Error("cached reflex attempt is missing its objective result");
+    }
+    store.put({
+      ...cached,
+      session: {
+        ...cached.session,
+        completedItems: Math.min(cached.session.maxItems, cached.session.completedItems + 1),
+      },
+      answers: [
+        ...cached.answers,
+        {
+          eventId: attempt.eventId,
+          cardId: attempt.cardId,
+          correct: attempt.correct,
+          responseMs: attempt.responseMs,
+          round,
+        },
+      ],
+    } satisfies CachedReflexSession);
     return;
   }
   store.put({
@@ -898,6 +1031,7 @@ function migrateMeta(
       deviceId,
       nextDeviceSeq,
       activeSessionId: legacy?.activeSessionId ?? null,
+      activeReflexSessionId: null,
       activePronunciationSessionId: legacy?.activePronunciationSessionId ?? null,
       activePronunciationFocus: legacy?.activePronunciationFocus ?? null,
       activeReadingSessionId: null,
@@ -1018,6 +1152,7 @@ function mapState(meta: PersistedMeta, pendingCount: number): BrowserOfflineStat
     deviceId: meta.deviceId,
     nextDeviceSeq: meta.nextDeviceSeq,
     activeSessionId: meta.activeSessionId,
+    activeReflexSessionId: meta.activeReflexSessionId,
     activePronunciationSessionId: meta.activePronunciationSessionId,
     activePronunciationFocus: meta.activePronunciationFocus,
     activeReadingSessionId: meta.activeReadingSessionId,
@@ -1034,7 +1169,7 @@ function cardKey(sessionId: string, cardId: string): string {
 }
 
 function sessionKey(
-  mode: "study" | "pronunciation" | "reading" | "grammar",
+  mode: "study" | "reflex" | "pronunciation" | "reading" | "grammar",
   sessionId: string,
 ): string {
   return `${mode}\u001f${sessionId}`;
@@ -1042,11 +1177,13 @@ function sessionKey(
 
 function activeSessionId(
   meta: PersistedMeta,
-  mode: "study" | "pronunciation" | "reading" | "grammar",
+  mode: "study" | "reflex" | "pronunciation" | "reading" | "grammar",
 ): string | null {
   switch (mode) {
     case "study":
       return meta.activeSessionId;
+    case "reflex":
+      return meta.activeReflexSessionId;
     case "pronunciation":
       return meta.activePronunciationSessionId;
     case "reading":
@@ -1094,6 +1231,7 @@ async function requiredMeta(store: IDBObjectStore): Promise<PersistedMeta> {
   if (!value) throw new Error("IndexedDB study identity disappeared; refusing to replace it");
   return {
     ...value,
+    activeReflexSessionId: value.activeReflexSessionId ?? null,
     activeReadingSessionId: value.activeReadingSessionId ?? null,
     activeGrammarSessionId: value.activeGrammarSessionId ?? null,
     activeGrammarTopicId: value.activeGrammarTopicId ?? null,
