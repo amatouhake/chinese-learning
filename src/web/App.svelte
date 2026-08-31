@@ -1,13 +1,15 @@
 <script lang="ts">
   import PronunciationPractice from "./PronunciationPractice.svelte";
+  import ProgressDashboard from "./ProgressDashboard.svelte";
   import ReflexPractice from "./ReflexPractice.svelte";
   import ReadingGrammar from "./ReadingGrammar.svelte";
   import VocabularyStudy from "./VocabularyStudy.svelte";
 
-  type Surface = "study" | "reflex" | "pronunciation" | "reading";
+  type Surface = "progress" | "study" | "reflex" | "pronunciation" | "reading";
   let surface: Surface = surfaceFromHash();
 
   function surfaceFromHash(): Surface {
+    if (globalThis.location?.hash === "#progress") return "progress";
     if (globalThis.location?.hash === "#pronunciation") return "pronunciation";
     if (globalThis.location?.hash === "#reflex") return "reflex";
     if (globalThis.location?.hash === "#reading") return "reading";
@@ -40,6 +42,9 @@
       <h1>中文学习</h1>
     </div>
     <nav class="surface-nav" aria-label="Learning mode">
+      <button class:active={surface === "progress"} onclick={() => selectSurface("progress")}
+        >Progress</button
+      >
       <button class:active={surface === "study"} onclick={() => selectSurface("study")}
         >Study</button
       >
@@ -56,13 +61,19 @@
     </nav>
   </header>
 
-  {#if surface === "study"}
-    <VocabularyStudy />
-  {:else if surface === "reflex"}
-    <ReflexPractice />
-  {:else if surface === "pronunciation"}
-    <PronunciationPractice />
+  {#if surface === "progress"}
+    <ProgressDashboard />
   {:else}
-    <ReadingGrammar />
+    <div class="learning-shell">
+      {#if surface === "study"}
+        <VocabularyStudy />
+      {:else if surface === "reflex"}
+        <ReflexPractice />
+      {:else if surface === "pronunciation"}
+        <PronunciationPractice />
+      {:else}
+        <ReadingGrammar />
+      {/if}
+    </div>
   {/if}
 </main>
