@@ -1,13 +1,15 @@
 <script lang="ts">
   import PronunciationPractice from "./PronunciationPractice.svelte";
+  import ReflexPractice from "./ReflexPractice.svelte";
   import ReadingGrammar from "./ReadingGrammar.svelte";
   import VocabularyStudy from "./VocabularyStudy.svelte";
 
-  type Surface = "study" | "pronunciation" | "reading";
+  type Surface = "study" | "reflex" | "pronunciation" | "reading";
   let surface: Surface = surfaceFromHash();
 
   function surfaceFromHash(): Surface {
     if (globalThis.location?.hash === "#pronunciation") return "pronunciation";
+    if (globalThis.location?.hash === "#reflex") return "reflex";
     if (globalThis.location?.hash === "#reading") return "reading";
     return "study";
   }
@@ -41,6 +43,9 @@
       <button class:active={surface === "study"} onclick={() => selectSurface("study")}
         >Study</button
       >
+      <button class:active={surface === "reflex"} onclick={() => selectSurface("reflex")}
+        >Reflex</button
+      >
       <button
         class:active={surface === "pronunciation"}
         onclick={() => selectSurface("pronunciation")}>Pronunciation</button
@@ -53,6 +58,8 @@
 
   {#if surface === "study"}
     <VocabularyStudy />
+  {:else if surface === "reflex"}
+    <ReflexPractice />
   {:else if surface === "pronunciation"}
     <PronunciationPractice />
   {:else}

@@ -5,6 +5,7 @@ export interface SyncPullInput {
   contentRevision: number | null;
   deviceId: string;
   studySessionId?: string;
+  reflexSessionId?: string;
   pronunciationSessionId?: string;
   readingSessionId?: string;
   grammarSessionId?: string;
@@ -32,6 +33,9 @@ export function parseSyncPullInput(value: unknown): SyncPullInput {
   };
   if (record.studySessionId !== undefined) {
     input.studySessionId = requiredText(record.studySessionId, "studySessionId");
+  }
+  if (record.reflexSessionId !== undefined) {
+    input.reflexSessionId = requiredText(record.reflexSessionId, "reflexSessionId");
   }
   if (record.pronunciationSessionId !== undefined) {
     input.pronunciationSessionId = requiredText(

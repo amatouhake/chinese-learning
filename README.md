@@ -1,17 +1,19 @@
 # Chinese Learning
 
-A locally usable, installable offline PWA for Chinese vocabulary, sentence reading, beginner
-grammar, and pronunciation. It imports the complete HSK 2.0 Level 1–3 corpus, caches bounded study
-sets in the browser, and records both scheduled FSRS reviews and ordinary practice as immutable
-attempts that safely synchronize after temporary network loss.
+A locally usable, installable offline PWA for Chinese vocabulary, automaticity, sentence reading,
+beginner grammar, and pronunciation. It imports the complete HSK 2.0 Level 1–3 corpus, caches
+bounded study sets in the browser, and records both scheduled FSRS reviews and ordinary practice as
+immutable attempts that safely synchronize after temporary network loss.
 
 The reading surface starts with a real Chinese sentence and reveals exact-reading vocabulary hints,
 pinyin, meaning, and a linked grammar explanation in that order. The first grammar path covers five
 high-value beginner patterns with real examples and a short checked practice interaction. The
 pronunciation surface covers pinyin recognition and recall, dictionary-tone identification,
 two-syllable tone pairs, source-audio perception where the recording can be mapped safely, and
-speak–compare–self-rate production. Dashboard, Notion projection, background sync, broad content
-prefetch, and Remote MCP product surfaces remain deferred.
+speak–compare–self-rate production. Reflex provides short four-choice retrieval drills over already
+introduced material, adapting only within and between Reflex sessions without changing vocabulary
+scheduling. Dashboard, Notion projection, background sync, broad content prefetch, and Remote MCP
+product surfaces remain deferred.
 
 ## Stack and topology
 
@@ -24,7 +26,7 @@ prefetch, and Remote MCP product surfaces remain deferred.
 Routes are split as follows:
 
 - `/` — Svelte SPA through Worker Static Assets
-- `/api/*` — Hono Worker API (vocabulary, reading, grammar, and pronunciation sessions plus
+- `/api/*` — Hono Worker API (vocabulary, Reflex, reading, grammar, and pronunciation sessions plus
   canonical attempts)
 - `/mcp` — reserved Worker boundary; currently returns `501`
 
@@ -69,20 +71,24 @@ bun run dev:worker
 ```
 
 Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page offers Study,
-Reading, and Pronunciation surfaces. Vocabulary starts a 10-card session: due cards are selected
-first, followed by deterministic new cards. Reading starts Chinese-first, then reveals vocabulary,
-pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its Grammar path teaches
-one linked pattern, reveals the example only on request, then checks one bounded completion exercise
-and records explicit confidence. Pronunciation starts from a low-friction focus chooser and offers
-repeatable audio plus a compact sound-system reference. `bun run dev` serves only the Vite frontend,
-so use `bun run dev:worker` for the real D1-backed flow and staged media.
+Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a 10-card session: due cards are
+selected first, followed by deterministic new cards. Reflex starts a 12-answer automaticity drill
+once enough introduced material can supply honest distractors. Reading starts Chinese-first, then
+reveals vocabulary, pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its
+Grammar path teaches one linked pattern, reveals the example only on request, then checks one
+bounded completion exercise and records explicit confidence. Pronunciation starts from a
+low-friction focus chooser and offers repeatable audio plus a compact sound-system reference. `bun
+run dev` serves only the Vite frontend, so use `bun run dev:worker` for the real D1-backed flow and
+staged media.
 
 After the first online study set is prepared, the browser can install the app and continue that
-bounded Vocabulary set without a connection, including across reloads. Prepared Reading, Grammar,
-and Pronunciation sets also work offline. Listening cards are available only when their exact-reading
-audio was successfully staged in Cache Storage. An uncached recording is clearly marked and can be
-skipped without blocking the rest of the set. Reconnecting the page pushes durable attempts before
-pulling canonical learner/content changes.
+bounded Vocabulary set without a connection, including across reloads. Prepared Reflex, Reading,
+Grammar, and Pronunciation sets also work offline. A brand-new Reflex drill requires a connection so
+the server can bind its canonical item and distractor identities; the browser never fabricates an
+offline pack. Listening cards are available only when their exact-reading audio was successfully
+staged in Cache Storage. An uncached recording is clearly marked and can be skipped without blocking
+the rest of the set. Reconnecting the page pushes durable attempts before pulling canonical
+learner/content changes.
 
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
 when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
@@ -114,7 +120,10 @@ offline, retry a partial push, reconnect, and verify convergence with local D1. 
 coverage also checks the Chinese-first reveal order, the systematic grammar path, offline Reading
 and Grammar attempts, reload, and reconnect. The suite additionally covers multi-tab sequence
 allocation, legacy-state migration, cached versus uncached audio, a late-arriving review, a mixed
-ten-item phone session, the polyphonic `的`, and the tone-pair reference.
+ten-item phone session, the polyphonic `的`, and the tone-pair reference. Reflex dogfood covers phone
+and desktop layouts, keyboard and touch answers, correct/incorrect/slow responses, adaptive repeats,
+option-position rotation, session restart, offline reload/reconnect, duplicate retry, and the absence
+of scheduler projection changes.
 
 To re-run the exact full-corpus gate against an isolated temporary D1 database (without touching
 the app's local study data):
@@ -208,6 +217,40 @@ beginner material without turning pronunciation into a scheduler. Multi-reading 
 available with exact sense hints after the unambiguous foundation rather than being silently
 collapsed or promoted according to unreliable source ordering.
 
+## Reflex automaticity model
+
+Reflex activates four existing canonical activities: `hanzi_to_meaning`, `meaning_to_hanzi`,
+`hanzi_to_pinyin`, and `pinyin_to_hanzi`. A lexeme is eligible only after one of its scheduled
+vocabulary cards has at least one review. The server prepares an eight-item pool for a bounded
+12-answer session and persists that exact pool in the existing `study_sessions.context_json`.
+Prepared cards are then cached through the ordinary sync response and IndexedDB stores; there is no
+second lexical state, scheduler, history table, or offline queue.
+
+Longer-horizon pool priority is a small score combining under-practice, error rate, slow-response
+rate, and trouble within the last seven days. Pool construction takes a high-priority item from each
+available activity before deterministic coverage items. Within a session, unseen items receive a
+bonus, the latest incorrect or 2.5-second-plus answer receives a larger temporary bonus, each
+exposure adds a penalty, and the two most recent cards cool down. Thus troublesome material returns
+soon without becoming an immediate loop, while every drill continues to mix other known material.
+This is bounded selection, not retention scheduling.
+
+Every question has exactly four stable canonical choice identities. Distractors come only from the
+same activity, never from the target lexeme, and duplicate normalized labels are removed. A
+meaning-to-Hanzi prompt is withheld when its displayed meaning is not unique. Hanzi prompts are
+withheld for multi-reading lexemes; pinyin-to-Hanzi prompts prefer the exact reading's sense hint and
+are withheld when the same pinyin-plus-meaning prompt is not unique. Choice positions rotate on
+repeat exposure, so a learner cannot succeed by memorizing a fixed button.
+
+Each answer appends an ordinary immutable `attempt` with the exact card/lexeme or reading identity,
+activity, objective correctness, response milliseconds, presentation ID, round, prompt, hint,
+correct and selected choice IDs, and the four labels in presented order. Ingestion verifies those
+facts against the prepared session before accepting them. Duplicate delivery returns the original
+fact, device sequences remain unique, and D1 atomically requires the next round while enforcing the
+prepared bound. Delayed offline delivery uses the same ordered outbox and canonical push-before-pull
+path as every other mode. Reflex attempts cannot carry an FSRS review or expected card-state version,
+never create `fsrs_reviews`, and never update due date, stability, difficulty, or vocabulary
+`card_state`.
+
 ## Vocabulary study flow
 
 The study API intentionally exposes no generic database surface:
@@ -288,7 +331,7 @@ write set back before the service retries from canonical history.
 `server_changes.seq` is the monotonic pull-sync cursor. `content_revisions` and
 `learner_settings.current_content_revision` establish the distinct content revision boundary.
 `POST /api/sync/pull` reports both boundaries and supplies only the current active sessions' bounded
-Vocabulary, Reading, Grammar, and Pronunciation packs. An older scheduled attempt that arrives after
+Vocabulary, Reflex, Reading, Grammar, and Pronunciation packs. An older scheduled attempt that arrives after
 a newer review is inserted as its original immutable fact; the existing deterministic server replay
 recomputes the canonical `card_state`, which the next pull applies locally.
 

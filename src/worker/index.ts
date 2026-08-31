@@ -9,9 +9,11 @@ import {
   getNextReadingCard,
 } from "../db/reading-grammar";
 import { createStudySession, getNextStudyCard } from "../db/study";
+import { createReflexSession } from "../db/reflex";
 import { pullSyncChanges } from "../db/sync";
 import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
 import { parseCreateStudySessionInput, parseNextStudyCardInput } from "../domain/study-validation";
+import { parseCreateReflexSessionInput } from "../domain/reflex";
 import {
   parseCreatePronunciationSessionInput,
   parseNextPronunciationCardInput,
@@ -104,6 +106,26 @@ app.post("/api/study/sessions/:sessionId/next", async (context) => {
       input.deviceId,
     );
     return context.json(result);
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
+});
+
+app.post("/api/reflex/sessions", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    const input = parseCreateReflexSessionInput(await readJsonBody(context));
+    const result = await createReflexSession(context.env.DB, input);
+    return context.json(result, result.disposition === "created" ? 201 : 200);
   } catch (error) {
     const response = domainError(context, error);
     if (response) return response;

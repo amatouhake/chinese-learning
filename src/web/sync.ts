@@ -40,15 +40,21 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
     }
 
     state = await store.snapshot();
-    const [studySession, pronunciationSession, readingSession, grammarSession] = await Promise.all([
-      state.activeSessionId ? store.getStudySession(state.activeSessionId) : null,
-      state.activePronunciationSessionId
-        ? store.getPronunciationSession(state.activePronunciationSessionId)
-        : null,
-      state.activeReadingSessionId ? store.getReadingSession(state.activeReadingSessionId) : null,
-      state.activeGrammarSessionId ? store.getGrammarSession(state.activeGrammarSessionId) : null,
-    ]);
+    const [studySession, reflexSession, pronunciationSession, readingSession, grammarSession] =
+      await Promise.all([
+        state.activeSessionId ? store.getStudySession(state.activeSessionId) : null,
+        state.activeReflexSessionId ? store.getReflexSession(state.activeReflexSessionId) : null,
+        state.activePronunciationSessionId
+          ? store.getPronunciationSession(state.activePronunciationSessionId)
+          : null,
+        state.activeReadingSessionId ? store.getReadingSession(state.activeReadingSessionId) : null,
+        state.activeGrammarSessionId ? store.getGrammarSession(state.activeGrammarSessionId) : null,
+      ]);
     const studySessionId = studySession?.id === state.activeSessionId ? studySession.id : undefined;
+    const reflexSessionId =
+      reflexSession?.session.id === state.activeReflexSessionId
+        ? reflexSession.session.id
+        : undefined;
     const pronunciationSessionId =
       pronunciationSession?.id === state.activePronunciationSessionId
         ? pronunciationSession.id
@@ -66,6 +72,7 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
           contentRevision: state.contentRevision,
           deviceId: state.deviceId,
           studySessionId,
+          reflexSessionId,
           pronunciationSessionId,
           readingSessionId,
           grammarSessionId,

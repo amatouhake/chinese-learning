@@ -1,4 +1,5 @@
 import { getOfflinePronunciationPack } from "./pronunciation";
+import { getOfflineReflexPack } from "./reflex";
 import { getOfflineStudyPack } from "./study";
 import { getOfflineGrammarPack, getOfflineReadingPack } from "./reading-grammar";
 import type { SyncPullInput } from "../domain/sync-validation";
@@ -123,9 +124,12 @@ export async function pullSyncChanges(
   }
 
   const currentContentRevision = settings?.current_content_revision ?? null;
-  const [studyPack, pronunciationPack, readingPack, grammarPack] = await Promise.all([
+  const [studyPack, reflexPack, pronunciationPack, readingPack, grammarPack] = await Promise.all([
     input.studySessionId
       ? getOfflineStudyPack(db, input.studySessionId, input.deviceId)
+      : Promise.resolve(null),
+    input.reflexSessionId
+      ? getOfflineReflexPack(db, input.reflexSessionId, input.deviceId)
       : Promise.resolve(null),
     input.pronunciationSessionId
       ? getOfflinePronunciationPack(db, input.pronunciationSessionId, input.deviceId)
@@ -146,6 +150,7 @@ export async function pullSyncChanges(
     learnerChanges,
     contentChanges,
     studyPack,
+    reflexPack,
     pronunciationPack,
     readingPack,
     grammarPack,
@@ -216,6 +221,7 @@ function mapLearnerChange(row: ChangeRow): SyncLearnerChange {
     if (
       row.session_id === null ||
       (row.session_mode !== "study" &&
+        row.session_mode !== "reflex" &&
         row.session_mode !== "pronunciation" &&
         row.session_mode !== "reading" &&
         row.session_mode !== "grammar")

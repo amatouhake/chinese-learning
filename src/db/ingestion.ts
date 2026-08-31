@@ -13,6 +13,8 @@ import {
 } from "../domain/errors";
 import { normalizeUtcInstant, semanticEventOrderKey, semanticOrderKey } from "../domain/ordering";
 import { parseGrammarPracticeMetadata } from "../domain/reading-grammar";
+import { REFLEX_INTERACTION, isReflexActivity, parseReflexAttemptMetadata } from "../domain/reflex";
+import { getPreparedReflexItem } from "./reflex";
 import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
@@ -35,6 +37,8 @@ const MAX_CONCURRENCY_RETRIES = 3;
 export interface IngestOptions {
   now?: () => number;
   forceFailureAfterWrites?: boolean;
+  /** Coordination seam used to exercise concurrent ordinary-attempt writes after validation. */
+  beforeUnscheduledWrite?: () => Promise<void>;
   /** Coordination seam used to exercise an interleaving immediately before the atomic write. */
   beforeScheduledWrite?: () => Promise<void>;
 }
@@ -147,6 +151,7 @@ export async function ingestAttempt(
       throw new InvalidInputError("attempt activity does not match its card");
     }
     await validatePronunciationAttempt(db, input, card);
+    await validateReflexAttempt(db, input, card);
     await validateReadingGrammarAttempt(db, input, card);
 
     if (!input.fsrsReview) {
@@ -161,6 +166,7 @@ export async function ingestAttempt(
             options,
           );
         } else {
+          await options.beforeUnscheduledWrite?.();
           await insertUnscheduledAttempt(db, input, occurredAt, receivedAt, options);
         }
         const inserted = await findAttempt(db, input.eventId);
@@ -176,7 +182,7 @@ export async function ingestAttempt(
         const duplicate = await findAttempt(db, input.eventId);
         if (duplicate) return duplicateResult(db, duplicate, input, occurredAt);
         await assertDeviceSequenceAvailable(db, input);
-        throw error;
+        throw mapReflexSequenceConstraint(input, error);
       }
     }
 
@@ -707,6 +713,7 @@ async function validatePronunciationAttempt(
   input: AttemptInput,
   card: CardRow,
 ): Promise<void> {
+  if (input.mode === "reflex" && isReflexActivity(card.activity_type)) return;
   const pronunciationCard = isPronunciationActivity(card.activity_type);
   if (!pronunciationCard && input.mode !== "pronunciation") return;
   if (!pronunciationCard) {
@@ -798,6 +805,77 @@ async function validatePronunciationAttempt(
   }
   if (input.correct !== (selectedChoiceId === answerChoiceId)) {
     throw new InvalidInputError("pronunciation correctness disagrees with the selected choice");
+  }
+}
+
+async function validateReflexAttempt(
+  db: D1Database,
+  input: AttemptInput,
+  card: CardRow,
+): Promise<void> {
+  if (input.mode !== "reflex") return;
+  if (input.fsrsReview !== undefined || input.expectedCardStateVersion !== undefined) {
+    throw new InvalidInputError("reflex attempts must not carry FSRS review state");
+  }
+  // Before the automaticity drill existed, `reflex` was already a valid
+  // ordinary-practice taxonomy value. Preserve those immutable legacy facts;
+  // the prepared-session contract is identified by its canonical interaction.
+  if (input.metadata?.interaction !== REFLEX_INTERACTION) return;
+  if (!isReflexActivity(input.activityType)) {
+    throw new InvalidInputError("reflex mode only supports its activated objective activities");
+  }
+  if (input.correct === undefined || input.responseMs === undefined) {
+    throw new InvalidInputError("reflex attempts require correctness and response time");
+  }
+  if (input.score !== undefined || input.selfRating !== undefined) {
+    throw new InvalidInputError(
+      "reflex attempts keep objective correctness separate from other grades",
+    );
+  }
+  if (!input.studySessionId) {
+    throw new InvalidInputError("reflex attempts must belong to a prepared reflex session");
+  }
+  if (card.activity_type !== input.activityType) {
+    throw new InvalidInputError("reflex attempt activity does not match its card");
+  }
+
+  const metadata = parseReflexAttemptMetadata(input.metadata);
+  const preparedItem = await getPreparedReflexItem(db, input.studySessionId, input.cardId);
+  if (!preparedItem) {
+    throw new InvalidInputError("reflex card was not part of the prepared session");
+  }
+  const { card: prepared, maxItems, completedItems, endedAt } = preparedItem;
+  if (endedAt !== null || completedItems >= maxItems) {
+    throw new InvalidInputError("reflex session has already reached its prepared bound");
+  }
+  if (metadata.round > maxItems) {
+    throw new InvalidInputError("reflex presentation exceeds the prepared session bound");
+  }
+  if (metadata.round !== completedItems + 1) {
+    throw new InvalidInputError("reflex presentation is not the canonical next session round");
+  }
+  if (
+    prepared.activityType !== input.activityType ||
+    metadata.prompt !== prepared.prompt ||
+    metadata.promptHint !== prepared.promptHint ||
+    metadata.answerChoiceId !== prepared.answerChoiceId ||
+    metadata.presentationId !== `${input.studySessionId}:${metadata.round}:${input.cardId}`
+  ) {
+    throw new InvalidInputError("reflex presentation does not match its prepared learning item");
+  }
+  const preparedOptions = [...prepared.choices].map(({ id, label }) => `${id}\0${label}`).sort();
+  const presentedOptions = metadata.options.map(({ id, label }) => `${id}\0${label}`).sort();
+  if (
+    preparedOptions.length !== presentedOptions.length ||
+    preparedOptions.some((option, index) => option !== presentedOptions[index])
+  ) {
+    throw new InvalidInputError("reflex options do not match the prepared distractor set");
+  }
+  if (!metadata.options.some(({ id }) => id === metadata.selectedChoiceId)) {
+    throw new InvalidInputError("reflex selected choice was not presented");
+  }
+  if (input.correct !== (metadata.selectedChoiceId === prepared.answerChoiceId)) {
+    throw new InvalidInputError("reflex correctness disagrees with the selected choice");
   }
 }
 
@@ -899,6 +977,19 @@ async function assertDeviceSequenceAvailable(db: D1Database, input: AttemptInput
       `device sequence ${input.deviceId}/${input.deviceSeq} already belongs to another event`,
     );
   }
+}
+
+function mapReflexSequenceConstraint(input: AttemptInput, error: unknown): unknown {
+  if (input.mode !== "reflex" || input.metadata?.interaction !== REFLEX_INTERACTION) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.includes("canonical Reflex attempt is not the next session round") ||
+    message.includes("canonical Reflex session reached its prepared bound") ||
+    message.includes("canonical Reflex session has ended")
+  ) {
+    return new ConflictError("reflex session advanced before this response could be accepted");
+  }
+  return error;
 }
 
 async function assertStudySessionOwnedByDevice(
