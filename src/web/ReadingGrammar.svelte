@@ -364,7 +364,10 @@
 <svelte:window ononline={() => void handleOnline()} onoffline={handleOffline} />
 
 <header class="app-header surface-header guided-header">
-  <div><p class="eyebrow">Reading / Grammar foundation</p></div>
+  <div class="surface-title">
+    <span class="section-mark">04</span>
+    <h2>{mode === "reading" ? "Read" : "Grammar"}</h2>
+  </div>
   {#if session && (readingPhase === "prompt" || grammarPhase === "introduction" || grammarPhase === "practice" || grammarPhase === "feedback")}
     <p class="progress" aria-label={`Item ${session.completedItems + 1} of ${session.maxItems}`}>
       <strong>{session.completedItems + 1}</strong><span>/ {session.maxItems}</span>
@@ -392,7 +395,11 @@
         ? "Saving learning history…"
         : "Preparing real sentences…"}
     </h2>
-    <p>Reading and grammar stay ordinary practice; vocabulary FSRS state is untouched.</p>
+    <p>
+      {readingPhase === "submitting" || grammarPhase === "submitting"
+        ? "Your place is safe."
+        : "Opening the next lesson."}
+    </p>
   </section>
 {:else if (mode === "reading" && readingPhase === "error") || (mode === "grammar" && grammarPhase === "error")}
   <section class="status-panel error-panel" role="alert">
@@ -403,13 +410,15 @@
   </section>
 {:else if (mode === "reading" && readingPhase === "empty") || (mode === "grammar" && grammarPhase === "empty")}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">文</p>
+    <p class="completion-mark" aria-hidden="true">—</p>
     <h2>No foundation content is available</h2>
-    <p>Run the pinned full corpus import to activate the reviewed sentence and grammar path.</p>
+    <p>There is no lesson ready for this path yet.</p>
   </section>
 {:else if (mode === "reading" && readingPhase === "completed") || (mode === "grammar" && grammarPhase === "completed")}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">读</p>
+    <p class="completion-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
+    </p>
     <h2>{mode === "reading" ? "Reading set complete" : "Grammar set complete"}</h2>
     <p>
       {session?.completedItems ?? 0} non-FSRS attempts are {browserState?.pendingCount
@@ -428,7 +437,7 @@
       <span class="queue-badge reading-badge">Sentence</span><span>Chinese first</span>
     </div>
     <div class="reading-prompt">
-      <p class="prompt-instruction">Read, segment, and form a meaning before asking for help</p>
+      <p class="prompt-instruction">Read for meaning</p>
       <h2>{readingCard.sentence.chinese}</h2>
     </div>
 
@@ -491,7 +500,7 @@
       </button>
     {:else}
       <div class="rating-area">
-        <p>How well did you understand the sentence?</p>
+        <p>How clear was it?</p>
         <div class="rating-grid guided-ratings">
           {#each confidenceRatings as rating}
             <button
@@ -571,9 +580,3 @@
     {/if}
   </section>
 {/if}
-
-<footer>
-  <span>Sentence and grammar attempts are immutable ordinary-practice events.</span><span
-    >Grammar topic state is durable; vocabulary card_state and fsrs_reviews are unchanged.</span
-  >
-</footer>

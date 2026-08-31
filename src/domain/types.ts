@@ -128,6 +128,7 @@ export interface StudyCard {
     meanings: StudyMeaning[];
     hskLevel: number | null;
   };
+  media?: PronunciationMedia | null;
   example: StudyExample | null;
 }
 
@@ -173,6 +174,7 @@ export interface ReflexCard {
   answerChoiceId: string;
   choices: ReflexChoice[];
   history: ReflexHistorySummary;
+  media?: PronunciationMedia | null;
 }
 
 export interface ReflexSessionView {

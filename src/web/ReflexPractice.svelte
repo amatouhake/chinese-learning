@@ -11,6 +11,12 @@
   import type { ReflexAnswerRecord, ReflexCard, ReflexSessionView } from "../domain/types";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
+  import {
+    getSoundEnabled,
+    playAnswerFeedback,
+    playPronunciationAudio,
+    prepareSound,
+  } from "./sound";
   import { synchronizeLearning } from "./sync";
 
   type Phase = "loading" | "choose" | "prompt" | "feedback" | "empty" | "completed" | "error";
@@ -31,6 +37,7 @@
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
   let advanceTimer: ReturnType<typeof setTimeout> | null = null;
+  let audioMessage = "";
 
   onMount(() => {
     void initializeReflex();
@@ -129,6 +136,7 @@
     cards = cachedCards;
     selectedChoiceId = null;
     answerStored = false;
+    audioMessage = "";
     if (session.completedItems >= session.maxItems || session.endedAt !== null) {
       question = null;
       if (session.endedAt !== null) {
@@ -156,6 +164,8 @@
     selectedResponseMs = Math.max(0, Math.round(performance.now() - promptStartedAt));
     const correct = choiceId === question.card.answerChoiceId;
     answerStored = false;
+    prepareSound();
+    playAnswerFeedback(correct ? "correct" : "incorrect");
     phase = "feedback";
     try {
       const staged = await store.stageAttempt(browserState, {
@@ -243,16 +253,25 @@
   function answerLabel(): string {
     return question?.choices.find(({ id }) => id === question?.card.answerChoiceId)?.label ?? "";
   }
+
+  async function playCardAudio(): Promise<void> {
+    if (!question?.card.media || !getSoundEnabled()) return;
+    const played = await playPronunciationAudio(question.card.media.url);
+    if (!played) {
+      audioMessage = isOffline
+        ? "Pronunciation is not cached on this device."
+        : "Audio unavailable.";
+    }
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
 <section class="learning-surface reflex-surface">
   <div class="surface-heading">
-    <div>
-      <p class="eyebrow">Automaticity</p>
+    <div class="surface-title">
+      <span class="section-mark">02</span>
       <h2>Reflex</h2>
-      <p>Fast retrieval on material you have already met. No FSRS scheduling changes.</p>
     </div>
     <p class="sync-status" class:offline={isOffline}>{syncMessage}</p>
   </div>
@@ -261,13 +280,11 @@
     <div class="empty-state"><p>Preparing a bounded drill…</p></div>
   {:else if phase === "choose"}
     <div class="mode-grid reflex-start">
-      <button class="mode-card" onclick={createNewSession}>
-        <strong>Start 12 quick answers</strong>
-        <span>4 choices · keyboard or touch · weak and slow items recur</span>
+      <button class="mode-card" aria-label="Start 12 quick answers" onclick={createNewSession}>
+        <strong>Start a 12-card drill</strong>
+        <span>Fast choices from vocabulary you already know.</span>
       </button>
-      <p class="boundary-note">
-        Only introduced vocabulary is eligible. Preparing a new drill requires a connection.
-      </p>
+      <p class="boundary-note">Use 1–4 on a keyboard or tap a choice.</p>
     </div>
   {:else if (phase === "prompt" || phase === "feedback") && question && session}
     <article
@@ -280,7 +297,23 @@
         <span>{activityLabel(question.card.activityType)}</span>
       </div>
       <div class="reflex-prompt">
-        <h3>{question.card.prompt}</h3>
+        <div class="prompt-line">
+          <h3>{question.card.prompt}</h3>
+          {#if question.card.media}
+            <button
+              class="word-audio reflex-audio"
+              aria-label="Play pronunciation"
+              onclick={() => void playCardAudio()}
+            >
+              <svg aria-hidden="true" viewBox="0 0 20 20"
+                ><path d="M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z" /><path
+                  d="M13 7a4.2 4.2 0 0 1 0 6M15.2 4.8a7.3 7.3 0 0 1 0 10.4"
+                /></svg
+              >
+              <span>Listen</span>
+            </button>
+          {/if}
+        </div>
         {#if question.card.promptHint}<p>{question.card.promptHint}</p>{/if}
       </div>
       <div class="choice-grid reflex-choice-grid">
@@ -289,6 +322,10 @@
             class:correct={phase === "feedback" && choice.id === question.card.answerChoiceId}
             class:incorrect={phase === "feedback" &&
               choice.id === selectedChoiceId &&
+              choice.id !== question.card.answerChoiceId}
+            class:selected={phase === "feedback" && choice.id === selectedChoiceId}
+            class:dimmed={phase === "feedback" &&
+              choice.id !== selectedChoiceId &&
               choice.id !== question.card.answerChoiceId}
             disabled={phase === "feedback"}
             data-choice-id={choice.id}
@@ -299,9 +336,14 @@
           </button>
         {/each}
       </div>
-      {#if phase === "feedback"}
-        <div class="reflex-feedback" aria-live="polite">
-          <strong
+      <div
+        class:visible={phase === "feedback"}
+        class="reflex-feedback"
+        aria-live="polite"
+        aria-hidden={phase !== "feedback"}
+      >
+        {#if phase === "feedback"}
+          <strong class:wrong={selectedChoiceId !== question.card.answerChoiceId}
             >{selectedChoiceId === question.card.answerChoiceId
               ? "Correct"
               : `Answer: ${answerLabel()}`}</strong
@@ -312,8 +354,11 @@
           <button class="secondary-button" disabled={!answerStored} onclick={continueNow}
             >Continue</button
           >
-        </div>
-      {/if}
+        {/if}
+      </div>
+      <p class="audio-note" class:visible={Boolean(audioMessage)} aria-live="polite">
+        {audioMessage}
+      </p>
     </article>
   {:else if phase === "empty"}
     <div class="empty-state">
@@ -323,7 +368,6 @@
     </div>
   {:else if phase === "completed" && session}
     <div class="empty-state session-summary">
-      <p class="eyebrow">Bounded drill finished</p>
       <h3>Reflex complete</h3>
       <p>
         {session.completedItems} objective attempts are safely {isOffline
@@ -338,9 +382,7 @@
       {#if !browserState?.activeReflexSessionId}
         <button class="primary-button" onclick={createNewSession}>Start another drill</button>
       {:else}
-        <p class="boundary-note">
-          Reconnect to canonically close this prepared session before restarting.
-        </p>
+        <p class="boundary-note">Reconnect to close this session before starting another.</p>
       {/if}
     </div>
   {:else if phase === "error"}

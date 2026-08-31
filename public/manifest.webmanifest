@@ -6,8 +6,8 @@
   "start_url": "/#study",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#efe9dc",
-  "theme_color": "#182b24",
+  "background_color": "#0f1218",
+  "theme_color": "#0f1218",
   "icons": [
     {
       "src": "/icon-192.png",

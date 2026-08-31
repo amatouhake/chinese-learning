@@ -12,6 +12,7 @@ import type {
   ReflexCard,
   ReflexChoice,
   ReflexSessionView,
+  PronunciationMedia,
   StudyMeaning,
 } from "../domain/types";
 
@@ -29,6 +30,10 @@ interface ReflexCandidateRow {
   slow: number;
   average_response_ms: number | null;
   last_trouble_at: number | null;
+  media_id: string | null;
+  media_delivery_key: string | null;
+  media_license: string | null;
+  media_attribution: string | null;
 }
 
 interface ReflexSessionRow {
@@ -173,6 +178,110 @@ async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexC
          r.pinyin,
          r.sense_scope,
          l.meanings_json,
+         (
+           SELECT m.id
+           FROM lexeme_readings media_reading
+           JOIN lexeme_reading_media media_link
+             ON media_link.lexeme_reading_id = media_reading.id
+            AND media_link.role = 'word_pronunciation'
+           JOIN media_assets m ON m.id = media_link.media_asset_id
+           WHERE media_reading.id = COALESCE(
+             r.id,
+             (
+               SELECT preferred_reading.id
+               FROM lexeme_readings preferred_reading
+               WHERE preferred_reading.lexeme_id = l.id
+                 AND preferred_reading.is_preferred = 1
+                 AND preferred_reading.retired_at IS NULL
+               ORDER BY preferred_reading.id
+               LIMIT 1
+             )
+           )
+             AND 1 = (
+               SELECT COUNT(*) FROM lexeme_readings active_reading
+               WHERE active_reading.lexeme_id = l.id
+                 AND active_reading.retired_at IS NULL
+             )
+           LIMIT 1
+         ) AS media_id,
+         (
+           SELECT m.delivery_key
+           FROM lexeme_readings media_reading
+           JOIN lexeme_reading_media media_link
+             ON media_link.lexeme_reading_id = media_reading.id
+            AND media_link.role = 'word_pronunciation'
+           JOIN media_assets m ON m.id = media_link.media_asset_id
+           WHERE media_reading.id = COALESCE(
+             r.id,
+             (
+               SELECT preferred_reading.id
+               FROM lexeme_readings preferred_reading
+               WHERE preferred_reading.lexeme_id = l.id
+                 AND preferred_reading.is_preferred = 1
+                 AND preferred_reading.retired_at IS NULL
+               ORDER BY preferred_reading.id
+               LIMIT 1
+             )
+           )
+             AND 1 = (
+               SELECT COUNT(*) FROM lexeme_readings active_reading
+               WHERE active_reading.lexeme_id = l.id
+                 AND active_reading.retired_at IS NULL
+             )
+           LIMIT 1
+         ) AS media_delivery_key,
+         (
+           SELECT m.license
+           FROM lexeme_readings media_reading
+           JOIN lexeme_reading_media media_link
+             ON media_link.lexeme_reading_id = media_reading.id
+            AND media_link.role = 'word_pronunciation'
+           JOIN media_assets m ON m.id = media_link.media_asset_id
+           WHERE media_reading.id = COALESCE(
+             r.id,
+             (
+               SELECT preferred_reading.id
+               FROM lexeme_readings preferred_reading
+               WHERE preferred_reading.lexeme_id = l.id
+                 AND preferred_reading.is_preferred = 1
+                 AND preferred_reading.retired_at IS NULL
+               ORDER BY preferred_reading.id
+               LIMIT 1
+             )
+           )
+             AND 1 = (
+               SELECT COUNT(*) FROM lexeme_readings active_reading
+               WHERE active_reading.lexeme_id = l.id
+                 AND active_reading.retired_at IS NULL
+             )
+           LIMIT 1
+         ) AS media_license,
+         (
+           SELECT m.attribution
+           FROM lexeme_readings media_reading
+           JOIN lexeme_reading_media media_link
+             ON media_link.lexeme_reading_id = media_reading.id
+            AND media_link.role = 'word_pronunciation'
+           JOIN media_assets m ON m.id = media_link.media_asset_id
+           WHERE media_reading.id = COALESCE(
+             r.id,
+             (
+               SELECT preferred_reading.id
+               FROM lexeme_readings preferred_reading
+               WHERE preferred_reading.lexeme_id = l.id
+                 AND preferred_reading.is_preferred = 1
+                 AND preferred_reading.retired_at IS NULL
+               ORDER BY preferred_reading.id
+               LIMIT 1
+             )
+           )
+             AND 1 = (
+               SELECT COUNT(*) FROM lexeme_readings active_reading
+               WHERE active_reading.lexeme_id = l.id
+                 AND active_reading.retired_at IS NULL
+             )
+           LIMIT 1
+         ) AS media_attribution,
          COUNT(a.event_id) AS attempts,
          COALESCE(SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect,
          COALESCE(SUM(CASE WHEN a.response_ms >= ? THEN 1 ELSE 0 END), 0) AS slow,
@@ -239,6 +348,7 @@ async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexC
       promptHint: target.promptHint,
       answerChoiceId: target.row.card_id,
       choices,
+      media: mediaFromRow(target.row),
       history: reflexHistorySummary(
         {
           attempts: target.row.attempts,
@@ -252,6 +362,23 @@ async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexC
     });
   }
   return cards;
+}
+
+function mediaFromRow(row: ReflexCandidateRow): PronunciationMedia | null {
+  if (
+    row.media_id === null ||
+    row.media_delivery_key === null ||
+    row.media_license === null ||
+    row.media_attribution === null
+  ) {
+    return null;
+  }
+  return {
+    id: row.media_id,
+    url: `/media/${row.media_delivery_key}`,
+    license: row.media_license,
+    attribution: row.media_attribution,
+  };
 }
 
 function toCandidateModel(row: ReflexCandidateRow): CandidateModel {

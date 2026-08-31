@@ -88,10 +88,12 @@
 
 <section class="progress-dashboard" aria-labelledby="progress-heading">
   <header class="dashboard-heading">
-    <div>
-      <p class="eyebrow">Local observability</p>
-      <h2 id="progress-heading">Progress snapshot</h2>
-      <p>Canonical learning history, summarized without changing it.</p>
+    <div class="dashboard-title">
+      <span class="section-mark">05</span>
+      <div>
+        <h2 id="progress-heading">Progress snapshot</h2>
+        <p>Canonical learning history, summarized without changing it.</p>
+      </div>
     </div>
     <button class="refresh-button" onclick={loadSnapshot} disabled={loading}>Refresh</button>
   </header>
@@ -158,8 +160,8 @@
     <section aria-labelledby="mode-progress-heading">
       <div class="section-heading">
         <div>
-          <p class="dashboard-kicker">Last 30 days</p>
           <h3 id="mode-progress-heading">Learning modes</h3>
+          <p class="section-context">Last 30 days</p>
         </div>
         <span>{snapshot.overall.last30Days.answeredAttempts} answers</span>
       </div>
@@ -277,8 +279,8 @@
     <section aria-labelledby="trouble-heading">
       <div class="section-heading">
         <div>
-          <p class="dashboard-kicker">Explainable signals</p>
           <h3 id="trouble-heading">Weak or slow material</h3>
+          <p class="section-context">Explainable signals</p>
         </div>
         <span>Up to 8 items</span>
       </div>

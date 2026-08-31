@@ -4,6 +4,7 @@
   import type { FsrsRating, StudyCard, StudySessionView } from "../domain/types";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
+  import { getSoundEnabled, playPronunciationAudio, prepareSound } from "./sound";
   import { synchronizeLearning } from "./sync";
 
   type Phase = "loading" | "prompt" | "revealed" | "submitting" | "empty" | "completed" | "error";
@@ -24,6 +25,7 @@
   let syncMessage = "Preparing offline cache…";
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
+  let audioMessage = "";
 
   onMount(() => void initializeStudy());
 
@@ -107,6 +109,7 @@
     }
     session = cachedSession;
     card = cachedCard;
+    audioMessage = "";
     if (cachedCard) {
       promptStartedAt = performance.now();
       phase = "prompt";
@@ -183,7 +186,7 @@
       return;
     if (phase === "prompt" && (event.key === " " || event.key === "Enter")) {
       event.preventDefault();
-      phase = "revealed";
+      revealCard();
       return;
     }
     if (phase === "revealed") {
@@ -206,6 +209,23 @@
       .join(" / ");
   }
 
+  function revealCard(): void {
+    if (phase !== "prompt") return;
+    prepareSound();
+    phase = "revealed";
+    void playCardAudio();
+  }
+
+  async function playCardAudio(): Promise<void> {
+    if (!card?.media || !getSoundEnabled()) return;
+    const played = await playPronunciationAudio(card.media.url);
+    if (!played) {
+      audioMessage = isOffline
+        ? "Pronunciation is not cached on this device."
+        : "Audio unavailable.";
+    }
+  }
+
   function showError(error: unknown): void {
     errorMessage = error instanceof Error ? error.message : "Something went wrong.";
     phase = "error";
@@ -219,7 +239,10 @@
 />
 
 <header class="app-header surface-header">
-  <div><p class="eyebrow">Vocabulary study</p></div>
+  <div class="surface-title">
+    <span class="section-mark">01</span>
+    <h2>Study</h2>
+  </div>
   {#if session && (phase === "prompt" || phase === "revealed" || phase === "submitting")}
     <p class="progress" aria-label={`Card ${session.reviewedCards + 1} of ${session.maxCards}`}>
       <strong>{session.reviewedCards + 1}</strong><span>/ {session.maxCards}</span>
@@ -234,12 +257,8 @@
 {#if phase === "loading" || phase === "submitting"}
   <section class="status-panel" aria-live="polite">
     <div class="pulse" aria-hidden="true"></div>
-    <h2>{phase === "submitting" ? "Saving review…" : "Preparing your session…"}</h2>
-    <p>
-      {phase === "submitting"
-        ? "The same event will be retried safely if needed."
-        : "Due cards come first."}
-    </p>
+    <h2>{phase === "submitting" ? "Saving review…" : "Loading today’s set…"}</h2>
+    <p>{phase === "submitting" ? "Your place is safe." : "Due cards are first."}</p>
   </section>
 {:else if phase === "error"}
   <section class="status-panel error-panel" role="alert">
@@ -250,14 +269,16 @@
   </section>
 {:else if phase === "empty"}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">○</p>
+    <p class="completion-mark" aria-hidden="true">—</p>
     <h2>No cards are ready right now</h2>
-    <p>You may be caught up for now. On a fresh setup, complete the HSK import first.</p>
+    <p>You’re caught up for now.</p>
     <button class="primary-button" onclick={() => void createNewSession()}>Check again</button>
   </section>
 {:else if phase === "completed"}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">好</p>
+    <p class="completion-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
+    </p>
     <h2>Session complete</h2>
     <p>
       {session?.reviewedCards ?? 0} reviews are {browserState?.pendingCount
@@ -291,14 +312,14 @@
       <h2 class:hanzi-prompt={card.activityType === "hanzi_to_meaning"}>{promptText(card)}</h2>
     </div>
     {#if phase === "prompt"}
-      <button class="reveal-button" onclick={() => (phase = "revealed")}
+      <button class="reveal-button" onclick={revealCard}
         ><span>Reveal answer</span><kbd>Space</kbd></button
       >
     {:else}
       <div class="answer" aria-label="Answer">
         <div class="answer-heading">
           <p class="answer-hanzi">{card.lexeme.simplified}</p>
-          <div>
+          <div class="answer-reading">
             {#if card.lexeme.traditional && card.lexeme.traditional !== card.lexeme.simplified}<p
                 class="traditional"
               >
@@ -306,25 +327,39 @@
               </p>{/if}
             {#if card.lexeme.pinyin}<p class="pinyin">{card.lexeme.pinyin}</p>{/if}
           </div>
+          {#if card.media}
+            <button
+              class="word-audio"
+              aria-label="Play pronunciation"
+              onclick={() => void playCardAudio()}
+            >
+              <svg aria-hidden="true" viewBox="0 0 20 20"
+                ><path d="M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z" /><path
+                  d="M13 7a4.2 4.2 0 0 1 0 6M15.2 4.8a7.3 7.3 0 0 1 0 10.4"
+                /></svg
+              >
+              <span>Listen</span>
+            </button>
+          {/if}
         </div>
         <div class="meanings">
-          {#each card.lexeme.meanings as meaning}<p>
+          {#each card.lexeme.meanings.slice(0, 3) as meaning}<p>
               <span>{meaning.language.toUpperCase()}</span>{meaning.text}
             </p>{/each}
         </div>
         {#if card.example}
-          <div class="example">
-            <p class="example-label">Example</p>
+          <details class="example">
+            <summary>Example sentence</summary>
             <p class="example-chinese">{card.example.chinese}</p>
             {#if card.example.pinyin}<p class="example-pinyin">{card.example.pinyin}</p>{/if}
             {#if card.example.meaningJa || card.example.meaningEn}<p class="example-meaning">
                 {card.example.meaningJa ?? card.example.meaningEn}
               </p>{/if}
-          </div>
+          </details>
         {/if}
       </div>
       <div class="rating-area">
-        <p>How did recall feel?</p>
+        <p>How did it feel?</p>
         <div class="rating-grid">
           {#each ratings as option}
             <button
@@ -337,12 +372,7 @@
           {/each}
         </div>
       </div>
+      {#if audioMessage}<p class="audio-note" role="status">{audioMessage}</p>{/if}
     {/if}
   </section>
 {/if}
-
-<footer>
-  <span>FSRS rating records recall difficulty.</span><span
-    >Correctness stays unset in this self-check flow.</span
-  >
-</footer>

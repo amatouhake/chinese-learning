@@ -10,6 +10,12 @@
   import { isPronunciationAudioCached } from "./audio-cache";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
+  import {
+    getSoundEnabled,
+    playAnswerFeedback,
+    playPronunciationAudio,
+    prepareSound,
+  } from "./sound";
   import { synchronizeLearning } from "./sync";
 
   type Phase =
@@ -158,6 +164,7 @@
 
   function revealRecall(): void {
     if (phase !== "prompt" || !card) return;
+    prepareSound();
     phase = "revealed";
     if (card.activityType === "pronunciation_production" && card.media) void playAudio();
   }
@@ -165,6 +172,8 @@
   async function selectChoice(choiceId: string): Promise<void> {
     if (phase !== "prompt" || !card?.answerChoiceId) return;
     const correct = choiceId === card.answerChoiceId;
+    prepareSound();
+    playAnswerFeedback(correct ? "correct" : "incorrect");
     await saveAttempt({
       correct,
       metadata: { interaction: "choice", selectedChoiceId: choiceId, readingId: card.readingId },
@@ -284,6 +293,7 @@
 
   async function playAudio(): Promise<void> {
     audioError = "";
+    if (!getSoundEnabled()) return;
     if (!card?.media) {
       audioError = "No reliable source recording is mapped to this exact reading.";
       return;
@@ -293,9 +303,7 @@
         "This recording was not cached before the connection was lost. Skip it to continue.";
       return;
     }
-    try {
-      await new Audio(card.media.url).play();
-    } catch {
+    if (!(await playPronunciationAudio(card.media.url))) {
       audioError = "Audio could not play. Tap replay or check that local media was staged.";
     }
   }
@@ -347,7 +355,10 @@
 <svelte:window ononline={() => void handleOnline()} onoffline={handleOffline} />
 
 <header class="app-header surface-header">
-  <div><p class="eyebrow">Pronunciation foundation</p></div>
+  <div class="surface-title">
+    <span class="section-mark">03</span>
+    <h2>Speak</h2>
+  </div>
   {#if session && (phase === "prompt" || phase === "revealed" || phase === "submitting")}
     <p
       class="progress"
@@ -366,21 +377,15 @@
 {#if phase === "loading" || phase === "submitting"}
   <section class="status-panel" aria-live="polite">
     <div class="pulse pronunciation-pulse" aria-hidden="true"></div>
-    <h2>{phase === "submitting" ? "Saving practice…" : "Preparing sounds…"}</h2>
-    <p>
-      {phase === "submitting"
-        ? "This ordinary-practice event is durable and idempotent."
-        : "Every prompt stays attached to one exact reading."}
-    </p>
+    <h2>{phase === "submitting" ? "Saving practice…" : "Loading sound practice…"}</h2>
+    <p>{phase === "submitting" ? "Your place is safe." : "Each prompt uses one exact reading."}</p>
   </section>
 {:else if phase === "choose"}
   <section class="mode-picker">
     <div class="mode-picker-heading">
       <p class="status-kicker">Ten focused items</p>
-      <h2>What do you want to hear?</h2>
-      <p>
-        Mixed practice is the best default. All pronunciation work here is unscheduled practice.
-      </p>
+      <h2>Choose a sound focus</h2>
+      <p>Mixed practice is a good place to start.</p>
     </div>
     <div class="focus-grid">
       {#each focuses as focus}
@@ -403,14 +408,16 @@
   </section>
 {:else if phase === "empty"}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">声</p>
+    <p class="completion-mark" aria-hidden="true">—</p>
     <h2>No matching practice is available</h2>
-    <p>Import the pronunciation corpus, or choose a focus with available exact-reading content.</p>
+    <p>Choose another focus or return after more vocabulary is ready.</p>
     <button class="primary-button" onclick={() => (phase = "choose")}>Choose another focus</button>
   </section>
 {:else if phase === "completed"}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">听</p>
+    <p class="completion-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
+    </p>
     <h2>Pronunciation set complete</h2>
     <p>
       {session?.completedItems ?? 0} non-FSRS attempts are {browserState?.pendingCount
@@ -439,7 +446,11 @@
           disabled={isOffline && !audioAvailableOffline}
           onclick={() => void playAudio()}
           aria-label="Play or replay word audio"
-          ><span aria-hidden="true">▶</span><strong>Play / replay</strong></button
+          ><svg aria-hidden="true" viewBox="0 0 20 20"
+            ><path d="M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z" /><path
+              d="M13 7a4.2 4.2 0 0 1 0 6M15.2 4.8a7.3 7.3 0 0 1 0 10.4"
+            /></svg
+          ><strong>Play / replay</strong></button
         >
         {#if isOffline && !audioAvailableOffline}
           <p class="audio-error" role="status">
@@ -501,7 +512,11 @@
           </div>{/if}
         {#if card.media}
           <button class="audio-replay-small" onclick={() => void playAudio()}
-            >▶ Replay exact-reading audio</button
+            ><svg aria-hidden="true" viewBox="0 0 20 20"
+              ><path d="M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z" /><path
+                d="M13 7a4.2 4.2 0 0 1 0 6M15.2 4.8a7.3 7.3 0 0 1 0 10.4"
+              /></svg
+            > Replay exact-reading audio</button
           >
           <p class="media-credit">{card.media.attribution} · {card.media.license}</p>
         {:else if card.activityType === "pronunciation_production"}<p class="safe-degrade">
@@ -560,9 +575,3 @@
     </div>
   </div>
 </details>
-
-<footer>
-  <span>Correctness, production self-rating, and FSRS rating are separate fields.</span><span
-    >Pronunciation sessions never mutate card_state.</span
-  >
-</footer>

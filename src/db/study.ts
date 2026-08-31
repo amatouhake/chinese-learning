@@ -30,6 +30,10 @@ interface StudyCardRow {
   numeric_pinyin: string | null;
   preferred_meanings_json: string | null;
   hsk_level: number | null;
+  media_id: string | null;
+  media_delivery_key: string | null;
+  media_license: string | null;
+  media_attribution: string | null;
   example_chinese: string | null;
   example_pinyin: string | null;
   example_meaning_ja: string | null;
@@ -226,6 +230,78 @@ async function selectStudyCard(
           WHERE lt.lexeme_id = l.id AND t.kind = 'hsk-2.0'
         ) AS hsk_level,
         (
+          SELECT m.id
+          FROM lexeme_readings media_reading
+          JOIN lexeme_reading_media media_link
+            ON media_link.lexeme_reading_id = media_reading.id
+           AND media_link.role = 'word_pronunciation'
+          JOIN media_assets m ON m.id = media_link.media_asset_id
+          WHERE media_reading.lexeme_id = l.id
+            AND media_reading.is_preferred = 1
+            AND media_reading.retired_at IS NULL
+            AND 1 = (
+              SELECT COUNT(*) FROM lexeme_readings active_reading
+              WHERE active_reading.lexeme_id = l.id
+                AND active_reading.retired_at IS NULL
+            )
+          ORDER BY media_reading.id
+          LIMIT 1
+        ) AS media_id,
+        (
+          SELECT m.delivery_key
+          FROM lexeme_readings media_reading
+          JOIN lexeme_reading_media media_link
+            ON media_link.lexeme_reading_id = media_reading.id
+           AND media_link.role = 'word_pronunciation'
+          JOIN media_assets m ON m.id = media_link.media_asset_id
+          WHERE media_reading.lexeme_id = l.id
+            AND media_reading.is_preferred = 1
+            AND media_reading.retired_at IS NULL
+            AND 1 = (
+              SELECT COUNT(*) FROM lexeme_readings active_reading
+              WHERE active_reading.lexeme_id = l.id
+                AND active_reading.retired_at IS NULL
+            )
+          ORDER BY media_reading.id
+          LIMIT 1
+        ) AS media_delivery_key,
+        (
+          SELECT m.license
+          FROM lexeme_readings media_reading
+          JOIN lexeme_reading_media media_link
+            ON media_link.lexeme_reading_id = media_reading.id
+           AND media_link.role = 'word_pronunciation'
+          JOIN media_assets m ON m.id = media_link.media_asset_id
+          WHERE media_reading.lexeme_id = l.id
+            AND media_reading.is_preferred = 1
+            AND media_reading.retired_at IS NULL
+            AND 1 = (
+              SELECT COUNT(*) FROM lexeme_readings active_reading
+              WHERE active_reading.lexeme_id = l.id
+                AND active_reading.retired_at IS NULL
+            )
+          ORDER BY media_reading.id
+          LIMIT 1
+        ) AS media_license,
+        (
+          SELECT m.attribution
+          FROM lexeme_readings media_reading
+          JOIN lexeme_reading_media media_link
+            ON media_link.lexeme_reading_id = media_reading.id
+           AND media_link.role = 'word_pronunciation'
+          JOIN media_assets m ON m.id = media_link.media_asset_id
+          WHERE media_reading.lexeme_id = l.id
+            AND media_reading.is_preferred = 1
+            AND media_reading.retired_at IS NULL
+            AND 1 = (
+              SELECT COUNT(*) FROM lexeme_readings active_reading
+              WHERE active_reading.lexeme_id = l.id
+                AND active_reading.retired_at IS NULL
+            )
+          ORDER BY media_reading.id
+          LIMIT 1
+        ) AS media_attribution,
+        (
           SELECT s.chinese
           FROM sentence_lexemes sl JOIN sentences s ON s.id = sl.sentence_id
           WHERE sl.lexeme_id = l.id AND s.retired_at IS NULL
@@ -392,6 +468,18 @@ function mapStudyCard(
       meanings: selectStudyMeanings(row.meanings_json, row.preferred_meanings_json),
       hskLevel: row.hsk_level,
     },
+    media:
+      row.media_id === null ||
+      row.media_delivery_key === null ||
+      row.media_license === null ||
+      row.media_attribution === null
+        ? null
+        : {
+            id: row.media_id,
+            url: `/media/${row.media_delivery_key}`,
+            license: row.media_license,
+            attribution: row.media_attribution,
+          },
     example:
       row.example_chinese === null
         ? null

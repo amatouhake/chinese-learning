@@ -7,6 +7,20 @@ const DB_NAME = "chinese-learning.offline.v1";
 test.describe("offline PWA foundation", () => {
   test.describe.configure({ timeout: 60_000 });
 
+  test("persists the global sound preference across reload", async ({ page }) => {
+    await page.goto("/#study");
+    await expect(page.getByRole("button", { name: "Sound on" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Sound on" }).click();
+    await expect(page.getByRole("button", { name: "Sound off" })).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Sound off" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Sound off" }).click();
+    await expect(page.getByRole("button", { name: "Sound on" })).toBeVisible();
+  });
+
   test("queues across offline reload, partially retries, and converges with workerd/D1", async ({
     page,
     context,
