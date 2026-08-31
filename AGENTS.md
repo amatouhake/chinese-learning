@@ -38,6 +38,15 @@ layer. There is no numeric coverage threshold; behavior and offline synchronizat
 the gate. Run `bun run check` before pushing and `bun run check:full` when corpus, migrations,
 ingestion, pronunciation media, or offline browser behavior changes.
 
+## Operational Guardrails
+
+Repository code, migrations, and tests are the authority for exact implemented behavior; architecture
+and design documents define intent and constraints. If they disagree, do not silently reconcile them.
+
+Do not deploy or mutate remote Cloudflare/D1 resources, Notion, production secrets, or other external
+systems unless the owner explicitly authorizes that operation. Prefer local tooling, dry-runs, and
+GitHub-only changes by default.
+
 ## Commit & Pull Request Guidelines
 
 Follow the history's imperative Conventional Commit subjects: `feat: add ...`, `fix: preserve ...`,
