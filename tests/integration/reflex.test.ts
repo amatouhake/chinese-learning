@@ -146,6 +146,8 @@ describe("Reflex automaticity foundation", () => {
       deviceSeq: 2,
       metadata: {
         ...attempt.metadata,
+        round: 2,
+        presentationId: `reflex-foundation-session:2:${card.cardId}`,
         options: (attempt.metadata?.options as Array<Record<string, unknown>>).map(
           (option, index) => (index === 0 ? { ...option, label: "tampered" } : option),
         ),
@@ -165,6 +167,82 @@ describe("Reflex automaticity foundation", () => {
       }),
     ).rejects.toThrow("session bound");
 
+    await expect(
+      ingestAttempt(env.DB, {
+        ...attempt,
+        eventId: "reflex-reused-round-event",
+        deviceSeq: 2,
+      }),
+    ).rejects.toThrow("canonical next session round");
+
+    for (const round of [2, 3]) {
+      const nextPresentation = presentReflexQuestion(
+        card,
+        "reflex-foundation-session",
+        round,
+        round - 1,
+      );
+      await ingestAttempt(
+        env.DB,
+        reflexAttempt(card, nextPresentation.choices, card.answerChoiceId, {
+          eventId: `reflex-foundation-event-${round}`,
+          deviceSeq: round,
+          round,
+        }),
+      );
+    }
+
+    let waitingWriters = 0;
+    let releaseWriters!: () => void;
+    const writersReady = new Promise<void>((resolve) => {
+      releaseWriters = resolve;
+    });
+    const beforeUnscheduledWrite = async (): Promise<void> => {
+      waitingWriters += 1;
+      if (waitingWriters === 2) releaseWriters();
+      await writersReady;
+    };
+    const finalPresentation = presentReflexQuestion(card, "reflex-foundation-session", 4, 3);
+    const finalAttempts = [4, 5].map((deviceSeq) =>
+      reflexAttempt(card, finalPresentation.choices, card.answerChoiceId, {
+        eventId: `reflex-concurrent-final-${deviceSeq}`,
+        deviceSeq,
+        round: 4,
+      }),
+    );
+    const concurrent = await Promise.allSettled(
+      finalAttempts.map((finalAttempt) =>
+        ingestAttempt(env.DB, finalAttempt, { beforeUnscheduledWrite }),
+      ),
+    );
+    expect(concurrent.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    const rejected = concurrent.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(rejected).toHaveLength(1);
+    expect(String(rejected[0]?.reason)).toContain("session advanced");
+    expect(
+      await env.DB.prepare(
+        `SELECT COUNT(*) AS count FROM attempts
+         WHERE study_session_id = 'reflex-foundation-session'
+           AND json_extract(metadata_json, '$.interaction') = 'reflex-multiple-choice'`,
+      ).first<number>("count"),
+    ).toBe(4);
+    expect(
+      await env.DB.prepare(
+        `SELECT COUNT(*) AS count FROM server_changes
+         WHERE entity_id IN ('reflex-concurrent-final-4', 'reflex-concurrent-final-5')`,
+      ).first<number>("count"),
+    ).toBe(1);
+    const committedFinalId = await env.DB.prepare(
+      `SELECT event_id FROM attempts
+       WHERE event_id IN ('reflex-concurrent-final-4', 'reflex-concurrent-final-5')`,
+    ).first<string>("event_id");
+    const committedFinal = finalAttempts.find(({ eventId }) => eventId === committedFinalId);
+    if (!committedFinal) throw new Error("missing committed final Reflex attempt");
+    expect((await ingestAttempt(env.DB, committedFinal)).disposition).toBe("duplicate");
+    expect(await schedulerSnapshot()).toEqual(before);
+
     await retireFixtureLexemes(lexemes);
   });
 });
@@ -173,11 +251,17 @@ function reflexAttempt(
   card: ReflexCard,
   choices: ReflexCard["choices"],
   selectedChoiceId: string,
+  overrides: {
+    eventId?: string;
+    deviceSeq?: number;
+    round?: number;
+  } = {},
 ): AttemptInput {
+  const round = overrides.round ?? 1;
   return {
-    eventId: "reflex-foundation-event",
+    eventId: overrides.eventId ?? "reflex-foundation-event",
     deviceId: "reflex-foundation-device",
-    deviceSeq: 1,
+    deviceSeq: overrides.deviceSeq ?? 1,
     occurredAt: "2026-08-31T01:00:00Z",
     cardId: card.cardId,
     studySessionId: "reflex-foundation-session",
@@ -187,8 +271,8 @@ function reflexAttempt(
     responseMs: 3_200,
     metadata: {
       interaction: REFLEX_INTERACTION,
-      presentationId: `reflex-foundation-session:1:${card.cardId}`,
-      round: 1,
+      presentationId: `reflex-foundation-session:${round}:${card.cardId}`,
+      round,
       prompt: card.prompt,
       promptHint: card.promptHint,
       answerChoiceId: card.answerChoiceId,

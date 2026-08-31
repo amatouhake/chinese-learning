@@ -237,18 +237,19 @@ This is bounded selection, not retention scheduling.
 Every question has exactly four stable canonical choice identities. Distractors come only from the
 same activity, never from the target lexeme, and duplicate normalized labels are removed. A
 meaning-to-Hanzi prompt is withheld when its displayed meaning is not unique. Hanzi prompts are
-withheld for multi-reading lexemes; pinyin-to-Hanzi prompts include a meaning hint and are withheld
-when the same pinyin-plus-meaning prompt is not unique. Choice positions rotate on repeat exposure,
-so a learner cannot succeed by memorizing a fixed button.
+withheld for multi-reading lexemes; pinyin-to-Hanzi prompts prefer the exact reading's sense hint and
+are withheld when the same pinyin-plus-meaning prompt is not unique. Choice positions rotate on
+repeat exposure, so a learner cannot succeed by memorizing a fixed button.
 
 Each answer appends an ordinary immutable `attempt` with the exact card/lexeme or reading identity,
 activity, objective correctness, response milliseconds, presentation ID, round, prompt, hint,
 correct and selected choice IDs, and the four labels in presented order. Ingestion verifies those
 facts against the prepared session before accepting them. Duplicate delivery returns the original
-fact, device sequences remain unique, and delayed offline delivery uses the same outbox and canonical
-push-before-pull path as every other mode. Reflex attempts cannot carry an FSRS review or expected
-card-state version, never create `fsrs_reviews`, and never update due date, stability, difficulty, or
-vocabulary `card_state`.
+fact, device sequences remain unique, and D1 atomically requires the next round while enforcing the
+prepared bound. Delayed offline delivery uses the same ordered outbox and canonical push-before-pull
+path as every other mode. Reflex attempts cannot carry an FSRS review or expected card-state version,
+never create `fsrs_reviews`, and never update due date, stability, difficulty, or vocabulary
+`card_state`.
 
 ## Vocabulary study flow
 

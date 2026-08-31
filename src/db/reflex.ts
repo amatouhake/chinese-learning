@@ -255,7 +255,7 @@ async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexC
 }
 
 function toCandidateModel(row: ReflexCandidateRow): CandidateModel {
-  const meaning = displayMeaning(row.meanings_json, row.sense_scope);
+  const meaning = displayReflexMeaning(row.meanings_json, row.sense_scope);
   switch (row.activity_type) {
     case "hanzi_to_meaning":
       return {
@@ -434,10 +434,8 @@ function parseContext(json: string): ReflexSessionContext {
   return value as ReflexSessionContext;
 }
 
-function displayMeaning(meaningsJson: string, senseScope: string | null): string {
+export function displayReflexMeaning(meaningsJson: string, senseScope: string | null): string {
   const lexemeMeanings = parseMeanings(meaningsJson);
-  const japanese = lexemeMeanings.find(({ language }) => language === "ja")?.text;
-  if (japanese) return japanese;
   if (senseScope !== null) {
     const value: unknown = JSON.parse(senseScope);
     if (Array.isArray(value)) {
@@ -445,6 +443,8 @@ function displayMeaning(meaningsJson: string, senseScope: string | null): string
       if (meanings.length > 0) return meanings.join("; ");
     }
   }
+  const japanese = lexemeMeanings.find(({ language }) => language === "ja")?.text;
+  if (japanese) return japanese;
   const english = lexemeMeanings
     .filter(({ language }) => language === "en")
     .map(({ text }) => text);

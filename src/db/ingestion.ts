@@ -37,6 +37,8 @@ const MAX_CONCURRENCY_RETRIES = 3;
 export interface IngestOptions {
   now?: () => number;
   forceFailureAfterWrites?: boolean;
+  /** Coordination seam used to exercise concurrent ordinary-attempt writes after validation. */
+  beforeUnscheduledWrite?: () => Promise<void>;
   /** Coordination seam used to exercise an interleaving immediately before the atomic write. */
   beforeScheduledWrite?: () => Promise<void>;
 }
@@ -164,6 +166,7 @@ export async function ingestAttempt(
             options,
           );
         } else {
+          await options.beforeUnscheduledWrite?.();
           await insertUnscheduledAttempt(db, input, occurredAt, receivedAt, options);
         }
         const inserted = await findAttempt(db, input.eventId);
@@ -179,7 +182,7 @@ export async function ingestAttempt(
         const duplicate = await findAttempt(db, input.eventId);
         if (duplicate) return duplicateResult(db, duplicate, input, occurredAt);
         await assertDeviceSequenceAvailable(db, input);
-        throw error;
+        throw mapReflexSequenceConstraint(input, error);
       }
     }
 
@@ -848,6 +851,9 @@ async function validateReflexAttempt(
   if (metadata.round > maxItems) {
     throw new InvalidInputError("reflex presentation exceeds the prepared session bound");
   }
+  if (metadata.round !== completedItems + 1) {
+    throw new InvalidInputError("reflex presentation is not the canonical next session round");
+  }
   if (
     prepared.activityType !== input.activityType ||
     metadata.prompt !== prepared.prompt ||
@@ -971,6 +977,19 @@ async function assertDeviceSequenceAvailable(db: D1Database, input: AttemptInput
       `device sequence ${input.deviceId}/${input.deviceSeq} already belongs to another event`,
     );
   }
+}
+
+function mapReflexSequenceConstraint(input: AttemptInput, error: unknown): unknown {
+  if (input.mode !== "reflex" || input.metadata?.interaction !== REFLEX_INTERACTION) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.includes("canonical Reflex attempt is not the next session round") ||
+    message.includes("canonical Reflex session reached its prepared bound") ||
+    message.includes("canonical Reflex session has ended")
+  ) {
+    return new ConflictError("reflex session advanced before this response could be accepted");
+  }
+  return error;
 }
 
 async function assertStudySessionOwnedByDevice(

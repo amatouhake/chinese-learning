@@ -9,9 +9,20 @@ import {
   selectNextReflexCard,
   selectReflexPool,
 } from "../../src/domain/reflex";
+import { displayReflexMeaning } from "../../src/db/reflex";
 import type { ReflexActivityType, ReflexAnswerRecord, ReflexCard } from "../../src/domain/types";
 
 describe("Reflex automaticity selection", () => {
+  test("prefers an exact reading sense over a lexeme-wide Japanese enrichment", () => {
+    const lexemeMeanings = JSON.stringify([
+      { language: "ja", text: "良い" },
+      { language: "en", text: "good" },
+    ]);
+
+    expect(displayReflexMeaning(lexemeMeanings, JSON.stringify(["be fond of"]))).toBe("be fond of");
+    expect(displayReflexMeaning(lexemeMeanings, null)).toBe("良い");
+  });
+
   test("prioritizes incorrect, slow, recent, and under-practiced history", () => {
     const now = Date.parse("2026-08-31T00:00:00Z");
     const clean = reflexHistorySummary(
