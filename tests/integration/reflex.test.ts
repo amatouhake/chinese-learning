@@ -8,11 +8,7 @@ import {
 } from "../../src/db/pronunciation-import";
 import { createReflexSession } from "../../src/db/reflex";
 import { pullSyncChanges } from "../../src/db/sync";
-import {
-  buildV1ImportStatements,
-  type V1ImportInput,
-  type V1SourceLexeme,
-} from "../../src/db/v1-import";
+import { buildV1ImportStatements, type V1SourceLexeme } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
 import { REFLEX_INTERACTION, presentReflexQuestion } from "../../src/domain/reflex";
 import type { AttemptInput, ReflexCard } from "../../src/domain/types";

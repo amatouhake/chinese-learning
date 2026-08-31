@@ -6,7 +6,7 @@ import { createStudySession } from "../../src/db/study";
 import { pullSyncChanges } from "../../src/db/sync";
 import { buildV1ImportStatements, type V1ImportInput } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
-import type { AttemptInput, StudyCard, SyncPullResponse } from "../../src/domain/types";
+import type { AttemptInput, StudyCard } from "../../src/domain/types";
 
 describe("offline sync contract", () => {
   test("bulk-loads a full learner-change page within the D1 Free query budget", async () => {

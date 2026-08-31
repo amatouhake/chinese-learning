@@ -63,11 +63,11 @@ bun run import:v1 -- \
   --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
   --v1-root /tmp/chinese-learning-v1-source \
   --output .generated/v1-import.sql
-bunx wrangler d1 execute chinese-learning --local --file .generated/v1-import.sql
+bun run db:execute:local -- --file .generated/v1-import.sql
 bun run import:pronunciation -- \
   --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
   --audio-root /tmp/chinese-learning-audio-cmn
-bunx wrangler d1 execute chinese-learning --local --file .generated/pronunciation-import.sql
+bun run db:execute:local -- --file .generated/pronunciation-import.sql
 bun run dev:worker
 ```
 
@@ -103,35 +103,55 @@ deploy is configured.
 
 ## Verification and development commands
 
+The repository tooling contract is Prettier for formatting, ESLint for JS/TS/Svelte defect
+checking, `svelte-check` plus TypeScript for compiler correctness, and project scripts for all test
+and build gates. Use the scripts instead of invoking their underlying tools directly.
+
 ```sh
+bun run format           # rewrite supported files with Prettier
+bun run format:check     # verify formatting without writes
+bun run lint             # ESLint recommended JS/TS/Svelte rules
+bun run lint:fix         # apply safe ESLint fixes
 bun run typecheck
-bun run test              # fast Bun domain/browser tests
+bun run test              # alias for the fast Bun unit suite
+bun run test:unit
 bun run test:integration  # workerd/Miniflare tests with a real D1 binding
-bun run test:browser      # bounded phone/desktop dogfood against imported local D1/media
-bun run test:all
-bun run format:check
+bun run test:browser      # prepare isolated D1/media, then run phone/desktop Playwright dogfood
+bun run test:all          # unit + integration + browser
 bun run cf-types:check
 bun run build             # Vite build + Wrangler dry-run Worker bundle; does not deploy
+bun run verify:corpus
+bun run verify:pronunciation
+bun run check             # normal source-only correctness gate
+bun run check:full        # check + both corpus verifiers + isolated browser dogfood
 ```
 
-Install the browser binary once with
-`PLAYWRIGHT_BROWSERS_PATH=.generated/playwright-browsers bunx playwright install chromium` before
-running `test:browser`. The browser suite starts the real local Worker and uses Playwright's network
-simulation to study online, disconnect, queue multiple Vocabulary and Pronunciation events, reload
-offline, retry a partial push, reconnect, and verify convergence with local D1. Phone and desktop
-coverage also checks the Chinese-first reveal order, the systematic grammar path, offline Reading
-and Grammar attempts, reload, and reconnect. The suite additionally covers multi-tab sequence
-allocation, legacy-state migration, cached versus uncached audio, a late-arriving review, a mixed
-ten-item phone session, the polyphonic `的`, and the tone-pair reference. Reflex dogfood covers phone
-and desktop layouts, keyboard and touch answers, correct/incorrect/slow responses, adaptive repeats,
-option-position rotation, session restart, offline reload/reconnect, duplicate retry, and the absence
-of scheduler projection changes.
+`bun run check` verifies generated Worker types, formatting, linting, types, unit and workerd/D1
+integration tests, the production Vite build, and the Wrangler dry run. It needs only the repository
+and its frozen dependencies, so it is the normal pre-push gate. `bun run check:full` additionally
+recreates both corpus imports, verifies pronunciation media, prepares an isolated browser-test D1
+database, and runs Playwright. It expects the three pinned source checkouts from Fresh local setup at
+their documented `/tmp/chinese-learning-*` paths. Each corpus or browser command also accepts the
+corresponding `--vocabulary-root`, `--v1-root`, and `--audio-root` overrides.
+
+Install the browser binary once with `bun run browser:install` before running `test:browser` or
+`check:full`. Browser preparation is rebuilt under `.generated/browser-test`; it does not reuse or
+mutate the ordinary local study database under `.wrangler`. The suite starts the real local Worker
+and uses Playwright's network simulation to study online, disconnect, queue multiple Vocabulary and
+Pronunciation events, reload offline, retry a partial push, reconnect, and verify convergence with
+local D1. Phone and desktop coverage also checks the Chinese-first reveal order, the systematic
+grammar path, offline Reading and Grammar attempts, reload, and reconnect. The suite additionally
+covers multi-tab sequence allocation, legacy-state migration, cached versus uncached audio, a
+late-arriving review, a mixed ten-item phone session, the polyphonic `的`, and the tone-pair
+reference. Reflex dogfood covers phone and desktop layouts, keyboard and touch answers,
+correct/incorrect/slow responses, adaptive repeats, option-position rotation, session restart,
+offline reload/reconnect, duplicate retry, and the absence of scheduler projection changes.
 
 To re-run the exact full-corpus gate against an isolated temporary D1 database (without touching
 the app's local study data):
 
 ```sh
-bun run verify:full-import -- \
+bun run verify:corpus -- \
   --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
   --v1-root /tmp/chinese-learning-v1-source
 
@@ -140,6 +160,16 @@ bun run verify:pronunciation -- \
   --v1-root /tmp/chinese-learning-v1-source \
   --audio-root /tmp/chinese-learning-audio-cmn
 ```
+
+Those root arguments are optional when the checkouts use the documented `/tmp` paths.
+
+GitHub Actions exposes three merge-facing checks. `Quality` runs `bun install --frozen-lockfile`
+and `bun run check`. `Browser` runs on pull requests after `Quality`, checks out the pinned sources,
+installs the lockfile-pinned Chromium build, and runs the isolated Playwright command. `Corpus
+integrity` runs both complete verifiers whenever corpus, ingestion, migrations, validation tooling,
+or dependency inputs change; otherwise it records an intentional successful skip. A weekly schedule
+and manual dispatch run the full corpus job regardless of changed paths. All jobs use read-only
+repository permissions and have bounded timeouts; no CI job deploys or accesses production D1.
 
 The pinned corpus produces 595 lexemes (150/147/298 for Levels 1/2/3), 800 active readings, 595
 examples, and 1,190 scheduled vocabulary cards with 1,190 initial card states. Five verified

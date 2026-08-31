@@ -17,7 +17,7 @@ export interface LearningSyncResult {
 export function synchronizeLearning(store: OfflineLearningStore): Promise<LearningSyncResult> {
   return store.runSyncExclusive(async () => {
     let pushed = 0;
-    let state = await store.reconcileLegacyState();
+    await store.reconcileLegacyState();
     const pending = await store.listPendingAttempts();
     for (const attempt of pending) {
       try {
@@ -39,7 +39,7 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
       }
     }
 
-    state = await store.snapshot();
+    let state = await store.snapshot();
     const [studySession, reflexSession, pronunciationSession, readingSession, grammarSession] =
       await Promise.all([
         state.activeSessionId ? store.getStudySession(state.activeSessionId) : null,
