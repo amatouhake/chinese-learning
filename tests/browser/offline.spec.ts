@@ -82,13 +82,13 @@ test.describe("offline PWA foundation", () => {
     await context.setOffline(true);
 
     await completeVocabulary(page, 3);
-    await page.getByRole("button", { name: "発音" }).click();
+    await page.getByRole("button", { name: "発音", exact: true }).click();
     await completePronunciation(page, 3);
     await expect(page.locator(".study-card")).toBeVisible();
     await page.reload();
     await expect(page.getByRole("heading", { name: "中文学习" })).toBeVisible();
     await completePronunciation(page, 2);
-    await page.getByRole("button", { name: "単語" }).click();
+    await page.getByRole("button", { name: "単語", exact: true }).click();
     await completeVocabulary(page, 2);
 
     const queued = await readOutbox(page);
@@ -276,8 +276,7 @@ test.describe("offline PWA foundation", () => {
     await context.setOffline(true);
 
     for (let index = 0; index < 10; index += 1) {
-      await answerPronunciationCard(page);
-      if (index < 9) await expect(page.locator(".study-card")).toBeVisible();
+      await answerPronunciationCard(page, index < 9);
     }
     await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
@@ -337,7 +336,7 @@ test.describe("offline PWA foundation", () => {
     const failedSessionId = (await readMeta(page)).activePronunciationSessionId;
     expect(typeof failedSessionId).toBe("string");
 
-    await page.getByRole("button", { name: "単語" }).click();
+    await page.getByRole("button", { name: "単語", exact: true }).click();
     await expect(page.getByRole("button", { name: "練習を始める" })).toBeVisible({
       timeout: 20_000,
     });
@@ -384,7 +383,7 @@ test.describe("offline PWA foundation", () => {
         body: JSON.stringify({ error: "simulated pronunciation service outage" }),
       });
     });
-    await page.getByRole("button", { name: "発音" }).click();
+    await page.getByRole("button", { name: "発音", exact: true }).click();
     await expect(page.locator(".study-card")).toBeVisible();
     await expect(page.locator(".sync-status")).toContainText(
       "サーバーに接続できないため、保存済みの発音セットを使います",
@@ -419,7 +418,7 @@ test.describe("offline PWA foundation", () => {
     const failedSessionId = (await readMeta(page)).activeSessionId;
     expect(typeof failedSessionId).toBe("string");
 
-    await page.getByRole("button", { name: "発音" }).click();
+    await page.getByRole("button", { name: "発音", exact: true }).click();
     await page.getByRole("button", { name: "おまかせ" }).click();
     await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
     expect(
@@ -465,7 +464,11 @@ test.describe("offline PWA foundation", () => {
         ),
       ).toBeVisible();
       await page.getByRole("button", { name: "音声をスキップ" }).click();
-      if (item < 9) await expect(page.locator(".study-card")).toBeVisible();
+      if (item < 9) {
+        await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt", {
+          timeout: 20_000,
+        });
+      }
     }
 
     await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
@@ -689,10 +692,10 @@ async function prepareVocabularyAndPronunciation(page: Page): Promise<void> {
   await page.goto("/#study");
   await startStudy(page);
   await waitForServiceWorker(page);
-  await page.getByRole("button", { name: "発音" }).click();
+  await page.getByRole("button", { name: "発音", exact: true }).click();
   await page.getByRole("button", { name: "おまかせ" }).click();
   await expect(page.locator(".study-card")).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "単語" }).click();
+  await page.getByRole("button", { name: "単語", exact: true }).click();
   await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible({
     timeout: 20_000,
   });
@@ -720,11 +723,13 @@ async function startStudy(page: Page): Promise<void> {
 async function completePronunciation(page: Page, count: number): Promise<void> {
   for (let index = 0; index < count; index += 1) {
     await answerPronunciationCard(page);
-    await expect(page.locator(".study-card")).toBeVisible();
   }
 }
 
-async function answerPronunciationCard(page: Page): Promise<void> {
+async function answerPronunciationCard(page: Page, waitForNextPrompt = true): Promise<void> {
+  await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt", {
+    timeout: 20_000,
+  });
   const activity = await page.locator(".card-meta span").nth(1).textContent();
   if (activity?.startsWith("音声")) {
     await page.getByRole("button", { name: "単語の音声を再生・聞き直す" }).click();
@@ -740,6 +745,11 @@ async function answerPronunciationCard(page: Page): Promise<void> {
     await page.getByRole("button", { name: "思い出せた" }).click();
   }
   await page.getByRole("button", { name: "次へ" }).click();
+  if (waitForNextPrompt) {
+    await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt", {
+      timeout: 20_000,
+    });
+  }
 }
 
 async function waitForServiceWorker(page: Page): Promise<void> {

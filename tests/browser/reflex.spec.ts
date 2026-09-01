@@ -114,11 +114,11 @@ test.describe("Reflex automaticity dogfood", () => {
       true,
     );
 
-    await page.getByRole("button", { name: "単語" }).click();
+    await page.getByRole("button", { name: "単語", exact: true }).click();
     await expect(page.getByRole("button", { name: "練習を始める" })).toBeVisible({
       timeout: 20_000,
     });
-    await page.getByRole("button", { name: "発音" }).click();
+    await page.getByRole("button", { name: "発音", exact: true }).click();
     await expect(page.getByRole("button", { name: "おまかせ" })).toBeVisible();
     await page.getByRole("button", { name: "読解", exact: true }).click();
     await expect(page.getByRole("button", { name: "例文を読む" })).toBeVisible();

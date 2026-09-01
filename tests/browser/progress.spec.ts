@@ -103,7 +103,7 @@ test.describe("local progress dashboard dogfood", () => {
       true,
     );
 
-    await page.getByRole("button", { name: "発音" }).click();
+    await page.getByRole("button", { name: "発音", exact: true }).click();
     await expect(page.getByRole("button", { name: "おまかせ" })).toBeVisible();
     await page.getByRole("button", { name: "進捗" }).click();
     await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
