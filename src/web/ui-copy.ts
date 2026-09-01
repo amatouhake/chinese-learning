@@ -4,15 +4,14 @@ export type Surface = "progress" | "study" | "reflex" | "pronunciation" | "readi
 
 export const SURFACE_OPTIONS: Array<{ value: Surface; label: string }> = [
   { value: "study", label: "単語" },
-  { value: "reflex", label: "瞬発" },
   { value: "pronunciation", label: "発音" },
   { value: "reading", label: "読解" },
-  { value: "progress", label: "進捗" },
+  { value: "progress", label: "記録" },
 ];
 
 export const PRACTICE_MODE_LABELS: Record<PracticeMode, string> = {
   study: "単語",
-  reflex: "瞬発",
+  reflex: "単語・クイズ",
   pronunciation: "発音",
   reading: "読解",
   grammar: "文法",
@@ -56,6 +55,7 @@ export function studyDirectionLabel(direction: StudyDirection): string {
 }
 
 export function surfaceLabel(surface: Surface): string {
+  if (surface === "reflex") return "単語";
   return SURFACE_OPTIONS.find((option) => option.value === surface)?.label ?? "学習";
 }
 

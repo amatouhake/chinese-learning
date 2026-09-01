@@ -1,6 +1,6 @@
 # Chinese Learning
 
-A locally usable, installable offline PWA for Chinese vocabulary, automaticity, sentence reading,
+A locally usable, installable offline PWA for Chinese vocabulary, sentence reading,
 beginner grammar, and pronunciation. It imports the complete HSK 2.0 Level 1–3 corpus, caches
 bounded study sets in the browser, and records both scheduled FSRS reviews and ordinary practice as
 immutable attempts that safely synchronize after temporary network loss.
@@ -10,11 +10,12 @@ pinyin, meaning, and a linked grammar explanation in that order. The first gramm
 high-value beginner patterns with real examples and a short checked practice interaction. The
 pronunciation surface covers pinyin recognition and recall, dictionary-tone identification,
 two-syllable tone pairs, source-audio perception where the recording can be mapped safely, and
-speak–compare–self-rate production. Reflex provides short four-choice retrieval drills over already
-introduced material, adapting only within and between Reflex sessions without changing vocabulary
-scheduling. A local Progress dashboard now summarizes all five learning modes from one canonical,
-read-only D1 progress snapshot. Notion projection, broad content prefetch, and Remote MCP product
-surfaces remain deferred.
+speak–compare–self-rate production. Vocabulary separates scheduled free-recall Review from
+configurable 4- or 9-choice Quiz practice over introduced material. Quiz adapts only within and
+between prepared sessions and never changes vocabulary scheduling. Record combines learner-scoped
+recent session summaries with a separate canonical long-term Progress snapshot. See the
+[Practice Catalog](docs/practice-catalog.md) for the cross-mode evidence contract. Notion projection,
+broad content prefetch, and Remote MCP product surfaces remain deferred.
 
 Canonical learning state is learner-scoped internally while the product remains operationally
 single-user: the Worker always resolves the fixed owner learner, with no login, account chooser, or
@@ -35,8 +36,8 @@ authentication boundary.
 Routes are split as follows:
 
 - `/` — Svelte SPA through Worker Static Assets
-- `/api/*` — Hono Worker API (the read-only progress snapshot; vocabulary, Reflex, reading, grammar,
-  and pronunciation sessions; and canonical attempts)
+- `/api/*` — Hono Worker API (learner-scoped recent session summaries and long-term progress;
+  vocabulary, Quiz, reading, grammar, and pronunciation sessions; and canonical attempts)
 - `/mcp` — reserved Worker boundary; currently returns `501`
 
 ## Fresh local setup
@@ -80,13 +81,13 @@ bun run dev:worker
 ```
 
 Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page offers
-Progress, Study, Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a bounded session
+単語, 発音, 読解, and 記録 surfaces. Vocabulary Review starts a bounded session
 after the learner chooses 5, 10, or 20 cards and a direction (mixed, Chinese → Japanese meaning,
 or Japanese meaning → Chinese). Due cards are selected first, with lexical variety preferred when
 the pool allows it; the completed session keeps a local review recap. Answers are staged durably in
 IndexedDB and synchronize in the background, so cached practice does not pause on a network round
-trip. Reflex starts a 12-answer automaticity drill
-once enough introduced material can supply honest distractors. Reading starts Chinese-first, then
+trip. Vocabulary Quiz lets the learner choose mixed or one of four directions, 4 or 9 choices, and
+8, 12, or 20 questions once enough introduced material can supply honest distractors. Reading starts Chinese-first, then
 reveals vocabulary, pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its
 Grammar path teaches one linked pattern, reveals the example only on request, then checks one
 bounded completion exercise and records explicit confidence. Pronunciation starts from a
@@ -102,8 +103,8 @@ local tab without clearing browser storage; the deployed build keeps the normal 
 update behavior.
 
 After the first online study set is prepared, the browser can install the app and continue that
-bounded Vocabulary set without a connection, including across reloads. Prepared Reflex, Reading,
-Grammar, and Pronunciation sets also work offline. A brand-new Reflex drill requires a connection so
+bounded Vocabulary set without a connection, including across reloads. Prepared Quiz, Reading,
+Grammar, and Pronunciation sets also work offline. A brand-new Quiz requires a connection so
 the server can bind its canonical item and distractor identities; the browser never fabricates an
 offline pack. Listening cards are available only when their exact-reading audio was successfully
 staged in Cache Storage. An uncached recording is clearly marked and can be skipped without blocking
@@ -163,7 +164,7 @@ local D1. Phone and desktop coverage also checks the Chinese-first reveal order,
 grammar path, offline Reading and Grammar attempts, reload, and reconnect. The suite additionally
 covers multi-tab sequence allocation, legacy-state migration, cached versus uncached audio, a
 late-arriving review, a mixed ten-item phone session, the polyphonic `的`, and the tone-pair
-reference. Reflex dogfood covers phone and desktop layouts, keyboard and touch answers,
+reference. Quiz dogfood covers phone and desktop layouts, keyboard and touch answers,
 correct/incorrect/slow responses, adaptive repeats, option-position rotation, session restart,
 offline reload/reconnect, duplicate retry, and the absence of scheduler projection changes.
 
@@ -269,12 +270,14 @@ beginner material without turning pronunciation into a scheduler. Multi-reading 
 available with exact sense hints after the unambiguous foundation rather than being silently
 collapsed or promoted according to unreliable source ordering.
 
-## Reflex automaticity model
+## Vocabulary Quiz model
 
-Reflex activates four existing canonical activities: `hanzi_to_meaning`, `meaning_to_hanzi`,
-`hanzi_to_pinyin`, and `pinyin_to_hanzi`. A lexeme is eligible only after one of its scheduled
-vocabulary cards has at least one review. The server prepares an eight-item pool for a bounded
-12-answer session and persists that exact pool in the existing `study_sessions.context_json`.
+The learner-facing Quiz retains the compatible internal `reflex` mode and activates four existing
+canonical activities: `hanzi_to_meaning`, `meaning_to_hanzi`, `hanzi_to_pinyin`, and
+`pinyin_to_hanzi`. A session can mix them or hold one direction. A lexeme is eligible only after one
+of its scheduled vocabulary cards has at least one review. The server prepares a bounded pool for
+an 8-, 12-, or 20-answer session and persists the activity, 4/9 choice count, selection strategy,
+and exact cards/distractors in `study_sessions.context_json`.
 Prepared cards are then cached through the ordinary sync response and IndexedDB stores; there is no
 second lexical state, scheduler, history table, or offline queue.
 
@@ -286,22 +289,41 @@ exposure adds a penalty, and the two most recent cards cool down. Thus troubleso
 soon without becoming an immediate loop, while every drill continues to mix other known material.
 This is bounded selection, not retention scheduling.
 
-Every question has exactly four stable canonical choice identities. Distractors come only from the
-same activity, never from the target lexeme, and duplicate normalized labels are removed. A
+Every question has exactly four or nine stable canonical choice identities. Four choices favor
+low-friction repetition; nine increase discrimination but remain a recognition/selection task, not
+free recall. Distractors come only from the same activity, never from the target lexeme, and
+duplicate normalized labels are removed. A
 meaning-to-Hanzi prompt is withheld when its displayed meaning is not unique. Hanzi prompts are
 withheld for multi-reading lexemes; pinyin-to-Hanzi prompts prefer the exact reading's sense hint and
 are withheld when the same pinyin-plus-meaning prompt is not unique. Choice positions rotate on
 repeat exposure, so a learner cannot succeed by memorizing a fixed button.
 
 Each answer appends an ordinary immutable `attempt` with the exact card/lexeme or reading identity,
-activity, objective correctness, response milliseconds, presentation ID, round, prompt, hint,
-correct and selected choice IDs, and the four labels in presented order. Ingestion verifies those
+activity, choice count, objective correctness, presentation ID, round, prompt, hint, correct and
+selected choice IDs, and every label in presented order. Response milliseconds are recorded only
+when the document remained visible continuously; a visibility interruption records
+`timingInterrupted: true` and preserves correctness with `response_ms = NULL`. Ingestion verifies those
 facts against the prepared session before accepting them. Duplicate delivery returns the original
 fact, device sequences remain unique, and D1 atomically requires the next round while enforcing the
 prepared bound. Delayed offline delivery uses the same ordered outbox and canonical push-before-pull
-path as every other mode. Reflex attempts cannot carry an FSRS review or expected card-state version,
+path as every other mode. Quiz attempts cannot carry an FSRS review or expected card-state version,
 never create `fsrs_reviews`, and never update due date, stability, difficulty, or vocabulary
 `card_state`.
+
+## Practice session summaries and History
+
+`PracticeSessionSummary` is a typed, mode-specific read model derived from learner-owned
+`study_sessions.context_json`, immutable `attempts`, `fsrs_reviews`, and relevant content/state.
+Raw attempts remain authority; no result table or duplicated event history is created. The local
+cache is only an offline projection used to reopen a just-completed result. A generalized presented
+result pointer is independent from active session identity, so dismissing a result cannot orphan
+canonical closure or delete History.
+
+`POST /api/practice-sessions/recent` returns a bounded learner-scoped list and
+`POST /api/practice-sessions/:id/summary` reopens one completed session. Quiz trends require the same
+activity setting, choice count, and requested set size. Review ratings are not converted to a score;
+Reading does not invent accuracy; Pronunciation keeps objective answers, self-ratings, and skips
+separate. `getProgressSnapshot()` remains the distinct accumulated learner-state projection.
 
 ## Vocabulary study flow
 
@@ -372,7 +394,7 @@ The version-1 snapshot includes:
   self-ratings, and non-answer audio skips separate;
 - sentence-reading volume and comprehension self-ratings without inferred correctness;
 - grammar topic state, objective practice correctness, and confidence as separate measures;
-- Reflex correctness and latency/slow-response evidence without feeding FSRS; and
+- Quiz correctness and valid uninterrupted latency/slow-response evidence without feeding FSRS; and
 - a deterministic, bounded cross-mode trouble list whose reasons and source activity remain visible.
 
 Rolling activity windows are selected by `attempts.occurred_at`. Active calendar days are formatted
@@ -414,7 +436,7 @@ write set back before the service retries from canonical history.
 `content_state.current_content_revision` establish the distinct content revision boundary.
 `POST /api/sync/pull` reports both boundaries, filters learner changes by the server-resolved learner,
 and supplies only that learner's current active sessions' bounded
-Vocabulary, Reflex, Reading, Grammar, and Pronunciation packs. An older scheduled attempt that arrives after
+Vocabulary, Quiz (`reflex` internally), Reading, Grammar, and Pronunciation packs. An older scheduled attempt that arrives after
 a newer review is inserted as its original immutable fact; the existing deterministic server replay
 recomputes the canonical `card_state`, which the next pull applies locally.
 

@@ -5,6 +5,8 @@ import type {
   ReflexCard,
   ReflexChoice,
   ReflexHistorySummary,
+  QuizActivity,
+  QuizChoiceCount,
 } from "./types";
 
 export const REFLEX_ACTIVITY_TYPES = [
@@ -19,11 +21,14 @@ export const MAX_REFLEX_SESSION_SIZE = 20;
 export const DEFAULT_REFLEX_POOL_SIZE = 8;
 export const REFLEX_SLOW_RESPONSE_MS = 2_500;
 export const REFLEX_INTERACTION = "reflex-multiple-choice";
+export const QUIZ_SELECTION_STRATEGY = "weak_and_slow_v1" as const;
 
 export interface CreateReflexSessionInput {
   sessionId: string;
   deviceId: string;
   maxItems: number;
+  activityType?: QuizActivity;
+  choiceCount?: QuizChoiceCount;
 }
 
 export interface ReflexHistoryInput {
@@ -49,6 +54,8 @@ export interface ReflexAttemptMetadata {
   promptHint: string | null;
   answerChoiceId: string;
   selectedChoiceId: string;
+  choiceCount: QuizChoiceCount;
+  timingInterrupted: boolean;
   options: Array<ReflexChoice & { position: number }>;
 }
 
@@ -61,6 +68,8 @@ export function parseCreateReflexSessionInput(value: unknown): CreateReflexSessi
       body.maxItems === undefined
         ? DEFAULT_REFLEX_SESSION_SIZE
         : boundedInteger(body.maxItems, "maxItems", 4, MAX_REFLEX_SESSION_SIZE),
+    activityType: quizActivity(body.activityType),
+    choiceCount: quizChoiceCount(body.choiceCount),
   };
 }
 
@@ -174,12 +183,13 @@ export function parseReflexAttemptMetadata(value: unknown): ReflexAttemptMetadat
   if (promptHint !== null && typeof promptHint !== "string") {
     throw new InvalidInputError("reflex promptHint must be text or null");
   }
-  if (!Array.isArray(body.options) || body.options.length !== 4) {
-    throw new InvalidInputError("reflex attempts require exactly four presented options");
+  const choiceCount = quizChoiceCount(body.choiceCount);
+  if (!Array.isArray(body.options) || body.options.length !== choiceCount) {
+    throw new InvalidInputError(`reflex attempts require exactly ${choiceCount} presented options`);
   }
   const options = body.options.map((option, index) => {
     const record = requiredRecord(option, "reflex option");
-    const position = boundedInteger(record.position, "option position", 1, 4);
+    const position = boundedInteger(record.position, "option position", 1, choiceCount);
     if (position !== index + 1) {
       throw new InvalidInputError("reflex option positions must preserve presentation order");
     }
@@ -200,6 +210,8 @@ export function parseReflexAttemptMetadata(value: unknown): ReflexAttemptMetadat
     promptHint,
     answerChoiceId: boundedText(body.answerChoiceId, "answerChoiceId", 500),
     selectedChoiceId: boundedText(body.selectedChoiceId, "selectedChoiceId", 500),
+    choiceCount,
+    timingInterrupted: booleanField(body.timingInterrupted, "timingInterrupted"),
     options,
   };
 }
@@ -210,12 +222,29 @@ function sessionPriority(card: ReflexCard, answers: readonly ReflexAnswerRecord[
   const unseenBonus = own.length === 0 ? 3 : 0;
   const currentTrouble = latest
     ? latest.correct
-      ? latest.responseMs >= REFLEX_SLOW_RESPONSE_MS
+      ? latest.responseMs !== null && latest.responseMs >= REFLEX_SLOW_RESPONSE_MS
         ? 4
         : -2
       : 8
     : 0;
   return card.history.priority + unseenBonus + currentTrouble - own.length * 1.5;
+}
+
+function quizActivity(value: unknown): QuizActivity {
+  if (value === undefined || value === "mixed") return "mixed";
+  if (isReflexActivity(value)) return value;
+  throw new InvalidInputError("activityType must be mixed or a supported vocabulary quiz activity");
+}
+
+function quizChoiceCount(value: unknown): QuizChoiceCount {
+  if (value === undefined || value === 4) return 4;
+  if (value === 9) return 9;
+  throw new InvalidInputError("choiceCount must be 4 or 9");
+}
+
+function booleanField(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new InvalidInputError(`${field} must be boolean`);
+  return value;
 }
 
 function stableHash(value: string): number {

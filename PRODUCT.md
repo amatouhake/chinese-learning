@@ -22,7 +22,7 @@ capabilities.
 
 ## Product Purpose
 
-Chinese Learning is an offline-first daily training tool for vocabulary, automaticity,
+Chinese Learning is an offline-first daily training tool for vocabulary review and quizzes,
 sentence reading, beginner grammar, and pronunciation. It makes a small, reliable
 practice loop available even when the network is unavailable, then synchronizes the
 same immutable learning events when the connection returns. Success is a learner who
@@ -31,7 +31,7 @@ their history and scheduling remain intact.
 
 ## Positioning
 
-The product joins scheduled vocabulary review and unscheduled automaticity, reading,
+The product joins scheduled vocabulary review and unscheduled multiple-choice practice, reading,
 grammar, and pronunciation practice around one canonical exact-reading content model.
 It is intentionally conservative about pronunciation media and resilient to offline
 use: a recording is never borrowed across readings, and a delayed answer still
@@ -40,12 +40,11 @@ converges deterministically with canonical D1 state.
 ## Operating Context
 
 Daily use is a short sequence of touch-first drills on a common phone viewport, with
-keyboard answers useful on desktop. The compact Japanese-first shell names the five
-surfaces 単語, 瞬発, 発音, 読解, and 進捗. Vocabulary sessions prioritize due cards and
-use FSRS ratings; Reflex is a fast four-choice retrieval drill over introduced material;
-pronunciation, reading, and grammar are ordinary practice. The learner may lose the
-network, reload, or reopen the installed PWA between answers. Progress is a longer-form
-read-only view rather than part of the active answering surface.
+keyboard answers useful on desktop. The compact Japanese-first shell names four surfaces:
+単語, 発音, 読解, and 記録. 単語 separates due-before-new free-recall 復習 from a configurable
+4択/9択 クイズ over introduced material. 発音, 読解, and 文法 remain ordinary practice.
+記録 separates recent session history from accumulated long-term progress. The learner may lose
+the network, reload, or reopen the installed PWA between answers.
 
 ## Capabilities and Constraints
 
@@ -54,7 +53,7 @@ read-only view rather than part of the active answering surface.
 - The app imports the pinned HSK 2.0 Levels 1–3 corpus and the pinned pronunciation
   source. Local media is staged and served through the PWA; remote fonts and decorative
   assets must not be runtime requirements.
-- Vocabulary uses immutable attempts and FSRS scheduling. Reflex, pronunciation,
+- Vocabulary Review uses immutable attempts and FSRS scheduling. Vocabulary Quiz, pronunciation,
   reading, and grammar remain separate ordinary-practice modes and must not mutate
   vocabulary card state unless the existing canonical contract says so.
 - Exact Hanzi-reading identity, deterministic late-event convergence, IndexedDB outbox
@@ -71,8 +70,8 @@ read-only view rather than part of the active answering surface.
 - Touch targets must be comfortable; desktop keyboard shortcuts remain effective;
   correctness must be legible without relying on color alone; sound is user-controlled
   and its preference persists locally.
-- Reliable exact-reading pronunciation media may appear in everyday Vocabulary and
-  Reflex practice. Ambiguous, missing, uncached, or unplayable media degrades safely and
+- Reliable exact-reading pronunciation media may appear in everyday Vocabulary Review and
+  Quiz practice. Ambiguous, missing, uncached, or unplayable media degrades safely and
   never becomes a verified pronunciation claim.
 
 ## Brand Commitments

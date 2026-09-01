@@ -1,6 +1,7 @@
 import { ConflictError, ReferenceNotFoundError } from "../domain/errors";
 import {
   DEFAULT_REFLEX_POOL_SIZE,
+  QUIZ_SELECTION_STRATEGY,
   REFLEX_SLOW_RESPONSE_MS,
   reflexHistorySummary,
   selectReflexPool,
@@ -13,6 +14,8 @@ import type {
   ReflexCard,
   ReflexChoice,
   ReflexSessionView,
+  QuizActivity,
+  QuizChoiceCount,
   PronunciationMedia,
   StudyMeaning,
 } from "../domain/types";
@@ -27,6 +30,9 @@ interface ReflexCandidateRow {
   pinyin: string | null;
   sense_scope: string | null;
   meanings_json: string;
+  pos_json: string;
+  frequency_rank: number | null;
+  hsk_level: number;
   attempts: number;
   incorrect: number;
   slow: number;
@@ -49,6 +55,9 @@ interface ReflexSessionRow {
 
 interface ReflexSessionContext {
   maxItems: number;
+  activityType: QuizActivity;
+  choiceCount: QuizChoiceCount;
+  selectionStrategy: typeof QUIZ_SELECTION_STRATEGY;
   cards: ReflexCard[];
 }
 
@@ -58,6 +67,7 @@ interface CandidateModel {
   promptHint: string | null;
   choiceLabel: string;
   ambiguityKey: string;
+  partsOfSpeech: readonly string[];
 }
 
 export interface ReflexServiceOptions {
@@ -77,17 +87,26 @@ export async function createReflexSession(
 ): Promise<CreateReflexSessionResult> {
   await registerLearnerDevice(db, learnerId, input.deviceId);
   const existing = await loadSession(db, learnerId, input.sessionId);
-  if (existing) return existingSessionResult(db, existing, input.deviceId);
+  if (existing) return existingSessionResult(db, existing, input.deviceId, input);
 
   const now = serverTime(options);
-  const candidates = await buildCandidateCards(db, learnerId, now);
+  const activityType = input.activityType ?? "mixed";
+  const choiceCount = input.choiceCount ?? 4;
+  const candidates = await buildCandidateCards(db, learnerId, now, choiceCount);
+  const eligibleCandidates =
+    activityType === "mixed"
+      ? candidates
+      : candidates.filter((candidate) => candidate.activityType === activityType);
   const cards = selectReflexPool(
-    candidates,
+    eligibleCandidates,
     input.sessionId,
     Math.min(DEFAULT_REFLEX_POOL_SIZE, input.maxItems),
   );
   const contextJson = JSON.stringify({
     maxItems: input.maxItems,
+    activityType,
+    choiceCount,
+    selectionStrategy: QUIZ_SELECTION_STRATEGY,
     cards,
   } satisfies ReflexSessionContext);
   const changeId = `reflex-session:start:${input.sessionId}`;
@@ -112,7 +131,7 @@ export async function createReflexSession(
     ]);
   } catch (error) {
     const raced = await loadSession(db, learnerId, input.sessionId);
-    if (raced) return existingSessionResult(db, raced, input.deviceId);
+    if (raced) return existingSessionResult(db, raced, input.deviceId, input);
     throw error;
   }
 
@@ -157,6 +176,9 @@ export async function getPreparedReflexItem(
 ): Promise<{
   card: ReflexCard;
   maxItems: number;
+  activityType: QuizActivity;
+  choiceCount: QuizChoiceCount;
+  selectionStrategy: typeof QUIZ_SELECTION_STRATEGY;
   completedItems: number;
   endedAt: number | null;
 } | null> {
@@ -168,6 +190,9 @@ export async function getPreparedReflexItem(
   return {
     card,
     maxItems: context.maxItems,
+    activityType: context.activityType,
+    choiceCount: context.choiceCount,
+    selectionStrategy: context.selectionStrategy,
     completedItems: await canonicalAttemptCount(db, learnerId, sessionId),
     endedAt: row.ended_at,
   };
@@ -177,6 +202,7 @@ async function buildCandidateCards(
   db: D1Database,
   learnerId: LearnerId,
   now: number,
+  choiceCount: QuizChoiceCount,
 ): Promise<ReflexCard[]> {
   const result = await db
     .prepare(
@@ -189,6 +215,16 @@ async function buildCandidateCards(
          r.pinyin,
          r.sense_scope,
          l.meanings_json,
+         l.pos_json,
+         l.frequency_rank,
+         COALESCE((
+           SELECT CAST(substr(tag.label, 7) AS INTEGER)
+           FROM lexeme_tags tagged
+           JOIN tags tag ON tag.id = tagged.tag_id
+           WHERE tagged.lexeme_id = l.id AND tag.kind = 'hsk-2.0'
+           ORDER BY tag.label
+           LIMIT 1
+         ), 99) AS hsk_level,
          (
            SELECT m.id
            FROM lexeme_readings media_reading
@@ -328,7 +364,7 @@ async function buildCandidateCards(
            )
          )
        GROUP BY c.id, c.activity_type, l.id, r.id, l.simplified, r.pinyin,
-         r.sense_scope, l.meanings_json
+         r.sense_scope, l.meanings_json, l.pos_json, l.frequency_rank
        ORDER BY c.activity_type, c.id`,
     )
     .bind(REFLEX_SLOW_RESPONSE_MS, REFLEX_SLOW_RESPONSE_MS, learnerId, learnerId)
@@ -349,8 +385,8 @@ async function buildCandidateCards(
     ) {
       continue;
     }
-    const choices = buildChoices(target, models);
-    if (choices.length !== 4) continue;
+    const choices = buildChoices(target, models, choiceCount);
+    if (choices.length !== choiceCount) continue;
     cards.push({
       cardId: target.row.card_id,
       lexemeId: target.row.lexeme_id,
@@ -395,6 +431,7 @@ function mediaFromRow(row: ReflexCandidateRow): PronunciationMedia | null {
 
 function toCandidateModel(row: ReflexCandidateRow): CandidateModel {
   const meaning = displayReflexMeaning(row.meanings_json, row.sense_scope);
+  const partsOfSpeech = stringArray(row.pos_json);
   switch (row.activity_type) {
     case "hanzi_to_meaning":
       return {
@@ -403,6 +440,7 @@ function toCandidateModel(row: ReflexCandidateRow): CandidateModel {
         promptHint: row.pinyin,
         choiceLabel: meaning,
         ambiguityKey: `${row.activity_type}\0${row.lexeme_id}`,
+        partsOfSpeech,
       };
     case "meaning_to_hanzi":
       return {
@@ -411,6 +449,7 @@ function toCandidateModel(row: ReflexCandidateRow): CandidateModel {
         promptHint: "この意味に合う漢字を選ぶ",
         choiceLabel: row.simplified,
         ambiguityKey: `${row.activity_type}\0${normalizeLabel(meaning)}`,
+        partsOfSpeech,
       };
     case "hanzi_to_pinyin":
       if (!row.pinyin) throw new Error(`reflex reading card has no pinyin: ${row.card_id}`);
@@ -420,6 +459,7 @@ function toCandidateModel(row: ReflexCandidateRow): CandidateModel {
         promptHint: meaning,
         choiceLabel: row.pinyin,
         ambiguityKey: `${row.activity_type}\0${row.lexeme_id}`,
+        partsOfSpeech,
       };
     case "pinyin_to_hanzi":
       if (!row.pinyin) throw new Error(`reflex reading card has no pinyin: ${row.card_id}`);
@@ -429,11 +469,16 @@ function toCandidateModel(row: ReflexCandidateRow): CandidateModel {
         promptHint: meaning,
         choiceLabel: row.simplified,
         ambiguityKey: `${row.activity_type}\0${normalizeLabel(row.pinyin)}\0${normalizeLabel(meaning)}`,
+        partsOfSpeech,
       };
   }
 }
 
-function buildChoices(target: CandidateModel, models: readonly CandidateModel[]): ReflexChoice[] {
+function buildChoices(
+  target: CandidateModel,
+  models: readonly CandidateModel[],
+  choiceCount: QuizChoiceCount,
+): ReflexChoice[] {
   const choices: ReflexChoice[] = [{ id: target.row.card_id, label: target.choiceLabel }];
   const labels = new Set([normalizeLabel(target.choiceLabel)]);
   const distractors = models
@@ -445,6 +490,11 @@ function buildChoices(target: CandidateModel, models: readonly CandidateModel[])
     )
     .sort(
       (left, right) =>
+        Number(hasPartOfSpeechOverlap(target, right)) -
+          Number(hasPartOfSpeechOverlap(target, left)) ||
+        Math.abs(target.row.hsk_level - left.row.hsk_level) -
+          Math.abs(target.row.hsk_level - right.row.hsk_level) ||
+        frequencyDistance(target, left) - frequencyDistance(target, right) ||
         stableHash(`${target.row.card_id}\0${left.row.card_id}`) -
           stableHash(`${target.row.card_id}\0${right.row.card_id}`) ||
         left.row.card_id.localeCompare(right.row.card_id),
@@ -454,9 +504,27 @@ function buildChoices(target: CandidateModel, models: readonly CandidateModel[])
     if (labels.has(normalized)) continue;
     labels.add(normalized);
     choices.push({ id: distractor.row.card_id, label: distractor.choiceLabel });
-    if (choices.length === 4) break;
+    if (choices.length === choiceCount) break;
   }
   return choices;
+}
+
+function hasPartOfSpeechOverlap(target: CandidateModel, candidate: CandidateModel): boolean {
+  return target.partsOfSpeech.some((part) => candidate.partsOfSpeech.includes(part));
+}
+
+function frequencyDistance(target: CandidateModel, candidate: CandidateModel): number {
+  if (target.row.frequency_rank === null || candidate.row.frequency_rank === null) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return Math.abs(target.row.frequency_rank - candidate.row.frequency_rank);
+}
+
+function stringArray(json: string): string[] {
+  const value: unknown = JSON.parse(json);
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 async function loadOwnedSession(
@@ -491,9 +559,20 @@ async function existingSessionResult(
   db: D1Database,
   row: ReflexSessionRow,
   deviceId: string,
+  requested?: CreateReflexSessionInput,
 ): Promise<CreateReflexSessionResult> {
   if (row.device_id !== deviceId) {
     throw new ConflictError(`reflex session ${row.id} belongs to another device`);
+  }
+  if (requested) {
+    const context = parseContext(row.context_json);
+    if (
+      context.maxItems !== requested.maxItems ||
+      context.activityType !== (requested.activityType ?? "mixed") ||
+      context.choiceCount !== (requested.choiceCount ?? 4)
+    ) {
+      throw new ConflictError(`reflex session ${row.id} already has different settings`);
+    }
   }
   return { disposition: "existing", session: await mapSession(db, row) };
 }
@@ -506,6 +585,9 @@ async function mapSession(db: D1Database, row: ReflexSessionRow): Promise<Reflex
     maxItems: context.maxItems,
     completedItems: await canonicalAttemptCount(db, row.learner_id, row.id),
     poolSize: context.cards.length,
+    activityType: context.activityType,
+    choiceCount: context.choiceCount,
+    selectionStrategy: context.selectionStrategy,
     startedAt: row.started_at,
     endedAt: row.ended_at,
   };
@@ -523,16 +605,24 @@ async function completeSession(
     .prepare(
       `SELECT
          COALESCE(SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
-         AVG(response_ms) AS average_response_ms
+         AVG(response_ms) AS average_response_ms,
+         COALESCE(SUM(CASE
+           WHEN json_extract(metadata_json, '$.timingInterrupted') = 1 THEN 1 ELSE 0 END), 0)
+           AS timing_interrupted
        FROM attempts WHERE learner_id = ? AND study_session_id = ? AND mode = 'reflex'
          AND json_extract(metadata_json, '$.interaction') = 'reflex-multiple-choice'`,
     )
     .bind(row.learner_id, row.id)
-    .first<{ correct: number; average_response_ms: number | null }>();
+    .first<{
+      correct: number;
+      average_response_ms: number | null;
+      timing_interrupted: number;
+    }>();
   const aggregate = JSON.stringify({
     completedItems: session.completedItems,
     correct: result?.correct ?? 0,
     averageResponseMs: result?.average_response_ms ?? null,
+    timingInterrupted: result?.timing_interrupted ?? 0,
   });
   await db.batch([
     db
@@ -579,7 +669,28 @@ function parseContext(json: string): ReflexSessionContext {
   ) {
     throw new Error("persisted reflex session context is invalid");
   }
-  return value as ReflexSessionContext;
+  const record = value as Record<string, unknown>;
+  const activityType = record.activityType ?? "mixed";
+  const choiceCount = record.choiceCount ?? 4;
+  const selectionStrategy = record.selectionStrategy ?? QUIZ_SELECTION_STRATEGY;
+  if (
+    !(activityType === "mixed" || typeof activityType === "string") ||
+    (activityType !== "mixed" &&
+      !["hanzi_to_meaning", "meaning_to_hanzi", "hanzi_to_pinyin", "pinyin_to_hanzi"].includes(
+        activityType,
+      )) ||
+    (choiceCount !== 4 && choiceCount !== 9) ||
+    selectionStrategy !== QUIZ_SELECTION_STRATEGY
+  ) {
+    throw new Error("persisted reflex session configuration is invalid");
+  }
+  return {
+    maxItems: record.maxItems as number,
+    activityType: activityType as QuizActivity,
+    choiceCount,
+    selectionStrategy,
+    cards: record.cards as ReflexCard[],
+  };
 }
 
 export function displayReflexMeaning(meaningsJson: string, senseScope: string | null): string {

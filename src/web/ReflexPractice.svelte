@@ -8,7 +8,15 @@
     selectNextReflexCard,
     type PresentedReflexQuestion,
   } from "../domain/reflex";
-  import type { ReflexAnswerRecord, ReflexCard, ReflexSessionView } from "../domain/types";
+  import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import type {
+    QuizActivity,
+    QuizChoiceCount,
+    ReflexAnswerRecord,
+    ReflexCard,
+    ReflexSessionView,
+    VocabularyQuizSessionSummary,
+  } from "../domain/types";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
   import {
@@ -19,6 +27,15 @@
   } from "./sound";
   import { synchronizeLearning } from "./sync";
   import { learnerError } from "./ui-copy";
+  import { localQuizSummary } from "./local-session-summary";
+  import { cachePracticeSummary } from "./practice-history-cache";
+  import PracticeResult from "./PracticeResult.svelte";
+  import {
+    readQuizPreferences,
+    writeQuizPreferences,
+    type QuizPreferences,
+    type QuizSessionSize,
+  } from "./quiz-preferences";
 
   type Phase = "loading" | "choose" | "prompt" | "feedback" | "empty" | "completed" | "error";
 
@@ -31,15 +48,31 @@
   let question: PresentedReflexQuestion | null = null;
   let promptStartedAt = 0;
   let selectedChoiceId: string | null = null;
-  let selectedResponseMs = 0;
+  let selectedResponseMs: number | null = null;
+  let timingInterrupted = false;
   let answerStored = false;
   let errorMessage = "";
-  let syncMessage = "オンラインで一度準備すると、短い瞬発練習を保存できます。";
+  let syncMessage = "オンラインで一度準備すると、短い単語クイズを保存できます。";
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
   let advanceTimer: ReturnType<typeof setTimeout> | null = null;
   let audioMessage = "";
   let autoplayedQuestionKey: string | null = null;
+  let preferences: QuizPreferences = readQuizPreferences();
+  let completionSummary: VocabularyQuizSessionSummary | null = null;
+
+  const activityOptions: Array<{ value: QuizActivity; label: string; hint: string }> = [
+    { value: "mixed", label: "混合", hint: "4方向を組み合わせる" },
+    { value: "hanzi_to_meaning", label: "漢字 → 意味", hint: "意味を見分ける" },
+    { value: "meaning_to_hanzi", label: "意味 → 漢字", hint: "漢字を選ぶ" },
+    { value: "hanzi_to_pinyin", label: "漢字 → ピンイン", hint: "読みを見分ける" },
+    { value: "pinyin_to_hanzi", label: "ピンイン → 漢字", hint: "漢字を選ぶ" },
+  ];
+  const choiceOptions: Array<{ value: QuizChoiceCount; label: string; hint: string }> = [
+    { value: 4, label: "4択", hint: "テンポよく繰り返す" },
+    { value: 9, label: "9択", hint: "多い候補から見分ける" },
+  ];
+  const sizeOptions: QuizSessionSize[] = [8, 12, 20];
 
   onMount(() => {
     void initializeReflex();
@@ -66,9 +99,11 @@
     };
     addEventListener("online", online);
     addEventListener("offline", offline);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       removeEventListener("online", online);
       removeEventListener("offline", offline);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (advanceTimer) clearTimeout(advanceTimer);
       store?.close();
     };
@@ -81,17 +116,23 @@
       store ??= await OfflineLearningStore.open(localStorage);
       browserState = await store.snapshot();
       if (!browserState.activeReflexSessionId) {
+        if (await restoreCompletedResult()) return;
         phase = "choose";
         return;
       }
       if (!browserOffline) {
         try {
-          await ensureSession(browserState.activeReflexSessionId, browserState.deviceId);
+          const cached = await store.getReflexSession(browserState.activeReflexSessionId);
+          await ensureSession(
+            browserState.activeReflexSessionId,
+            browserState.deviceId,
+            cached?.session ?? preferences,
+          );
           await syncNow();
         } catch (error) {
           if (!(await store.getReflexSession(browserState.activeReflexSessionId))) throw error;
           isOffline = browserOffline || !(error instanceof ApiError);
-          syncMessage = "通信できないため、準備済みの瞬発練習を使います";
+          syncMessage = "通信できないため、準備済みの単語クイズを使います";
         }
       }
       await loadNextQuestion();
@@ -100,17 +141,19 @@
     }
   }
 
-  async function createNewSession(): Promise<void> {
+  async function createNewSession(selected: QuizPreferences = preferences): Promise<void> {
     phase = "loading";
     errorMessage = "";
     try {
-      if (browserOffline) throw new Error("再接続すると、新しい瞬発練習を準備できます。");
+      if (browserOffline) throw new Error("再接続すると、新しい単語クイズを準備できます。");
       store ??= await OfflineLearningStore.open(localStorage);
       browserState ??= await store.snapshot();
+      preferences = selected;
+      writeQuizPreferences(preferences);
       browserState = await store.setActiveReflexSession(`reflex-session:${crypto.randomUUID()}`);
       if (!browserState.activeReflexSessionId)
-        throw new Error("瞬発セッションを開始できませんでした。");
-      await ensureSession(browserState.activeReflexSessionId, browserState.deviceId);
+        throw new Error("単語クイズを開始できませんでした。");
+      await ensureSession(browserState.activeReflexSessionId, browserState.deviceId, selected);
       await syncNow();
       await loadNextQuestion();
     } catch (error) {
@@ -118,11 +161,19 @@
     }
   }
 
-  async function ensureSession(sessionId: string, deviceId: string): Promise<void> {
+  async function ensureSession(
+    sessionId: string,
+    deviceId: string,
+    selected:
+      Pick<ReflexSessionView, "activityType" | "choiceCount" | "maxItems"> | QuizPreferences,
+  ): Promise<void> {
+    const maxItems = "maxItems" in selected ? selected.maxItems : selected.size;
     const result = await postJson<{ session: ReflexSessionView }>("/api/reflex/sessions", {
       sessionId,
       deviceId,
-      maxItems: 12,
+      maxItems,
+      activityType: selected.activityType,
+      choiceCount: selected.choiceCount,
     });
     if (!store) throw new Error("オフライン保存を準備できませんでした。");
     session = result.session;
@@ -142,14 +193,16 @@
     if (!cached) {
       throw new Error(
         isOffline
-          ? "接続が切れる前に、この瞬発練習を保存できませんでした。"
-          : "瞬発練習をまだ取得できていません。",
+          ? "接続が切れる前に、この単語クイズを保存できませんでした。"
+          : "単語クイズをまだ取得できていません。",
       );
     }
     session = cached.session;
     answers = cached.answers;
     cards = cachedCards;
     selectedChoiceId = null;
+    selectedResponseMs = null;
+    timingInterrupted = document.hidden;
     answerStored = false;
     audioMessage = "";
     if (session.completedItems >= session.maxItems || session.endedAt !== null) {
@@ -158,6 +211,11 @@
         browserState = await store.clearActiveReflexSession(sessionId);
       }
       phase = session.completedItems === 0 ? "empty" : "completed";
+      if (phase === "completed") {
+        completionSummary = localQuizSummary(session, answers, cards);
+        cachePracticeSummary(completionSummary);
+        browserState = await store.presentPracticeResult("reflex", sessionId);
+      }
       return;
     }
     const card = selectNextReflexCard(cards, answers, session.completedItems + 1);
@@ -177,9 +235,13 @@
 
   async function choose(choiceId: string): Promise<void> {
     if (phase !== "prompt" || !question || !store || !browserState?.activeReflexSessionId) return;
+    const currentSession = session;
+    if (!currentSession) return;
     if (advanceTimer) clearTimeout(advanceTimer);
     selectedChoiceId = choiceId;
-    selectedResponseMs = Math.max(0, Math.round(performance.now() - promptStartedAt));
+    selectedResponseMs = timingInterrupted
+      ? null
+      : Math.max(0, Math.round(performance.now() - promptStartedAt));
     const correct = choiceId === question.card.answerChoiceId;
     answerStored = false;
     prepareSound();
@@ -196,7 +258,7 @@
         mode: "reflex",
         activityType: question.card.activityType,
         correct,
-        responseMs: selectedResponseMs,
+        ...(selectedResponseMs === null ? {} : { responseMs: selectedResponseMs }),
         metadata: {
           interaction: REFLEX_INTERACTION,
           presentationId: question.presentationId,
@@ -205,6 +267,8 @@
           promptHint: question.card.promptHint,
           answerChoiceId: question.card.answerChoiceId,
           selectedChoiceId: choiceId,
+          choiceCount: currentSession.choiceCount,
+          timingInterrupted,
           options: question.choices.map((choice, index) => ({ ...choice, position: index + 1 })),
         },
       });
@@ -250,8 +314,12 @@
 
   function showError(error: unknown): void {
     if (advanceTimer) clearTimeout(advanceTimer);
-    errorMessage = learnerError(error, "瞬発練習を続けられませんでした。");
+    errorMessage = learnerError(error, "単語クイズを続けられませんでした。");
     phase = "error";
+  }
+
+  function handleVisibilityChange(): void {
+    if (document.hidden && phase === "prompt") timingInterrupted = true;
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -327,34 +395,129 @@
   function shouldHoldOnlineAdvance(): boolean {
     return phase === "prompt" || phase === "feedback" || String(phase) === "advancing";
   }
+
+  function updatePreferences(next: Partial<QuizPreferences>): void {
+    preferences = { ...preferences, ...next };
+    writeQuizPreferences(preferences);
+  }
+
+  async function returnToSettings(): Promise<void> {
+    if (store && session) {
+      browserState = await store.dismissPracticeResult("reflex", session.id);
+    }
+    phase = "choose";
+  }
+
+  async function restoreCompletedResult(): Promise<boolean> {
+    if (!store || browserState?.presentedResult?.mode !== "reflex") return false;
+    const sessionId = browserState.presentedResult.sessionId;
+    if (browserState.dismissedResultSessionIds.includes(sessionId)) return false;
+    const [cached, cachedCards] = await Promise.all([
+      store.getReflexSession(sessionId),
+      store.getCachedReflexCards(sessionId),
+    ]);
+    if (!cached || cached.answers.length === 0) return false;
+    session = cached.session;
+    answers = cached.answers;
+    cards = cachedCards;
+    question = null;
+    completionSummary = localQuizSummary(session, answers, cards);
+    cachePracticeSummary(completionSummary);
+    phase = "completed";
+    return true;
+  }
+
+  function restartCompletedSession(): void {
+    if (!session) return;
+    const completed = session;
+    void createNewSession({
+      activityType: completed.activityType,
+      choiceCount: completed.choiceCount,
+      size: completed.maxItems === 8 || completed.maxItems === 20 ? completed.maxItems : 12,
+    });
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
 <section class="learning-surface reflex-surface">
+  <nav class="vocabulary-practice-nav" aria-label="単語練習">
+    <a href="#study">復習</a><a class="active" href="#reflex" aria-current="page">クイズ</a>
+  </nav>
   <div class="surface-heading">
     <div class="surface-title">
-      <span class="section-mark">02</span>
-      <h2>瞬発</h2>
+      <span class="section-mark">単語</span>
+      <h2>クイズ</h2>
     </div>
     <p class="sync-status" class:offline={isOffline}>{syncMessage}</p>
   </div>
 
   {#if phase === "loading"}
-    <div class="empty-state"><p>瞬発練習を準備しています…</p></div>
+    <div class="empty-state"><p>単語クイズを準備しています…</p></div>
   {:else if phase === "choose"}
-    <div class="mode-grid reflex-start">
-      <button class="mode-card" aria-label="12問の瞬発練習を始める" onclick={createNewSession}>
-        <strong>12問の瞬発練習を始める</strong>
-        <span>覚えた単語から、テンポよく答えます。</span>
-      </button>
-      <p class="boundary-note">キーボードの1〜4、または選択肢をタップしてください。</p>
+    <div class="mode-picker quiz-launcher">
+      <div class="mode-picker-heading">
+        <h2>単語を素早く見分ける</h2>
+        <p>{PRACTICE_CATALOG.vocabulary_quiz.setupDescription}</p>
+      </div>
+      <fieldset class="study-choice-group">
+        <legend>出題方向</legend>
+        <div class="study-option-grid quiz-activity-options">
+          {#each activityOptions as option}
+            <button
+              type="button"
+              class:selected={preferences.activityType === option.value}
+              aria-pressed={preferences.activityType === option.value}
+              onclick={() => updatePreferences({ activityType: option.value })}
+              ><strong>{option.label}</strong><span>{option.hint}</span></button
+            >
+          {/each}
+        </div>
+      </fieldset>
+      <fieldset class="study-choice-group">
+        <legend>選択肢</legend>
+        <div class="study-option-grid choice-count-options">
+          {#each choiceOptions as option}
+            <button
+              type="button"
+              class:selected={preferences.choiceCount === option.value}
+              aria-pressed={preferences.choiceCount === option.value}
+              onclick={() => updatePreferences({ choiceCount: option.value })}
+              ><strong>{option.label}</strong><span>{option.hint}</span></button
+            >
+          {/each}
+        </div>
+        <p class="setting-note">
+          9択も選択問題です。答えを自由に思い出す練習は「復習」で行います。
+        </p>
+      </fieldset>
+      <fieldset class="study-choice-group">
+        <legend>問題数</legend>
+        <div class="study-option-grid size-options">
+          {#each sizeOptions as size}
+            <button
+              type="button"
+              class:selected={preferences.size === size}
+              aria-pressed={preferences.size === size}
+              onclick={() => updatePreferences({ size })}
+              ><strong>{size}問</strong><span
+                >{size === 8 ? "短く" : size === 12 ? "標準" : "しっかり"}</span
+              ></button
+            >
+          {/each}
+        </div>
+      </fieldset>
+      <button class="primary-button" onclick={() => void createNewSession()}
+        >この設定で始める</button
+      >
+      <p class="boundary-note">回答中はキーボードの1〜9、または選択肢をタップできます。</p>
     </div>
   {:else if (phase === "prompt" || phase === "feedback") && question && session}
     <article
       class="study-card reflex-card"
       data-card-id={question.card.cardId}
       data-activity={question.card.activityType}
+      data-choice-count={session.choiceCount}
     >
       <div class="card-meta">
         <span>{session.completedItems + 1} / {session.maxItems}</span>
@@ -380,7 +543,7 @@
         </div>
         {#if question.card.promptHint}<p>{question.card.promptHint}</p>{/if}
       </div>
-      <div class="choice-grid reflex-choice-grid">
+      <div class:nine-choices={session.choiceCount === 9} class="choice-grid reflex-choice-grid">
         {#each question.choices as choice, index}
           <button
             class:correct={phase === "feedback" && choice.id === question.card.answerChoiceId}
@@ -414,8 +577,15 @@
               : `正解: ${answerLabel()}`
             : "結果"}</strong
         >
-        <span class:slow={phase === "feedback" && selectedResponseMs >= REFLEX_SLOW_RESPONSE_MS}
-          >{phase === "feedback" ? `${selectedResponseMs} ms` : "—"}</span
+        <span
+          class:slow={phase === "feedback" &&
+            selectedResponseMs !== null &&
+            selectedResponseMs >= REFLEX_SLOW_RESPONSE_MS}
+          >{phase === "feedback"
+            ? selectedResponseMs === null
+              ? "計測対象外"
+              : `${selectedResponseMs} ms`
+            : "—"}</span
         >
         <button
           class="secondary-button"
@@ -429,32 +599,30 @@
     </article>
   {:else if phase === "empty"}
     <div class="empty-state">
-      <h3>まだ瞬発練習の単語がありません</h3>
+      <h3>まだクイズに使える単語がありません</h3>
       <p>単語をいくつか練習してから、オンラインで新しい練習を準備してください。</p>
-      <button class="primary-button" onclick={createNewSession}>もう一度確認</button>
+      <button class="primary-button" onclick={() => void createNewSession()}>もう一度確認</button>
     </div>
-  {:else if phase === "completed" && session}
-    <div class="empty-state session-summary">
-      <h3>瞬発練習を完了</h3>
-      <p>
-        {session.completedItems}問を確認しました。記録は{isOffline
-          ? "同期待ちです"
-          : "同期済みです"}。
-      </p>
-      <p>
-        正解 {answers.filter(({ correct }) => correct).length}問 · 時間がかかった問題 {answers.filter(
-          ({ responseMs }) => responseMs >= REFLEX_SLOW_RESPONSE_MS,
-        ).length}問
-      </p>
+  {:else if phase === "completed" && session && completionSummary}
+    <div class="empty-state session-summary shared-result-panel">
+      <PracticeResult summary={completionSummary} />
       {#if !browserState?.activeReflexSessionId}
-        <button class="primary-button" onclick={createNewSession}>同じ練習をもう一度</button>
+        <div class="result-actions">
+          <button class="primary-button" onclick={restartCompletedSession}
+            >同じ設定でもう一度</button
+          >
+          <button class="secondary-button" onclick={() => void returnToSettings()}
+            >設定を変える</button
+          >
+          <a class="text-link" href="#progress">記録で詳しく見る</a>
+        </div>
       {:else}
         <p class="boundary-note">現在の記録を同期してから、次の練習を始められます。</p>
       {/if}
     </div>
   {:else if phase === "error"}
     <div class="empty-state" role="alert">
-      <h3>瞬発練習を一時停止しました</h3>
+      <h3>単語クイズを一時停止しました</h3>
       <p>{errorMessage}</p>
       <button class="primary-button" onclick={initializeReflex}>もう一度試す</button>
     </div>

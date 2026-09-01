@@ -855,8 +855,8 @@ async function validateReflexAttempt(
   if (!isReflexActivity(input.activityType)) {
     throw new InvalidInputError("reflex mode only supports its activated objective activities");
   }
-  if (input.correct === undefined || input.responseMs === undefined) {
-    throw new InvalidInputError("reflex attempts require correctness and response time");
+  if (input.correct === undefined) {
+    throw new InvalidInputError("reflex attempts require correctness");
   }
   if (input.score !== undefined || input.selfRating !== undefined) {
     throw new InvalidInputError(
@@ -871,6 +871,15 @@ async function validateReflexAttempt(
   }
 
   const metadata = parseReflexAttemptMetadata(input.metadata);
+  if (
+    metadata.timingInterrupted ? input.responseMs !== undefined : input.responseMs === undefined
+  ) {
+    throw new InvalidInputError(
+      metadata.timingInterrupted
+        ? "interrupted reflex timing must not carry response time"
+        : "uninterrupted reflex attempts require response time",
+    );
+  }
   const preparedItem = await getPreparedReflexItem(
     db,
     learnerId,
@@ -880,7 +889,14 @@ async function validateReflexAttempt(
   if (!preparedItem) {
     throw new InvalidInputError("reflex card was not part of the prepared session");
   }
-  const { card: prepared, maxItems, completedItems, endedAt } = preparedItem;
+  const {
+    card: prepared,
+    maxItems,
+    completedItems,
+    endedAt,
+    activityType,
+    choiceCount,
+  } = preparedItem;
   if (endedAt !== null || completedItems >= maxItems) {
     throw new InvalidInputError("reflex session has already reached its prepared bound");
   }
@@ -898,6 +914,12 @@ async function validateReflexAttempt(
     metadata.presentationId !== `${input.studySessionId}:${metadata.round}:${input.cardId}`
   ) {
     throw new InvalidInputError("reflex presentation does not match its prepared learning item");
+  }
+  if (metadata.choiceCount !== choiceCount) {
+    throw new InvalidInputError("reflex choice count does not match its prepared session");
+  }
+  if (activityType !== "mixed" && input.activityType !== activityType) {
+    throw new InvalidInputError("reflex activity does not match its prepared session setting");
   }
   const preparedOptions = [...prepared.choices].map(({ id, label }) => `${id}\0${label}`).sort();
   const presentedOptions = metadata.options.map(({ id, label }) => `${id}\0${label}`).sort();

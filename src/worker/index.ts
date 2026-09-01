@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 
 import { ingestAttempt } from "../db/ingestion";
 import { getProgressSnapshot } from "../db/progress";
+import { getPracticeSessionSummary, getRecentPracticeSessions } from "../db/practice-sessions";
 import { createPronunciationSession, getNextPronunciationCard } from "../db/pronunciation";
 import {
   createGrammarSession,
@@ -50,6 +51,54 @@ app.post("/api/progress", async (context) => {
 
   context.header("Cache-Control", "no-store");
   return context.json(await getProgressSnapshot(context.env.DB, resolveCurrentLearner()));
+});
+
+app.post("/api/practice-sessions/recent", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    const body = await readJsonBody(context);
+    const limit = historyLimit(body);
+    context.header("Cache-Control", "no-store");
+    return context.json(
+      await getRecentPracticeSessions(context.env.DB, resolveCurrentLearner(), { limit }),
+    );
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
+});
+
+app.post("/api/practice-sessions/:sessionId/summary", async (context) => {
+  const authorization = await authorizeStudyWrite(
+    context.req.raw,
+    context.env.ATTEMPT_WRITE_TOKEN,
+    context.env.LOCAL_STUDY_BYPASS,
+  );
+  const authError = authenticationError(context, authorization);
+  if (authError) return authError;
+
+  try {
+    context.header("Cache-Control", "no-store");
+    return context.json(
+      await getPracticeSessionSummary(
+        context.env.DB,
+        resolveCurrentLearner(),
+        context.req.param("sessionId"),
+      ),
+    );
+  } catch (error) {
+    const response = domainError(context, error);
+    if (response) return response;
+    throw error;
+  }
 });
 
 app.post("/api/attempts", async (context) => {
@@ -362,4 +411,16 @@ async function readJsonBody(context: AppContext): Promise<unknown> {
   } catch {
     throw new InvalidInputError("request body must be valid JSON");
   }
+}
+
+function historyLimit(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidInputError("history body must be an object");
+  }
+  const limit = (value as Record<string, unknown>).limit;
+  if (limit === undefined) return undefined;
+  if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 50) {
+    throw new InvalidInputError("history limit must be an integer from 1 to 50");
+  }
+  return limit as number;
 }

@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  import type { FsrsRating, StudyCard, StudyDirection, StudySessionView } from "../domain/types";
+  import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import type {
+    FsrsRating,
+    StudyCard,
+    StudyDirection,
+    StudySessionView,
+    VocabularyReviewSessionSummary,
+  } from "../domain/types";
   import { ApiError, postJson } from "./api";
   import {
     OfflineLearningStore,
@@ -18,6 +25,9 @@
   import { getSoundEnabled, playPronunciationAudio, prepareSound } from "./sound";
   import { activityTypeLabel, learnerError, studyDirectionLabel } from "./ui-copy";
   import { synchronizeLearning } from "./sync";
+  import { localReviewSummary } from "./local-session-summary";
+  import { cachePracticeSummary } from "./practice-history-cache";
+  import PracticeResult from "./PracticeResult.svelte";
 
   type Phase =
     "loading" | "choose" | "prompt" | "revealed" | "advancing" | "empty" | "completed" | "error";
@@ -57,6 +67,7 @@
   let isOffline = browserOffline;
   let audioMessage = "";
   let autoplayedCardKey: string | null = null;
+  let completionSummary: VocabularyReviewSessionSummary | null = null;
 
   onMount(() => {
     preferences = readStudyPreferences();
@@ -71,7 +82,17 @@
       browserState = await store.snapshot();
       if (browserState.activeSessionId && !browserOffline) {
         try {
-          await ensureSession(browserState.activeSessionId, browserState.deviceId, preferences);
+          const cached = await store.getStudySession(browserState.activeSessionId);
+          await ensureSession(
+            browserState.activeSessionId,
+            browserState.deviceId,
+            cached
+              ? {
+                  direction: cached.direction,
+                  size: cached.maxCards === 5 || cached.maxCards === 20 ? cached.maxCards : 10,
+                }
+              : preferences,
+          );
           await syncNow();
         } catch (error) {
           if (!(await store.getStudySession(browserState.activeSessionId))) throw error;
@@ -136,7 +157,7 @@
       return;
     }
     try {
-      browserState = await store.dismissStudyResult(session.id);
+      browserState = await store.dismissPracticeResult("study", session.id);
       phase = "choose";
     } catch (error) {
       showError(error);
@@ -186,7 +207,7 @@
       if (cachedCard.activityType === "hanzi_to_meaning") void autoplayCardAudio();
       return;
     }
-    const resultWasDismissed = browserState.dismissedStudySessionId === sessionId;
+    const resultWasDismissed = browserState.dismissedResultSessionIds.includes(sessionId);
     if (record.session.endedAt !== null) {
       browserState = await store.clearActiveStudySession(sessionId);
     }
@@ -195,6 +216,10 @@
       : record.session.reviewedCards === 0
         ? "empty"
         : "completed";
+    if (phase === "completed") {
+      rememberCompletion(record.session, record.reviews);
+      browserState = await store.presentPracticeResult("study", sessionId);
+    }
   }
 
   async function rateCard(rating: FsrsRating): Promise<void> {
@@ -261,13 +286,20 @@
 
   async function restoreStudyResultOrChoose(): Promise<void> {
     if (!store || !browserState) throw new Error("単語練習の状態を読み込めませんでした。");
-    const completedSessionId = browserState.lastCompletedStudySessionId;
-    if (completedSessionId && browserState.dismissedStudySessionId !== completedSessionId) {
+    const completedSessionId =
+      browserState.presentedResult?.mode === "study"
+        ? browserState.presentedResult.sessionId
+        : null;
+    if (
+      completedSessionId &&
+      !browserState.dismissedResultSessionIds.includes(completedSessionId)
+    ) {
       const completed = await store.getStudySessionRecord(completedSessionId);
       if (completed && completed.session.reviewedCards > 0) {
         session = completed.session;
         reviews = completed.reviews;
         card = null;
+        rememberCompletion(completed.session, completed.reviews);
         phase = "completed";
         return;
       }
@@ -276,7 +308,7 @@
   }
 
   async function showDismissedStudySetup(sessionId: string): Promise<boolean> {
-    if (!store || !browserState || browserState.dismissedStudySessionId !== sessionId) {
+    if (!store || !browserState || !browserState.dismissedResultSessionIds.includes(sessionId)) {
       return false;
     }
     const record = await store.getStudySessionRecord(sessionId);
@@ -330,6 +362,14 @@
     browserOffline = true;
     isOffline = true;
     syncMessage = `${browserState?.pendingCount ?? 0}件を端末に保存 · オフライン`;
+  }
+
+  function rememberCompletion(
+    completedSession: StudySessionView,
+    completedReviews: readonly StudyReviewRecord[],
+  ): void {
+    completionSummary = localReviewSummary(completedSession, completedReviews);
+    cachePracticeSummary(completionSummary);
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -437,10 +477,14 @@
   onoffline={handleOffline}
 />
 
+<nav class="vocabulary-practice-nav" aria-label="単語練習">
+  <a class="active" href="#study" aria-current="page">復習</a><a href="#reflex">クイズ</a>
+</nav>
+
 <header class="app-header surface-header">
   <div class="surface-title">
-    <span class="section-mark">01</span>
-    <h2>単語</h2>
+    <span class="section-mark">単語</span>
+    <h2>復習</h2>
   </div>
   {#if session && (phase === "prompt" || phase === "revealed" || phase === "advancing")}
     <p class="progress" aria-label={`単語 ${session.reviewedCards + 1} / ${session.maxCards}`}>
@@ -462,8 +506,8 @@
 {:else if phase === "choose"}
   <section class="mode-picker study-launcher">
     <div class="mode-picker-heading">
-      <h2>今日の単語練習</h2>
-      <p>方向と枚数を選んで、すぐ始められます。</p>
+      <h2>忘れかけた単語を思い出す</h2>
+      <p>{PRACTICE_CATALOG.vocabulary_review.setupDescription}</p>
     </div>
     <fieldset class="study-choice-group">
       <legend>出題方向</legend>
@@ -526,47 +570,32 @@
     <p>新しい内容が準備できるまで、少し待ってください。</p>
     <button class="primary-button" onclick={() => void initializeStudy()}>もう一度確認</button>
   </section>
-{:else if phase === "completed"}
-  <section class="status-panel study-completion">
-    <p class="completion-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
-    </p>
-    <h2>単語練習を完了</h2>
-    <p class="completion-count">{session?.reviewedCards ?? reviews.length}枚を確認しました</p>
-    <div class="completion-summary">
-      <span
-        ><strong>{reviews.filter(({ rating }) => rating === 1 || rating === 2).length}</strong> 要復習</span
-      >
-      <span
-        ><strong>{reviews.filter(({ rating }) => rating === 3 || rating === 4).length}</strong> 定着</span
-      >
-      <span>{session ? studyDirectionLabel(session.direction) : "混合"}</span>
-    </div>
-    {#if reviews.some(({ rating }) => rating === 1 || rating === 2)}
-      <div class="review-focus">
-        <strong>もう一度見たいカード</strong>
-        <span>忘れた・あやふやのカードを次の復習で優先します。</span>
-      </div>
-    {/if}
+{:else if phase === "completed" && completionSummary}
+  <section class="status-panel study-completion shared-result-panel">
+    <PracticeResult summary={completionSummary} />
     {#if reviews.length > 0}
-      <ol class="study-review-list" aria-label="今回の復習カード">
-        {#each reviews as review}
-          <li class:needs-review={review.rating === 1 || review.rating === 2}>
-            <div class="review-pair">
-              <strong>{review.prompt}</strong><span aria-hidden="true">→</span><strong
-                >{review.answer}</strong
-              >
-            </div>
-            <p>
-              {review.simplified}{review.pinyin ? ` · ${review.pinyin}` : ""} · {review.meaning}
-            </p>
-            <footer>
-              <span>{activityTypeLabel(review.activityType)}</span>
-              <span>{ratingLabel(review.rating)}</span>
-            </footer>
-          </li>
-        {/each}
-      </ol>
+      <details class="result-details">
+        <summary>今回のカード</summary>
+        <ol class="study-review-list" aria-label="今回の復習カード">
+          {#each reviews as review}
+            <li class:needs-review={review.rating === 1 || review.rating === 2}>
+              <div class="review-pair">
+                <strong>{review.prompt}</strong><span aria-hidden="true">→</span><strong
+                  >{review.answer}</strong
+                >
+              </div>
+              <p>
+                {review.simplified}{review.pinyin ? ` · ${review.pinyin}` : ""} · {review.meaning}
+              </p>
+              <footer>
+                <span>{activityTypeLabel(review.activityType)}</span><span
+                  >{ratingLabel(review.rating)}</span
+                >
+              </footer>
+            </li>
+          {/each}
+        </ol>
+      </details>
     {/if}
     {#if browserOffline}<p class="boundary-note">
         接続が戻るまで、記録はこの端末から同期します。
@@ -584,6 +613,7 @@
       <button class="secondary-button" onclick={() => void changeStudySettings()}
         >設定を変える</button
       >
+      <a class="text-link" href="#progress">記録で詳しく見る</a>
     </div>
   </section>
 {:else if card && (phase === "prompt" || phase === "revealed" || phase === "advancing")}

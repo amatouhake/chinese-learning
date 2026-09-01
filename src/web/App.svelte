@@ -2,7 +2,7 @@
   import { tick, onMount } from "svelte";
 
   import PronunciationPractice from "./PronunciationPractice.svelte";
-  import ProgressDashboard from "./ProgressDashboard.svelte";
+  import LearningRecord from "./LearningRecord.svelte";
   import ReflexPractice from "./ReflexPractice.svelte";
   import ReadingGrammar from "./ReadingGrammar.svelte";
   import { getSoundEnabled, subscribeToSound, toggleSound } from "./sound";
@@ -148,19 +148,14 @@
       {/if}
     </div>
     <nav class="surface-nav" aria-label="学習モード">
-      <button class:active={surface === "study"} onclick={() => selectSurface("study")}>
+      <button
+        class:active={surface === "study" || surface === "reflex"}
+        onclick={() => selectSurface("study")}
+      >
         <svg aria-hidden="true" viewBox="0 0 20 20"
           ><path d="M4 3.5h8.8L16 6.7v9.8H4z" /><path d="M12.5 3.5v3.4H16M7 10h6M7 13h4" /></svg
         >
         <span>単語</span>
-      </button>
-      <button class:active={surface === "reflex"} onclick={() => selectSurface("reflex")}>
-        <svg aria-hidden="true" viewBox="0 0 20 20"
-          ><path d="M10 3.3a6.7 6.7 0 1 0 6.2 9.2" /><path
-            d="M13.3 3.1h3.4v3.4M16.6 3.2 13 6.8"
-          /></svg
-        >
-        <span>瞬発</span>
       </button>
       <button
         class:active={surface === "pronunciation"}
@@ -186,7 +181,7 @@
         <svg aria-hidden="true" viewBox="0 0 20 20"
           ><path d="M4 15.8V10M8 15.8V6.5M12 15.8V8.7M16 15.8V3.8" /></svg
         >
-        <span>進捗</span>
+        <span>記録</span>
       </button>
     </nav>
     <button
@@ -208,7 +203,7 @@
   </header>
 
   {#if surface === "progress"}
-    <ProgressDashboard />
+    <LearningRecord />
   {:else}
     <div class="learning-shell">
       {#if surface === "study"}
