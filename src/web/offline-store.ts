@@ -56,6 +56,7 @@ interface PersistedMeta {
   activeGrammarSessionId: string | null;
   activeGrammarTopicId: string | null;
   lastCompletedStudySessionId: string | null;
+  dismissedStudySessionId: string | null;
   learnerCursor: number;
   contentRevision: number | null;
 }
@@ -225,18 +226,22 @@ export class OfflineLearningStore {
       const metaStore = transaction.objectStore(META_STORE);
       const latest = await requiredMeta(metaStore);
       const dismissesCompletedResult = latest.lastCompletedStudySessionId === sessionId;
-      const dismissesExhaustedActiveSession = latest.activeSessionId === sessionId;
-      if (!dismissesCompletedResult && !dismissesExhaustedActiveSession) {
+      const dismissesActiveSession = latest.activeSessionId === sessionId;
+      if (!dismissesCompletedResult && !dismissesActiveSession) {
         await transactionDone(transaction);
         return this.snapshot();
       }
       const next: PersistedMeta = {
         ...latest,
         revision: latest.revision + 1,
-        activeSessionId: dismissesExhaustedActiveSession ? null : latest.activeSessionId,
+        // Hiding a result must not orphan a session whose canonical closure has
+        // not reached this device yet. The active ID keeps the session in the
+        // next sync payload; clearActiveSession owns the lifecycle transition.
+        activeSessionId: latest.activeSessionId,
         lastCompletedStudySessionId: dismissesCompletedResult
           ? null
           : latest.lastCompletedStudySessionId,
+        dismissedStudySessionId: sessionId,
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -612,7 +617,8 @@ export class OfflineLearningStore {
         existing.activeReadingSessionId === undefined ||
         existing.activeGrammarSessionId === undefined ||
         existing.activeGrammarTopicId === undefined ||
-        existing.lastCompletedStudySessionId === undefined
+        existing.lastCompletedStudySessionId === undefined ||
+        existing.dismissedStudySessionId === undefined
       ) {
         const transaction = this.db.transaction(META_STORE, "readwrite");
         transaction.objectStore(META_STORE).put({
@@ -623,6 +629,7 @@ export class OfflineLearningStore {
           activeGrammarSessionId: existing.activeGrammarSessionId ?? null,
           activeGrammarTopicId: existing.activeGrammarTopicId ?? null,
           lastCompletedStudySessionId: existing.lastCompletedStudySessionId ?? null,
+          dismissedStudySessionId: existing.dismissedStudySessionId ?? null,
         } satisfies PersistedMeta);
         await transactionDone(transaction);
       }
@@ -774,6 +781,7 @@ export class OfflineLearningStore {
         activeGrammarSessionId: mode === "grammar" ? sessionId : latest.activeGrammarSessionId,
         activeGrammarTopicId: mode === "grammar" ? topicId : latest.activeGrammarTopicId,
         lastCompletedStudySessionId: mode === "study" ? null : latest.lastCompletedStudySessionId,
+        dismissedStudySessionId: mode === "study" ? null : latest.dismissedStudySessionId,
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -789,13 +797,24 @@ export class OfflineLearningStore {
   ): Promise<BrowserOfflineState> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
       await this.reconcileLegacyStateUnderLock();
-      const transaction = this.db.transaction(META_STORE, "readwrite");
+      const transaction = this.db.transaction([META_STORE, SESSION_STORE], "readwrite");
       const metaStore = transaction.objectStore(META_STORE);
       const latest = await requiredMeta(metaStore);
       const current = activeSessionId(latest, mode);
       if (current !== sessionId) {
         await transactionDone(transaction);
         return this.snapshot();
+      }
+      if (mode === "study") {
+        const cached = (await request(
+          transaction.objectStore(SESSION_STORE).get(sessionKey("study", sessionId)),
+        )) as CachedStudySession | undefined;
+        if (!cached || typeof cached.session.endedAt !== "number") {
+          // A local pack can be exhausted before the server has observed the
+          // final attempt. Keep the identity so the next pull can close it.
+          await transactionDone(transaction);
+          return this.snapshot();
+        }
       }
       const next: PersistedMeta = {
         ...latest,
@@ -1121,6 +1140,7 @@ function migrateMeta(
       activeGrammarSessionId: null,
       activeGrammarTopicId: null,
       lastCompletedStudySessionId: null,
+      dismissedStudySessionId: null,
       learnerCursor: 0,
       contentRevision: null,
     },
@@ -1286,6 +1306,7 @@ function mapState(meta: PersistedMeta, pendingCount: number): BrowserOfflineStat
     activeGrammarSessionId: meta.activeGrammarSessionId,
     activeGrammarTopicId: meta.activeGrammarTopicId,
     lastCompletedStudySessionId: meta.lastCompletedStudySessionId,
+    dismissedStudySessionId: meta.dismissedStudySessionId,
     learnerCursor: meta.learnerCursor,
     contentRevision: meta.contentRevision,
     pendingCount,
@@ -1364,6 +1385,7 @@ async function requiredMeta(store: IDBObjectStore): Promise<PersistedMeta> {
     activeGrammarSessionId: value.activeGrammarSessionId ?? null,
     activeGrammarTopicId: value.activeGrammarTopicId ?? null,
     lastCompletedStudySessionId: value.lastCompletedStudySessionId ?? null,
+    dismissedStudySessionId: value.dismissedStudySessionId ?? null,
   };
 }
 

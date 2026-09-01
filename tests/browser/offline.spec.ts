@@ -209,7 +209,18 @@ test.describe("offline PWA foundation", () => {
     await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
 
+    await page.getByRole("button", { name: "設定を変える" }).click();
+    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
+    expect((await readMeta(page)).activeSessionId).toBe(sessionId);
+    expect((await readMeta(page)).dismissedStudySessionId).toBe(sessionId);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+    expect((await readMeta(page)).activeSessionId).toBe(sessionId);
+
+    const pullBodies: Array<Record<string, unknown>> = [];
     await page.route("**/api/sync/pull", async (route) => {
+      pullBodies.push(route.request().postDataJSON() as Record<string, unknown>);
       await route.fulfill({
         status: 503,
         contentType: "application/json",
@@ -220,14 +231,22 @@ test.describe("offline PWA foundation", () => {
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
     await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
-    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toBeVisible();
-    await expect(page.getByText("10枚を確認しました")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
+    expect(pullBodies.some((body) => body.studySessionId === sessionId)).toBe(true);
     await expect(page.locator(".sync-status")).toContainText("同期待ち");
 
+    await page.getByRole("button", { name: /練習を始める/ }).click();
+    await expect(page.getByRole("alert")).toContainText("前の単語セットを同期してから");
+    expect((await readMeta(page)).activeSessionId).toBe(sessionId);
+
     await page.unroute("**/api/sync/pull");
-    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
     await expect.poll(async () => (await readMeta(page)).activeSessionId).toBeNull();
+    expect((await readMeta(page)).dismissedStudySessionId).toBe(sessionId);
     const changes = await apiPullAll(request, (await readMeta(page)).deviceId as string);
     expect(
       changes.find(
@@ -237,6 +256,10 @@ test.describe("offline PWA foundation", () => {
           typeof change.endedAt === "number",
       ),
     ).toBeDefined();
+    await page.getByRole("button", { name: /練習を始める/ }).click();
+    await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible({
+      timeout: 20_000,
+    });
   });
 
   test("keeps an exhausted pronunciation session active until its pull succeeds", async ({

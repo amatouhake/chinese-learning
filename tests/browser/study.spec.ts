@@ -67,6 +67,8 @@ test.describe("単語練習の毎日使う操作", () => {
     await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible({
       timeout: 20_000,
     });
+    const sessionId = (await readMeta(page)).activeSessionId;
+    expect(typeof sessionId).toBe("string");
     await context.setOffline(true);
 
     for (let index = 0; index < 5; index += 1) {
@@ -104,9 +106,11 @@ test.describe("単語練習の毎日使う操作", () => {
     await page.getByRole("button", { name: "設定を変える" }).click();
     await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+    expect((await readMeta(page)).activeSessionId).toBe(sessionId);
     await page.reload();
     await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+    expect((await readMeta(page)).activeSessionId).toBe(sessionId);
 
     await context.setOffline(false);
     await page.getByRole("button", { name: /練習を始める/ }).click();
@@ -165,6 +169,21 @@ function readOutbox(page: Page): Promise<AttemptInput[]> {
             (left, right) => left.deviceSeq - right.deviceSeq,
           ),
         );
+    });
+  }, DB_NAME);
+}
+
+function readMeta(page: Page): Promise<Record<string, unknown>> {
+  return page.evaluate(async (dbName) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(dbName, 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+    });
+    return await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const request = db.transaction("meta", "readonly").objectStore("meta").get("state");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
     });
   }, DB_NAME);
 }

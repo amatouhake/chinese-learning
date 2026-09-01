@@ -69,23 +69,7 @@
     try {
       store ??= await OfflineLearningStore.open(localStorage);
       browserState = await store.snapshot();
-      if (!browserState.activeSessionId) {
-        if (browserState.lastCompletedStudySessionId) {
-          const completed = await store.getStudySessionRecord(
-            browserState.lastCompletedStudySessionId,
-          );
-          if (completed && completed.session.reviewedCards > 0) {
-            session = completed.session;
-            reviews = completed.reviews;
-            card = null;
-            phase = "completed";
-            return;
-          }
-        }
-        phase = "choose";
-        return;
-      }
-      if (!browserOffline) {
+      if (browserState.activeSessionId && !browserOffline) {
         try {
           await ensureSession(browserState.activeSessionId, browserState.deviceId, preferences);
           await syncNow();
@@ -97,6 +81,12 @@
             : "サーバーに接続できないため、保存済みの単語セットを使います";
         }
       }
+      await clearClosedStudySession();
+      if (!browserState.activeSessionId) {
+        await restoreStudyResultOrChoose();
+        return;
+      }
+      if (await showDismissedStudySetup(browserState.activeSessionId)) return;
       await loadNextCard();
     } catch (error) {
       showError(error);
@@ -116,11 +106,19 @@
       store ??= await OfflineLearningStore.open(localStorage);
       browserState ??= await store.snapshot();
       if (browserState.activeSessionId) {
-        const active = await store.getStudySession(browserState.activeSessionId);
-        if (!active || (active.reviewedCards < active.maxCards && active.endedAt === null)) {
-          throw new Error("進行中の単語セットがあります。先に現在のセットを終えてください。");
+        const previousSessionId = browserState.activeSessionId;
+        // A dismissed offline result still owns an active canonical session.
+        // Pull it before replacing the local pointer so its final attempt can
+        // close the session on the server.
+        await syncNow();
+        await clearClosedStudySession(previousSessionId);
+        if (browserState.activeSessionId) {
+          const active = await store.getStudySession(browserState.activeSessionId);
+          if (!active || active.endedAt === null) {
+            throw new Error("前の単語セットを同期してから、新しいセットを始めてください。");
+          }
+          browserState = await store.clearActiveStudySession(browserState.activeSessionId);
         }
-        browserState = await store.clearActiveStudySession(browserState.activeSessionId);
       }
       browserState = await store.setActiveStudySession(`study-session:${crypto.randomUUID()}`);
       if (!browserState.activeSessionId) throw new Error("単語セッションを開始できませんでした。");
@@ -188,10 +186,15 @@
       if (cachedCard.activityType === "hanzi_to_meaning") void autoplayCardAudio();
       return;
     }
+    const resultWasDismissed = browserState.dismissedStudySessionId === sessionId;
     if (record.session.endedAt !== null) {
       browserState = await store.clearActiveStudySession(sessionId);
     }
-    phase = record.session.reviewedCards === 0 ? "empty" : "completed";
+    phase = resultWasDismissed
+      ? "choose"
+      : record.session.reviewedCards === 0
+        ? "empty"
+        : "completed";
   }
 
   async function rateCard(rating: FsrsRating): Promise<void> {
@@ -246,6 +249,45 @@
       result.pending === 0 ? "この端末に保存済み · 同期済み" : `${result.pending}件を同期待ち`;
   }
 
+  async function clearClosedStudySession(expectedSessionId?: string | null): Promise<void> {
+    if (!store || !browserState?.activeSessionId) return;
+    const sessionId = browserState.activeSessionId;
+    if (expectedSessionId !== undefined && sessionId !== expectedSessionId) return;
+    const active = await store.getStudySession(sessionId);
+    if (active && typeof active.endedAt === "number") {
+      browserState = await store.clearActiveStudySession(sessionId);
+    }
+  }
+
+  async function restoreStudyResultOrChoose(): Promise<void> {
+    if (!store || !browserState) throw new Error("単語練習の状態を読み込めませんでした。");
+    const completedSessionId = browserState.lastCompletedStudySessionId;
+    if (completedSessionId && browserState.dismissedStudySessionId !== completedSessionId) {
+      const completed = await store.getStudySessionRecord(completedSessionId);
+      if (completed && completed.session.reviewedCards > 0) {
+        session = completed.session;
+        reviews = completed.reviews;
+        card = null;
+        phase = "completed";
+        return;
+      }
+    }
+    phase = "choose";
+  }
+
+  async function showDismissedStudySetup(sessionId: string): Promise<boolean> {
+    if (!store || !browserState || browserState.dismissedStudySessionId !== sessionId) {
+      return false;
+    }
+    const record = await store.getStudySessionRecord(sessionId);
+    if (!record || record.session.reviewedCards < record.session.maxCards) return false;
+    session = record.session;
+    reviews = record.reviews;
+    card = null;
+    phase = "choose";
+    return true;
+  }
+
   function syncInBackground(): void {
     if (browserOffline) return;
     const sessionId = browserState?.activeSessionId;
@@ -253,6 +295,8 @@
       .then(async () => {
         if (phase === "completed" && sessionId && browserState?.activeSessionId === sessionId) {
           await loadNextCard(false);
+        } else if (phase === "choose" && sessionId) {
+          await clearClosedStudySession(sessionId);
         }
       })
       .catch(() => {
@@ -267,9 +311,13 @@
     syncMessage = "接続を確認しています…";
     try {
       if (!store) return await initializeStudy();
+      const activeSessionId = browserState?.activeSessionId;
       await syncNow();
-      if (phase === "completed" && browserState?.activeSessionId) {
-        await loadNextCard(false);
+      await clearClosedStudySession(activeSessionId);
+      if (phase === "completed") {
+        if (activeSessionId && browserState?.activeSessionId === activeSessionId) {
+          await loadNextCard(false);
+        }
       } else if (phase !== "revealed" && phase !== "advancing" && phase !== "choose") {
         await loadNextCard();
       }
