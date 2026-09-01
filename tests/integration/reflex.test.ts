@@ -462,6 +462,20 @@ describe("Reflex automaticity foundation", () => {
     expect((await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, committedFinal)).disposition).toBe(
       "duplicate",
     );
+    await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: 0,
+      contentRevision: null,
+      deviceId: "reflex-foundation-device",
+      reflexSessionId: "reflex-foundation-session",
+    });
+    const completedSummary = await getPracticeSessionSummary(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      "reflex-foundation-session",
+    );
+    expect(completedSummary.attentionItems).toContainEqual(
+      expect.objectContaining({ cardId: card.cardId, reasons: ["誤答", "ゆっくり"] }),
+    );
     expect(await schedulerSnapshot()).toEqual(before);
 
     await retireFixtureLexemes(lexemes);

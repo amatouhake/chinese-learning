@@ -16,7 +16,7 @@ import type {
   SyncPullResponse,
 } from "../domain/types";
 import type { PronunciationFocus } from "../domain/pronunciation";
-import { parseReflexAttemptMetadata } from "../domain/reflex";
+import { QUIZ_SELECTION_STRATEGY, parseReflexAttemptMetadata } from "../domain/reflex";
 import { parseAttemptInput } from "../domain/validation";
 import {
   STUDY_STORAGE_LOCK,
@@ -628,7 +628,7 @@ export class OfflineLearningStore {
     return this.getCachedSession<CachedReflexSession>("reflex", sessionId).then((value) =>
       value
         ? {
-            session: value.session,
+            session: normalizeCachedReflexSession(value.session),
             answers: (value.answers ?? []).map(normalizeReflexAnswer),
           }
         : null,
@@ -1200,6 +1200,15 @@ function normalizeReflexAnswer(answer: ReflexAnswerRecord): ReflexAnswerRecord {
   return {
     ...answer,
     timingInterrupted: answer.timingInterrupted ?? false,
+  };
+}
+
+export function normalizeCachedReflexSession(session: ReflexSessionView): ReflexSessionView {
+  return {
+    ...session,
+    activityType: session.activityType ?? "mixed",
+    choiceCount: session.choiceCount ?? 4,
+    selectionStrategy: session.selectionStrategy ?? QUIZ_SELECTION_STRATEGY,
   };
 }
 

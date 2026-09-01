@@ -13,7 +13,7 @@
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
   import { synchronizeLearning } from "./sync";
   import { learnerError } from "./ui-copy";
-  import { localGuidedSummary } from "./local-session-summary";
+  import { hasCompletedLocalResult, localGuidedSummary } from "./local-session-summary";
   import { cachePracticeSummary } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
 
@@ -66,14 +66,21 @@
     readingCard = null;
     grammarCard = null;
     errorMessage = "";
-    await initializeMode(requestedGrammarTopicId);
+    await initializeMode(requestedGrammarTopicId, false);
   }
 
-  async function initializeMode(requestedGrammarTopicId: string | null = null): Promise<void> {
+  async function initializeMode(
+    requestedGrammarTopicId: string | null = null,
+    restorePresentedMode = true,
+  ): Promise<void> {
     setLoading();
     try {
       store ??= await OfflineLearningStore.open(localStorage);
       browserState = await store.snapshot();
+      const presentedMode = browserState.presentedResult?.mode;
+      if (restorePresentedMode && (presentedMode === "reading" || presentedMode === "grammar")) {
+        mode = presentedMode;
+      }
       if (
         mode === "grammar" &&
         requestedGrammarTopicId &&
@@ -455,7 +462,7 @@
     const sessionId = browserState.presentedResult.sessionId;
     if (browserState.dismissedResultSessionIds.includes(sessionId)) return false;
     const record = await store.getGuidedSessionRecord(mode, sessionId);
-    if (!record || record.attempts.length === 0) return false;
+    if (!record || !hasCompletedLocalResult(record.session)) return false;
     session = record.session;
     readingCard = null;
     grammarCard = null;

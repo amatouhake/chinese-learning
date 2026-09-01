@@ -23,7 +23,7 @@
   } from "./sound";
   import { synchronizeLearning } from "./sync";
   import { learnerError, pronunciationFocusLabel } from "./ui-copy";
-  import { localPronunciationSummary } from "./local-session-summary";
+  import { hasCompletedLocalResult, localPronunciationSummary } from "./local-session-summary";
   import { cachePracticeSummary } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
 
@@ -199,7 +199,7 @@
     const sessionId = browserState.presentedResult.sessionId;
     if (browserState.dismissedResultSessionIds.includes(sessionId)) return false;
     const record = await store.getPronunciationSessionRecord(sessionId);
-    if (!record || record.attempts.length === 0) return false;
+    if (!record || !hasCompletedLocalResult(record.session)) return false;
     session = record.session;
     card = null;
     completionSummary = localPronunciationSummary(record.session, record.attempts);

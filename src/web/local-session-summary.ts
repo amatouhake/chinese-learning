@@ -109,25 +109,12 @@ export function localQuizSummary(
           ? timed.filter((value) => value >= REFLEX_SLOW_RESPONSE_MS).length
           : 0,
     },
-    attentionItems: answers
-      .filter(
-        ({ correct, responseMs }) =>
-          !correct ||
-          (session.choiceCount === 4 &&
-            responseMs !== null &&
-            responseMs >= REFLEX_SLOW_RESPONSE_MS),
-      )
-      .map((answer) => ({
-        cardId: answer.cardId,
-        label: answer.label ?? labelByCard.get(answer.cardId)?.label ?? answer.cardId,
-        detail: answer.detail ?? labelByCard.get(answer.cardId)?.detail ?? null,
-        reasons: [!answer.correct ? "誤答" : "ゆっくり"],
-      }))
-      .filter(
-        (item, index, items) => items.findIndex(({ cardId }) => cardId === item.cardId) === index,
-      )
-      .slice(0, 5),
+    attentionItems: quizAttentionItems(session, answers, labelByCard),
   };
+}
+
+export function hasCompletedLocalResult(session: { completedItems: number }): boolean {
+  return session.completedItems > 0;
 }
 
 export function localPronunciationSummary(
@@ -309,4 +296,51 @@ function average(values: readonly number[]): number | null {
   return values.length === 0
     ? null
     : Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function quizAttentionItems(
+  session: ReflexSessionView,
+  answers: readonly ReflexAnswerRecord[],
+  labelByCard: ReadonlyMap<string, { label: string; detail: string | null }>,
+) {
+  const items = new Map<
+    string,
+    {
+      cardId: string;
+      label: string;
+      detail: string | null;
+      incorrect: boolean;
+      slow: boolean;
+    }
+  >();
+  for (const answer of answers) {
+    const incorrect = !answer.correct;
+    const slow =
+      session.choiceCount === 4 &&
+      answer.responseMs !== null &&
+      answer.responseMs >= REFLEX_SLOW_RESPONSE_MS;
+    if (!incorrect && !slow) continue;
+    const fallback = labelByCard.get(answer.cardId);
+    const existing = items.get(answer.cardId);
+    if (existing) {
+      existing.incorrect ||= incorrect;
+      existing.slow ||= slow;
+      if (existing.label === answer.cardId && answer.label !== undefined) {
+        existing.label = answer.label;
+        existing.detail = answer.detail ?? fallback?.detail ?? null;
+      }
+      continue;
+    }
+    items.set(answer.cardId, {
+      cardId: answer.cardId,
+      label: answer.label ?? fallback?.label ?? answer.cardId,
+      detail: answer.detail ?? fallback?.detail ?? null,
+      incorrect,
+      slow,
+    });
+  }
+  return [...items.values()].slice(0, 5).map(({ incorrect, slow, ...item }) => ({
+    ...item,
+    reasons: [...(incorrect ? ["誤答"] : []), ...(slow ? ["ゆっくり"] : [])],
+  }));
 }

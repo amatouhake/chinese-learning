@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Response } from "@playwright/test";
 
 import type { AttemptInput, GrammarCard, ReadingCard } from "../../src/domain/types";
+import { readOfflineMeta, seedLegacyCompletedSession } from "./offline-fixtures";
 
 test.describe("reading and grammar dogfood", () => {
   test.describe.configure({ timeout: 60_000 });
@@ -159,6 +160,56 @@ test.describe("reading and grammar dogfood", () => {
     await expect(page.locator(".grammar-heading h2")).toHaveText(connectedTopic.title);
     await expect.poll(() => requestedTopics.at(-1)).toBe(connectedTopic.id);
   });
+
+  for (const restoredMode of ["reading", "grammar"] as const) {
+    test(`reopens a zero-detail legacy ${restoredMode} result in its saved submode`, async ({
+      page,
+    }) => {
+      const sessionRequests: string[] = [];
+      page.on("request", (request) => {
+        if (request.method() === "POST" && request.url().endsWith("/sessions")) {
+          sessionRequests.push(new URL(request.url()).pathname);
+        }
+      });
+      await page.goto("/#reading");
+      await expect(page.locator(".reading-prompt h2")).toBeVisible({ timeout: 20_000 });
+      await seedLegacyCompletedSession(page, restoredMode, {
+        id: `${restoredMode}:legacy-completed`,
+        deviceId: "device:legacy-completed",
+        mode: restoredMode,
+        maxItems: 5,
+        completedItems: 5,
+        focusTopicId: restoredMode === "grammar" ? "grammar:foundation:ma-question" : null,
+        startedAt: Date.parse("2026-08-31T00:00:00Z"),
+        endedAt: Date.parse("2026-08-31T00:10:00Z"),
+      });
+      const requestsBeforeReload = sessionRequests.length;
+
+      for (let reload = 0; reload < 2; reload += 1) {
+        await page.reload();
+        await expect(
+          page.getByRole("heading", { name: restoredMode === "reading" ? "5文完了" : "5問完了" }),
+        ).toBeVisible();
+        await expect(page.getByRole("status")).toContainText("0 / 5件分");
+        await expect(page.locator(".guided-nav button.active")).toHaveText(
+          restoredMode === "reading" ? "例文を読む" : "文法コース",
+        );
+      }
+      expect(sessionRequests).toHaveLength(requestsBeforeReload);
+
+      const nextSession = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" && request.url().endsWith(`/api/${restoredMode}/sessions`),
+      );
+      await page
+        .getByRole("button", {
+          name: restoredMode === "reading" ? "別の読解を始める" : "別の文法を始める",
+        })
+        .click();
+      await nextSession;
+      expect((await readOfflineMeta(page)).presentedResult).toBeNull();
+    });
+  }
 });
 
 async function captureGuidedCards(

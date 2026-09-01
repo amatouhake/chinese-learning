@@ -5,6 +5,7 @@ import type {
   GuidedSessionView,
   PracticeSessionHistory,
   PronunciationSessionView,
+  ReflexAnswerRecord,
   ReflexSessionView,
 } from "../../src/domain/types";
 import {
@@ -17,6 +18,7 @@ import {
   cachePracticeSummary,
   readPracticeHistoryCache,
 } from "../../src/web/practice-history-cache";
+import { normalizeCachedReflexSession } from "../../src/web/offline-store";
 import type { StorageLike } from "../../src/web/study-storage";
 
 const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -50,27 +52,25 @@ describe("local session summaries", () => {
   });
 
   test("canonical history replaces a partial local projection", () => {
-    const storage = memoryStorage();
-    const partial = localPronunciationSummary(
-      pronunciationSession(10, 10),
-      attempts("pronunciation", 4),
-    );
-    cachePracticeSummary(partial, storage);
-    const canonical = {
-      ...partial,
-      learnerId: "learner:canonical",
-      evidenceCoverage: undefined,
-      evidence: {
-        ...partial.evidence,
-        selfRatings: { responses: 10, distribution: { 1: 1, 2: 2, 3: 4, 4: 3 } },
-      },
-    };
-
-    cachePracticeHistory(
-      { generatedAt: canonical.endedAt, sessions: [canonical] } satisfies PracticeSessionHistory,
-      storage,
-    );
-    expect(readPracticeHistoryCache(storage).sessions[0]).toEqual(canonical);
+    const partials: PracticeSessionHistory["sessions"] = [
+      localPronunciationSummary(pronunciationSession(10, 10), attempts("pronunciation", 4)),
+      localGuidedSummary(guidedSession("reading", 10, 10), attempts("reading", 4)),
+      localGuidedSummary(guidedSession("grammar", 10, 10), attempts("grammar", 4)),
+    ];
+    for (const partial of partials) {
+      const storage = memoryStorage();
+      cachePracticeSummary(partial, storage);
+      const canonical = {
+        ...partial,
+        learnerId: "learner:canonical",
+        evidenceCoverage: undefined,
+      };
+      cachePracticeHistory(
+        { generatedAt: canonical.endedAt, sessions: [canonical] } satisfies PracticeSessionHistory,
+        storage,
+      );
+      expect(readPracticeHistoryCache(storage).sessions[0]).toEqual(canonical);
+    }
   });
 
   test("uses durable Quiz answer labels after prepared cards are removed", () => {
@@ -112,6 +112,90 @@ describe("local session summaries", () => {
       },
     ]);
     expect(summary.evidence.slowResponses).toBe(0);
+  });
+
+  test("normalizes only missing legacy Quiz configuration fields", () => {
+    const legacy = {
+      id: "quiz:legacy-cache",
+      deviceId: "device:quiz",
+      maxItems: 12,
+      completedItems: 4,
+      poolSize: 8,
+      startedAt: 1,
+      endedAt: null,
+    } as ReflexSessionView;
+    expect(normalizeCachedReflexSession(legacy)).toMatchObject({
+      activityType: "mixed",
+      choiceCount: 4,
+      selectionStrategy: "weak_and_slow_v1",
+    });
+
+    expect(
+      normalizeCachedReflexSession({
+        ...legacy,
+        activityType: "pinyin_to_hanzi",
+        choiceCount: 9,
+        selectionStrategy: "weak_and_slow_v1",
+      }),
+    ).toMatchObject({
+      activityType: "pinyin_to_hanzi",
+      choiceCount: 9,
+      selectionStrategy: "weak_and_slow_v1",
+    });
+  });
+
+  test("merges repeated Quiz attention reasons before applying the five-item limit", () => {
+    const session: ReflexSessionView = {
+      id: "quiz:repeated",
+      deviceId: "device:quiz",
+      maxItems: 8,
+      completedItems: 8,
+      poolSize: 6,
+      activityType: "hanzi_to_meaning",
+      choiceCount: 4,
+      selectionStrategy: "weak_and_slow_v1",
+      startedAt: 1,
+      endedAt: 2,
+    };
+    const answer = (
+      eventId: string,
+      cardId: string,
+      correct: boolean,
+      responseMs: number,
+    ): ReflexAnswerRecord => ({
+      eventId,
+      cardId,
+      correct,
+      responseMs,
+      timingInterrupted: false,
+      round: Number(eventId.split(":").at(-1)),
+      label: cardId.replace("card:", "词"),
+      detail: null,
+    });
+    const summary = localQuizSummary(
+      session,
+      [
+        answer("event:1", "card:repeated", false, 800),
+        answer("event:2", "card:repeated", true, 3_000),
+        answer("event:3", "card:repeated", false, 900),
+        answer("event:4", "card:2", false, 700),
+        answer("event:5", "card:3", false, 700),
+        answer("event:6", "card:4", false, 700),
+        answer("event:7", "card:5", false, 700),
+        answer("event:8", "card:6", false, 700),
+      ],
+      [],
+    );
+
+    expect(summary.attentionItems).toHaveLength(5);
+    expect(summary.attentionItems[0]).toMatchObject({
+      cardId: "card:repeated",
+      reasons: ["誤答", "ゆっくり"],
+    });
+    expect(summary.attentionItems.filter(({ cardId }) => cardId === "card:repeated")).toHaveLength(
+      1,
+    );
+    expect(summary.attentionItems.map(({ cardId }) => cardId)).not.toContain("card:6");
   });
 });
 

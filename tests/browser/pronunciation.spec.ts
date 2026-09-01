@@ -1,5 +1,7 @@
 import { expect, test, type Response } from "@playwright/test";
 
+import { seedLegacyCompletedSession } from "./offline-fixtures";
+
 interface ObservedCard {
   activityType: string;
   simplified: string;
@@ -23,13 +25,14 @@ test.describe("pronunciation dogfood", () => {
     const consoleErrors: string[] = [];
     const observedCards: ObservedCard[] = [];
     const nextResponses: Promise<void>[] = [];
+    let captureCards = true;
     const audioResponses: Response[] = [];
     const vocabularyRequests: string[] = [];
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("response", (response) => {
-      if (response.url().endsWith("/api/sync/pull")) {
+      if (captureCards && response.url().endsWith("/api/sync/pull")) {
         nextResponses.push(recordCards(response, observedCards));
       }
       if (response.url().includes("/media/audio-cmn/")) audioResponses.push(response);
@@ -66,6 +69,9 @@ test.describe("pronunciation dogfood", () => {
       timeout: 20_000,
     });
     await Promise.all(nextResponses);
+    captureCards = false;
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "10問完了" })).toBeVisible();
     expect(new Set(observedCards.map((card) => card.activityType))).toEqual(
       EXPECTED_MIXED_ACTIVITIES,
     );
@@ -150,6 +156,26 @@ test.describe("pronunciation dogfood", () => {
         });
       }),
     ).toBe("tones");
+  });
+
+  test("reopens a legacy completed result with zero cached answer detail", async ({ page }) => {
+    await page.goto("/#pronunciation");
+    await expect(page.getByRole("button", { name: "おまかせ" })).toBeVisible();
+    await seedLegacyCompletedSession(page, "pronunciation", {
+      id: "pronunciation:legacy-completed",
+      deviceId: "device:legacy-completed",
+      focus: "speaking",
+      maxItems: 10,
+      completedItems: 10,
+      startedAt: Date.parse("2026-08-31T00:00:00Z"),
+      endedAt: Date.parse("2026-08-31T00:10:00Z"),
+    });
+
+    for (let reload = 0; reload < 2; reload += 1) {
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "10問完了" })).toBeVisible();
+      await expect(page.getByRole("status")).toContainText("0 / 10件分");
+    }
   });
 });
 

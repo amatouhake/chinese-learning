@@ -43,9 +43,11 @@ test.describe("Reflex automaticity dogfood", () => {
     await context.setOffline(true);
     await answerReflex(page, 5, true);
     await answerReflex(page, 6, false);
+    await downgradeCachedReflexSessionConfiguration(page, sessionId as string);
     await page.reload();
     await expect(page.locator(".reflex-card")).toBeVisible();
-    await answerReflex(page, 7, true);
+    await expect(page.locator(".reflex-choice-grid button")).toHaveCount(4);
+    await answerReflex(page, 7, true, 2_650);
     const queued = await readOutbox(page);
     const initiallyQueuedReflex = queued.filter(({ mode }) => mode === "reflex");
     expect(initiallyQueuedReflex).toHaveLength(3);
@@ -60,11 +62,35 @@ test.describe("Reflex automaticity dogfood", () => {
     expect(queuedReflex[0]?.metadata).not.toHaveProperty("choiceCount");
     expect(queuedReflex[0]?.responseMs).toBeGreaterThanOrEqual(0);
     expect(queuedReflex.every(({ fsrsReview }) => fsrsReview === undefined)).toBe(true);
+    expect(queuedReflex.find(({ metadata }) => metadata?.round === 7)?.metadata).toMatchObject({
+      choiceCount: 4,
+      timingInterrupted: false,
+    });
+
+    for (let round = 8; round <= 12; round += 1) {
+      await answerReflex(page, round, true, 0, round === 12);
+    }
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
+      timeout: 20_000,
+    });
+    const completedAttentionLabels = await page
+      .locator(".result-attention strong")
+      .allTextContents();
+    expect(completedAttentionLabels.length).toBeGreaterThan(0);
+    expect(completedAttentionLabels.every((label) => !label.startsWith("card:"))).toBe(true);
+    expect(
+      await page.locator(".result-attention em").filter({ hasText: "ゆっくり" }).count(),
+    ).toBeGreaterThan(0);
+    expect((await readMeta(page)).activeReflexSessionId).toBe(sessionId);
+    expect((await readMeta(page)).presentedResult).toEqual({ mode: "reflex", sessionId });
+    expect((await readReflexSession(page, sessionId as string))?.answers).toHaveLength(12);
 
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
     await expect(page.locator(".sync-status")).toContainText("同期済み");
+    expect((await readMeta(page)).activeReflexSessionId).toBeNull();
+    expect((await readMeta(page)).presentedResult).toEqual({ mode: "reflex", sessionId });
 
     const duplicate = await postAttempt(page, queuedReflex[0]!);
     expect(duplicate).toMatchObject({
@@ -74,20 +100,7 @@ test.describe("Reflex automaticity dogfood", () => {
       cardState: null,
     });
 
-    for (let round = 8; round <= 12; round += 1) {
-      await answerReflex(page, round, true, 0, round === 12);
-    }
-    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
-      timeout: 20_000,
-    });
     await expect.poll(() => cachedReflexCardCount(page, sessionId as string)).toBe(0);
-    const completedAttentionLabels = await page
-      .locator(".result-attention strong")
-      .allTextContents();
-    expect(completedAttentionLabels.length).toBeGreaterThan(0);
-    expect(completedAttentionLabels.every((label) => !label.startsWith("card:"))).toBe(true);
-    expect((await readMeta(page)).activeReflexSessionId).toBeNull();
-    expect((await readMeta(page)).presentedResult).toEqual({ mode: "reflex", sessionId });
 
     const stored = await readReflexSession(page, sessionId as string);
     expect(stored?.answers).toHaveLength(12);
@@ -523,6 +536,36 @@ function downgradeQueuedReflexAttempt(
       });
     },
     { dbName: DB_NAME, eventId, sessionKey: `reflex\u001f${sessionId}` },
+  );
+}
+
+function downgradeCachedReflexSessionConfiguration(page: Page, sessionId: string): Promise<void> {
+  return page.evaluate(
+    async ({ dbName, sessionKey }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName, 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const transaction = db.transaction("sessions", "readwrite");
+      const sessions = transaction.objectStore("sessions");
+      const cached = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const get = sessions.get(sessionKey);
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      });
+      const legacySession = { ...(cached.session as Record<string, unknown>) };
+      delete legacySession.activityType;
+      delete legacySession.choiceCount;
+      delete legacySession.selectionStrategy;
+      sessions.put({ ...cached, session: legacySession });
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    },
+    { dbName: DB_NAME, sessionKey: `reflex\u001f${sessionId}` },
   );
 }
 
