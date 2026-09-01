@@ -103,6 +103,8 @@ describe("Reflex automaticity selection", () => {
       promptHint: null,
       answerChoiceId: "card",
       selectedChoiceId: "card",
+      choiceCount: 4 as const,
+      timingInterrupted: false,
       options: ["card", "b", "c", "d"].map((id, index) => ({
         id,
         label: id,
@@ -152,5 +154,12 @@ function answer(
   correct: boolean,
   responseMs: number,
 ): ReflexAnswerRecord {
-  return { eventId: `event:${round}`, cardId, correct, responseMs, round };
+  return {
+    eventId: `event:${round}`,
+    cardId,
+    correct,
+    responseMs,
+    timingInterrupted: false,
+    round,
+  };
 }

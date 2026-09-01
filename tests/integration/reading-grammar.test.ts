@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
+import { getPracticeSessionSummary } from "../../src/db/practice-sessions";
 import {
   createGrammarSession,
   createReadingSession,
@@ -251,6 +252,28 @@ describe("reading and grammar foundation", () => {
     );
     expect(pulled.readingPack?.session.completedItems).toBe(1);
     expect(pulled.grammarPack?.session.completedItems).toBe(1);
+    await expect(
+      getPracticeSessionSummary(env.DB, FIXED_OWNER_LEARNER_ID, readingSessionId),
+    ).resolves.toMatchObject({
+      practice: "reading",
+      completedItems: 1,
+      configuration: { requestedItems: 1 },
+      evidence: { comprehension: { distribution: { 3: 1 } } },
+    });
+    await expect(
+      getPracticeSessionSummary(env.DB, FIXED_OWNER_LEARNER_ID, grammarSessionId),
+    ).resolves.toMatchObject({
+      practice: "grammar",
+      completedItems: 1,
+      configuration: {
+        focusTopicId: null,
+        requestedItems: 1,
+      },
+      evidence: {
+        correctness: { correct: 1, responses: 1 },
+        confidence: { distribution: { 3: 1 } },
+      },
+    });
   });
 
   test("keeps topic confidence on the canonically latest practice when an older event arrives late", async () => {

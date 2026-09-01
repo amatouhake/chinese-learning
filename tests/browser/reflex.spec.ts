@@ -19,13 +19,13 @@ test.describe("Reflex automaticity dogfood", () => {
 
     await introduceVocabulary(page, 8);
     const stateBeforeReflex = await readCardStates(page);
-    await selectMobileMode(page, "瞬発");
+    await openVocabularyQuiz(page);
     await expect(page.locator(".surface-nav")).toBeHidden();
     await expect(page.getByRole("button", { name: "音声オン" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
     const sessionId = (await readMeta(page)).activeReflexSessionId;
     expect(typeof sessionId).toBe("string");
@@ -67,10 +67,11 @@ test.describe("Reflex automaticity dogfood", () => {
     for (let round = 8; round <= 12; round += 1) {
       await answerReflex(page, round, true, 0, round === 12);
     }
-    await expect(page.getByRole("heading", { name: "瞬発練習を完了" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
       timeout: 20_000,
     });
     expect((await readMeta(page)).activeReflexSessionId).toBeNull();
+    expect((await readMeta(page)).presentedResult).toEqual({ mode: "reflex", sessionId });
 
     const stored = await readReflexSession(page, sessionId as string);
     expect(stored?.answers).toHaveLength(12);
@@ -86,7 +87,9 @@ test.describe("Reflex automaticity dogfood", () => {
     expect(canonicalAttempts.every((change) => change.reviewCreated === false)).toBe(true);
     expect(await readCardStates(page)).toEqual(stateBeforeReflex);
 
-    await page.getByRole("button", { name: "同じ練習をもう一度" }).click();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible();
+    await page.getByRole("button", { name: "同じ設定でもう一度" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
     expect((await readMeta(page)).activeReflexSessionId).not.toBe(sessionId);
     expect(
@@ -102,7 +105,7 @@ test.describe("Reflex automaticity dogfood", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/#reflex");
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-choice-grid button")).toHaveCount(4, {
       timeout: 20_000,
     });
@@ -125,6 +128,60 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("button", { name: "文法コース" })).toBeVisible();
   });
 
+  test("9択設定を固定し、画面を離れた回答だけ反応時間を無効にする", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await introduceVocabulary(page, 9);
+    await page.goto("/#reflex");
+    await page.getByRole("button", { name: /漢字 → 意味/ }).click();
+    await page.getByRole("button", { name: /9択/ }).click();
+    await page.getByRole("button", { name: /8問/ }).click();
+
+    const sessionRequest = page.waitForRequest(
+      (request) => request.url().endsWith("/api/reflex/sessions") && request.method() === "POST",
+    );
+    await page.getByRole("button", { name: "この設定で始める" }).click();
+    expect(await (await sessionRequest).postDataJSON()).toMatchObject({
+      activityType: "hanzi_to_meaning",
+      choiceCount: 9,
+      maxItems: 8,
+    });
+    await expect(page.locator(".reflex-choice-grid button")).toHaveCount(9, { timeout: 20_000 });
+    await expect(page.locator(".reflex-card")).toHaveAttribute("data-activity", "hanzi_to_meaning");
+    await expect(page.locator(".reflex-card")).toHaveAttribute("data-choice-count", "9");
+
+    const captured: AttemptInput[] = [];
+    await page.route("**/api/attempts", async (route) => {
+      captured.push(route.request().postDataJSON() as AttemptInput);
+      await route.continue();
+    });
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.locator(".reflex-choice-grid button").first().click();
+    await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+    await expect.poll(() => captured.length).toBe(1);
+    const interrupted = captured[0];
+    if (!interrupted) throw new Error("interrupted quiz attempt was not captured");
+    expect(interrupted.responseMs).toBeUndefined();
+    expect(interrupted.metadata).toMatchObject({
+      timingInterrupted: true,
+      choiceCount: 9,
+      options: expect.arrayContaining([expect.objectContaining({ position: 1 })]),
+    });
+    expect((interrupted.metadata?.options as unknown[]).length).toBe(9);
+
+    await page.evaluate(() => {
+      localStorage.setItem(
+        "chinese-learning.quiz-preferences.v1",
+        JSON.stringify({ activityType: "meaning_to_hanzi", choiceCount: 4, size: 20 }),
+      );
+    });
+    await page.reload();
+    await expect(page.locator(".reflex-choice-grid button")).toHaveCount(9, { timeout: 20_000 });
+    await expect(page.locator(".reflex-card")).toHaveAttribute("data-activity", "hanzi_to_meaning");
+  });
+
   test("autoplays canonical pronunciation at the recall-safe phase and keeps replay available", async ({
     page,
   }) => {
@@ -141,8 +198,8 @@ test.describe("Reflex automaticity dogfood", () => {
     await page.evaluate(() => {
       (window as typeof window & { pronunciationPlays: string[] }).pronunciationPlays.length = 0;
     });
-    await selectMobileMode(page, "瞬発");
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await openVocabularyQuiz(page);
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
 
     const observed = new Set<string>();
@@ -204,8 +261,8 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("button", { name: "音声オフ" })).toBeVisible();
 
     await introduceVocabulary(page, 8);
-    await selectMobileMode(page, "瞬発");
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await openVocabularyQuiz(page);
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
 
     let replayVerified = false;
@@ -231,9 +288,9 @@ test.describe("Reflex automaticity dogfood", () => {
   }) => {
     await page.goto("/#reflex");
     await context.setOffline(true);
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.getByRole("alert")).toContainText(
-      "再接続すると、新しい瞬発練習を準備できます",
+      "再接続すると、新しい単語クイズを準備できます",
     );
   });
 
@@ -241,7 +298,7 @@ test.describe("Reflex automaticity dogfood", () => {
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 844 });
       await page.goto("/#reflex");
-      const start = page.getByRole("button", { name: "12問の瞬発練習を始める" });
+      const start = page.getByRole("button", { name: "この設定で始める" });
       await expect(start.or(page.locator(".reflex-card"))).toBeVisible({ timeout: 20_000 });
       if (await start.isVisible()) await start.click();
       await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
@@ -334,6 +391,12 @@ async function selectMobileMode(page: Page, label: string): Promise<void> {
   await page.locator("#mobile-mode-trigger").click();
   await page.getByRole("menuitemradio", { name: label }).click();
   await expect(page.locator("#mobile-mode-trigger")).toHaveText(label);
+}
+
+async function openVocabularyQuiz(page: Page): Promise<void> {
+  await selectMobileMode(page, "単語");
+  await page.getByRole("link", { name: "クイズ", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "単語を素早く見分ける" })).toBeVisible();
 }
 
 function reflexGeometry(

@@ -8,6 +8,10 @@ import {
   type PronunciationImportInput,
 } from "../../src/db/pronunciation-import";
 import { createReflexSession } from "../../src/db/reflex";
+import {
+  getPracticeSessionSummary,
+  getRecentPracticeSessions,
+} from "../../src/db/practice-sessions";
 import { pullSyncChanges } from "../../src/db/sync";
 import { buildV1ImportStatements, type V1SourceLexeme } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
@@ -35,7 +39,7 @@ describe("Reflex automaticity foundation", () => {
         eventId: `reflex-introduction:${index + 1}`,
         deviceId: `reflex-introduction-device:${index + 1}`,
         deviceSeq: 1,
-        occurredAt: `2026-08-30T0${index}:00:00Z`,
+        occurredAt: `2026-08-30T${String(index).padStart(2, "0")}:00:00Z`,
         cardId: vocabularyCardId(lexeme.simplified),
         mode: "study",
         activityType: "hanzi_to_meaning",
@@ -138,6 +142,155 @@ describe("Reflex automaticity foundation", () => {
     expect(
       historyPull.reflexPack?.cards.find(({ cardId }) => cardId === card.cardId)?.history,
     ).toMatchObject({ attempts: 1, incorrect: 1, slow: 1 });
+
+    const nineChoice = await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: "quiz-nine-session",
+      deviceId: "quiz-nine-device",
+      maxItems: 4,
+      activityType: "hanzi_to_meaning",
+      choiceCount: 9,
+    });
+    expect(nineChoice.session).toMatchObject({
+      activityType: "hanzi_to_meaning",
+      choiceCount: 9,
+      selectionStrategy: "weak_and_slow_v1",
+    });
+    const ninePull = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: 0,
+      contentRevision: null,
+      deviceId: "quiz-nine-device",
+      reflexSessionId: "quiz-nine-session",
+    });
+    const nineCards = ninePull.reflexPack?.cards ?? [];
+    expect(nineCards).toHaveLength(4);
+    expect(nineCards.every(({ activityType }) => activityType === "hanzi_to_meaning")).toBe(true);
+    expect(nineCards.every(({ choices }) => choices.length === 9)).toBe(true);
+    expect(
+      nineCards.every(
+        ({ choices }) => new Set(choices.map(({ label }) => label.trim())).size === choices.length,
+      ),
+    ).toBe(true);
+    expect(
+      (
+        await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+          cursor: 0,
+          contentRevision: null,
+          deviceId: "quiz-nine-device",
+          reflexSessionId: "quiz-nine-session",
+        })
+      ).reflexPack?.cards,
+    ).toEqual(nineCards);
+    await expect(
+      createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+        sessionId: "quiz-nine-session",
+        deviceId: "quiz-nine-device",
+        maxItems: 4,
+        activityType: "hanzi_to_meaning",
+        choiceCount: 4,
+      }),
+    ).rejects.toThrow("different settings");
+
+    const nineTarget = nineCards[0];
+    if (!nineTarget) throw new Error("missing nine-choice target");
+    for (let round = 1; round <= 4; round += 1) {
+      const presented = presentReflexQuestion(nineTarget, "quiz-nine-session", round, round - 1);
+      await ingestAttempt(
+        env.DB,
+        FIXED_OWNER_LEARNER_ID,
+        reflexAttempt(nineTarget, presented.choices, nineTarget.answerChoiceId, {
+          eventId: `quiz-nine-event:${round}`,
+          deviceId: "quiz-nine-device",
+          deviceSeq: round,
+          round,
+          sessionId: "quiz-nine-session",
+          timingInterrupted: round === 1,
+        }),
+      );
+    }
+    await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: ninePull.nextCursor,
+      contentRevision: ninePull.currentContentRevision,
+      deviceId: "quiz-nine-device",
+      reflexSessionId: "quiz-nine-session",
+    });
+    const nineSummary = await getPracticeSessionSummary(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      "quiz-nine-session",
+    );
+    expect(nineSummary).toMatchObject({
+      practice: "vocabulary_quiz",
+      completedItems: 4,
+      configuration: { activityType: "hanzi_to_meaning", choiceCount: 9 },
+      evidence: {
+        correctness: { correct: 4, responses: 4, rate: 1 },
+        timedResponses: 3,
+        timingInterrupted: 1,
+        averageResponseMs: 3_200,
+      },
+    });
+    expect(
+      await env.DB.prepare(
+        "SELECT response_ms FROM attempts WHERE event_id = 'quiz-nine-event:1'",
+      ).first<number | null>("response_ms"),
+    ).toBeNull();
+
+    await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: "quiz-nine-session-2",
+      deviceId: "quiz-nine-device-2",
+      maxItems: 4,
+      activityType: "hanzi_to_meaning",
+      choiceCount: 9,
+    });
+    const comparablePull = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: 0,
+      contentRevision: null,
+      deviceId: "quiz-nine-device-2",
+      reflexSessionId: "quiz-nine-session-2",
+    });
+    const comparableTarget = comparablePull.reflexPack?.cards[0];
+    if (!comparableTarget) throw new Error("missing comparable nine-choice target");
+    for (let round = 1; round <= 4; round += 1) {
+      const presented = presentReflexQuestion(
+        comparableTarget,
+        "quiz-nine-session-2",
+        round,
+        round - 1,
+      );
+      const wrong = presented.choices.find(({ id }) => id !== comparableTarget.answerChoiceId);
+      await ingestAttempt(
+        env.DB,
+        FIXED_OWNER_LEARNER_ID,
+        reflexAttempt(
+          comparableTarget,
+          presented.choices,
+          round === 1 && wrong ? wrong.id : comparableTarget.answerChoiceId,
+          {
+            eventId: `quiz-nine-2-event:${round}`,
+            deviceId: "quiz-nine-device-2",
+            deviceSeq: round,
+            round,
+            sessionId: "quiz-nine-session-2",
+          },
+        ),
+      );
+    }
+    await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: comparablePull.nextCursor,
+      contentRevision: comparablePull.currentContentRevision,
+      deviceId: "quiz-nine-device-2",
+      reflexSessionId: "quiz-nine-session-2",
+    });
+    const recentHistory = await getRecentPracticeSessions(env.DB, FIXED_OWNER_LEARNER_ID, {
+      now: () => Date.parse("2026-08-31T04:00:00Z"),
+    });
+    const comparableSummary = recentHistory.sessions.find(
+      ({ sessionId }) => sessionId === "quiz-nine-session-2",
+    );
+    expect(comparableSummary?.trend).toMatchObject({
+      values: [100, 75],
+      comparableSessionIds: ["quiz-nine-session", "quiz-nine-session-2"],
+    });
 
     const tampered = {
       ...attempt,
@@ -257,30 +410,35 @@ function reflexAttempt(
   selectedChoiceId: string,
   overrides: {
     eventId?: string;
+    deviceId?: string;
     deviceSeq?: number;
     round?: number;
+    sessionId?: string;
+    timingInterrupted?: boolean;
   } = {},
 ): AttemptInput {
   const round = overrides.round ?? 1;
   return {
     eventId: overrides.eventId ?? "reflex-foundation-event",
-    deviceId: "reflex-foundation-device",
+    deviceId: overrides.deviceId ?? "reflex-foundation-device",
     deviceSeq: overrides.deviceSeq ?? 1,
     occurredAt: "2026-08-31T01:00:00Z",
     cardId: card.cardId,
-    studySessionId: "reflex-foundation-session",
+    studySessionId: overrides.sessionId ?? "reflex-foundation-session",
     mode: "reflex",
     activityType: card.activityType,
     correct: selectedChoiceId === card.answerChoiceId,
-    responseMs: 3_200,
+    ...(overrides.timingInterrupted ? {} : { responseMs: 3_200 }),
     metadata: {
       interaction: REFLEX_INTERACTION,
-      presentationId: `reflex-foundation-session:${round}:${card.cardId}`,
+      presentationId: `${overrides.sessionId ?? "reflex-foundation-session"}:${round}:${card.cardId}`,
       round,
       prompt: card.prompt,
       promptHint: card.promptHint,
       answerChoiceId: card.answerChoiceId,
       selectedChoiceId,
+      choiceCount: choices.length,
+      timingInterrupted: overrides.timingInterrupted ?? false,
       options: choices.map((choice, index) => ({ ...choice, position: index + 1 })),
     },
   };
@@ -293,6 +451,12 @@ function fixtureLexemes(): V1SourceLexeme[] {
     lexeme("窗帘", "chuāng lián", "chuang1 lian2", ["curtain"]),
     lexeme("牙刷", "yá shuā", "ya2 shua1", ["toothbrush"]),
     lexeme("雨伞", "yǔ sǎn", "yu3 san3", ["umbrella"]),
+    lexeme("杯子", "bēi zi", "bei1 zi5", ["cup"]),
+    lexeme("电脑", "diàn nǎo", "dian4 nao3", ["computer"]),
+    lexeme("钥匙", "yào shi", "yao4 shi5", ["key"]),
+    lexeme("书包", "shū bāo", "shu1 bao1", ["schoolbag"]),
+    lexeme("手表", "shǒu biǎo", "shou3 biao3", ["watch"]),
+    lexeme("椅子", "yǐ zi", "yi3 zi5", ["chair"]),
     {
       ...lexeme("重", "zhòng", "zhong4", ["heavy"]),
       forms: [

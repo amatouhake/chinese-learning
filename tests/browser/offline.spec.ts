@@ -204,18 +204,18 @@ test.describe("offline PWA foundation", () => {
         await expect(page.getByRole("button", { name: "答えを見る" })).toBeVisible();
       }
     }
-    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10枚完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
     await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
 
     await page.getByRole("button", { name: "設定を変える" }).click();
-    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "忘れかけた単語を思い出す" })).toBeVisible();
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
-    expect((await readMeta(page)).dismissedStudySessionId).toBe(sessionId);
+    expect((await readMeta(page)).dismissedResultSessionIds).toContain(sessionId);
     await page.reload();
-    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "忘れかけた単語を思い出す" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10枚完了" })).toHaveCount(0);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
 
     const pullBodies: Array<Record<string, unknown>> = [];
@@ -231,8 +231,8 @@ test.describe("offline PWA foundation", () => {
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
     await expect.poll(() => cachedSessionProgress(page, "study", sessionId as string)).toBe(10);
-    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "忘れかけた単語を思い出す" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10枚完了" })).toHaveCount(0);
     expect((await readMeta(page)).activeSessionId).toBe(sessionId);
     expect(pullBodies.some((body) => body.studySessionId === sessionId)).toBe(true);
     await expect(page.locator(".sync-status")).toContainText("同期待ち");
@@ -243,10 +243,10 @@ test.describe("offline PWA foundation", () => {
 
     await page.unroute("**/api/sync/pull");
     await page.reload();
-    await expect(page.getByRole("heading", { name: "今日の単語練習" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "忘れかけた単語を思い出す" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10枚完了" })).toHaveCount(0);
     await expect.poll(async () => (await readMeta(page)).activeSessionId).toBeNull();
-    expect((await readMeta(page)).dismissedStudySessionId).toBe(sessionId);
+    expect((await readMeta(page)).dismissedResultSessionIds).toContain(sessionId);
     const changes = await apiPullAll(request, (await readMeta(page)).deviceId as string);
     expect(
       changes.find(
@@ -278,7 +278,7 @@ test.describe("offline PWA foundation", () => {
     for (let index = 0; index < 10; index += 1) {
       await answerPronunciationCard(page, index < 9);
     }
-    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10問完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
     await expect
       .poll(() => cachedSessionProgress(page, "pronunciation", sessionId as string))
@@ -297,8 +297,8 @@ test.describe("offline PWA foundation", () => {
     await expect
       .poll(() => cachedSessionProgress(page, "pronunciation", sessionId as string))
       .toBe(10);
-    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
-    await expect(page.getByText("10問を確認しました")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10問完了" })).toBeVisible();
+    await expect(page.getByText("10問", { exact: true })).toBeVisible();
     expect((await readMeta(page)).activePronunciationSessionId).toBe(sessionId);
 
     await page.unroute("**/api/sync/pull");
@@ -472,7 +472,7 @@ test.describe("offline PWA foundation", () => {
       }
     }
 
-    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10問完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
     const queued = await readOutbox(page);
     expect(queued).toHaveLength(10);
@@ -489,7 +489,7 @@ test.describe("offline PWA foundation", () => {
     ).toBe(true);
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "10問完了" })).toBeVisible();
     await expect.poll(() => outboxCount(page)).toBe(10);
 
     await context.setOffline(false);
@@ -544,7 +544,7 @@ test.describe("offline PWA foundation", () => {
       { pendingAttempt: pending },
     );
     await page.goto("/#study");
-    await expect(page.getByRole("heading", { name: "単語練習を完了" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "1枚完了" })).toBeVisible({
       timeout: 20_000,
     });
     const state = await readMeta(page);

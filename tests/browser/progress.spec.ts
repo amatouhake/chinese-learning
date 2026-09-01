@@ -14,13 +14,14 @@ test.describe("local progress dashboard dogfood", () => {
         response.url().endsWith("/api/progress") && response.request().method() === "POST",
     );
     await page.goto("/#progress");
+    await page.getByRole("button", { name: "長期の進捗" }).click();
     const response = await responsePromise;
     expect(response.status()).toBe(200);
     const payload = (await response.json()) as ProgressSnapshot;
     expect(payload.snapshotVersion).toBe(1);
     expect(payload.timezone).toBe("Asia/Tokyo");
     expect(payload.pronunciation.byActivity).toHaveLength(7);
-    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "長期の進捗" })).toBeVisible();
     await expect(page.locator(".mode-progress-grid .mode-card-progress")).toHaveCount(5);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
@@ -50,12 +51,13 @@ test.describe("local progress dashboard dogfood", () => {
 
     await page.setViewportSize({ width: 320, height: 844 });
     await page.goto("/#progress");
-    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
+    await page.getByRole("button", { name: "長期の進捗" }).click();
+    await expect(page.getByRole("heading", { name: "長期の進捗" })).toBeVisible();
     await expect(page.getByText("復習 3 · 新規 17", { exact: true })).toBeVisible();
     await expect(page.getByText("正答率 50%", { exact: true })).toHaveCount(1);
     await expect(page.getByText("自己評価 2.8 / 4", { exact: true })).toBeVisible();
     await expect(page.getByText(/正誤は判定しません/)).toBeVisible();
-    await expect(page.getByText(/自動化の記録のみ/)).toBeVisible();
+    await expect(page.getByText(/選択問題の記録です/)).toBeVisible();
     await expect(page.getByText("好", { exact: true })).toBeVisible();
     await expect(page.getByText(/2.5秒以上/)).toBeVisible();
     await expect(page.getByText(/集計は実際に練習した時刻/)).toBeVisible();
@@ -69,13 +71,13 @@ test.describe("local progress dashboard dogfood", () => {
     await expect(page.locator(".surface-nav")).toBeHidden();
     await modeTrigger.click();
     await expect(page.locator("#mobile-mode-menu")).toBeVisible();
-    await expect(page.locator("#mobile-mode-menu [role='menuitemradio']")).toHaveCount(5);
-    await expect(page.locator("#mobile-mode-menu [aria-checked='true']")).toHaveText("進捗");
+    await expect(page.locator("#mobile-mode-menu [role='menuitemradio']")).toHaveCount(4);
+    await expect(page.locator("#mobile-mode-menu [aria-checked='true']")).toHaveText("記録");
     await expect(page.locator("#mobile-mode-menu [aria-checked='true']")).toBeFocused();
     await page.keyboard.press("Home");
     await expect(page.getByRole("menuitemradio", { name: "単語" })).toBeFocused();
     await page.keyboard.press("ArrowDown");
-    await expect(page.getByRole("menuitemradio", { name: "瞬発" })).toBeFocused();
+    await expect(page.getByRole("menuitemradio", { name: "発音" })).toBeFocused();
     const mobileMode = await modeTrigger.boundingBox();
     expect(mobileMode).not.toBeNull();
     expect(mobileMode!.x + mobileMode!.width).toBeLessThanOrEqual(320);
@@ -93,8 +95,9 @@ test.describe("local progress dashboard dogfood", () => {
     await page.getByRole("menuitemradio", { name: "発音" }).click();
     await expect(modeTrigger).toHaveText("発音");
     await modeTrigger.click();
-    await page.getByRole("menuitemradio", { name: "進捗" }).click();
-    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
+    await page.getByRole("menuitemradio", { name: "記録" }).click();
+    await page.getByRole("button", { name: "長期の進捗" }).click();
+    await expect(page.getByRole("heading", { name: "長期の進捗" })).toBeVisible();
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.locator(".mode-progress-grid .mode-card-progress")).toHaveCount(5);
@@ -105,11 +108,122 @@ test.describe("local progress dashboard dogfood", () => {
 
     await page.getByRole("button", { name: "発音", exact: true }).click();
     await expect(page.getByRole("button", { name: "おまかせ" })).toBeVisible();
-    await page.getByRole("button", { name: "進捗" }).click();
-    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
+    await page.getByRole("button", { name: "記録" }).click();
+    await page.getByRole("button", { name: "長期の進捗" }).click();
+    await expect(page.getByRole("heading", { name: "長期の進捗" })).toBeVisible();
     expect(consoleErrors).toEqual([]);
   });
+
+  test("recent sessions reopen the shared result without an inner scroll container", async ({
+    page,
+  }) => {
+    await page.route("**/api/practice-sessions/recent", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(historyFixture),
+      });
+    });
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.goto("/#progress");
+    await expect(page.locator(".session-history-list button")).toHaveCount(3);
+    await page.locator(".session-history-list button").first().click();
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible();
+    await expect(page.getByLabel("最近の同じ設定")).toBeVisible();
+    await expect
+      .poll(() =>
+        page.locator(".practice-result").evaluate((element) => {
+          const style = getComputedStyle(element);
+          return { overflowY: style.overflowY, maxHeight: style.maxHeight };
+        }),
+      )
+      .toEqual({ overflowY: "visible", maxHeight: "none" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  });
 });
+
+const historyFixture = {
+  generatedAt: Date.parse("2026-09-01T00:30:00Z"),
+  sessions: [
+    {
+      summaryVersion: 1,
+      sessionId: "quiz-history",
+      learnerId: "learner:fixture",
+      mode: "reflex",
+      practice: "vocabulary_quiz",
+      startedAt: Date.parse("2026-09-01T00:00:00Z"),
+      endedAt: Date.parse("2026-09-01T00:05:00Z"),
+      completedItems: 12,
+      requestedItems: 12,
+      configuration: {
+        activityType: "hanzi_to_meaning",
+        choiceCount: 9,
+        requestedItems: 12,
+        selectionStrategy: "weak_and_slow_v1",
+      },
+      evidence: {
+        correctness: { responses: 12, correct: 10, rate: 10 / 12 },
+        averageResponseMs: 1_600,
+        timedResponses: 11,
+        timingInterrupted: 1,
+        slowResponses: 1,
+      },
+      attentionItems: [
+        { cardId: "card:fixture", label: "觉得", detail: "juéde", reasons: ["誤答"] },
+      ],
+      trend: {
+        label: "最近の同じ設定",
+        unit: "percent",
+        values: [72, 75, 83, 80, 88],
+        comparableSessionIds: ["q1", "q2", "q3", "q4", "quiz-history"],
+      },
+    },
+    {
+      summaryVersion: 1,
+      sessionId: "review-history",
+      learnerId: "learner:fixture",
+      mode: "study",
+      practice: "vocabulary_review",
+      startedAt: Date.parse("2026-08-31T22:00:00Z"),
+      endedAt: Date.parse("2026-08-31T22:04:00Z"),
+      completedItems: 10,
+      requestedItems: 10,
+      configuration: { direction: "mixed", requestedItems: 10, actualItems: 10 },
+      evidence: {
+        ratings: { responses: 10, distribution: { 1: 1, 2: 1, 3: 7, 4: 1 } },
+        directions: { hanzi_to_meaning: 5, meaning_to_hanzi: 5 },
+        sources: { due: 8, new: 2 },
+      },
+      attentionItems: [],
+      trend: null,
+    },
+    {
+      summaryVersion: 1,
+      sessionId: "reading-history",
+      learnerId: "learner:fixture",
+      mode: "reading",
+      practice: "reading",
+      startedAt: Date.parse("2026-08-30T23:00:00Z"),
+      endedAt: Date.parse("2026-08-30T23:06:00Z"),
+      completedItems: 5,
+      requestedItems: 5,
+      configuration: { requestedItems: 5 },
+      evidence: {
+        comprehension: { responses: 5, distribution: { 1: 0, 2: 1, 3: 3, 4: 1 } },
+        grammarTopics: [],
+      },
+      attentionItems: [],
+      trend: null,
+    },
+  ],
+};
 
 const snapshot: ProgressSnapshot = {
   snapshotVersion: 1,

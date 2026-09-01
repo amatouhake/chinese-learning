@@ -62,7 +62,7 @@ test.describe("pronunciation dogfood", () => {
       }
     }
 
-    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "10問完了" })).toBeVisible({
       timeout: 20_000,
     });
     await Promise.all(nextResponses);

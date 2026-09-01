@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
+import { getPracticeSessionSummary } from "../../src/db/practice-sessions";
 import {
   buildPronunciationImportStatements,
   type PronunciationImportInput,
@@ -482,6 +483,14 @@ describe("pronunciation foundation", () => {
       status: "completed",
       session: { completedItems: 1, endedAt: expect.any(Number) },
       card: null,
+    });
+    await expect(
+      getPracticeSessionSummary(env.DB, FIXED_OWNER_LEARNER_ID, "audio-skip-session"),
+    ).resolves.toMatchObject({
+      practice: "pronunciation",
+      completedItems: 1,
+      configuration: { focus: "listening", requestedItems: 1 },
+      evidence: { correctness: null, selfRatings: null, skipped: 1 },
     });
 
     await expect(
