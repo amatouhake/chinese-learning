@@ -16,6 +16,12 @@ scheduling. A local Progress dashboard now summarizes all five learning modes fr
 read-only D1 progress snapshot. Notion projection, broad content prefetch, and Remote MCP product
 surfaces remain deferred.
 
+Canonical learning state is learner-scoped internally while the product remains operationally
+single-user: the Worker always resolves the fixed owner learner, with no login, account chooser, or
+learner field in browser requests. Shared corpus/card definitions are not duplicated. See
+[Learner identity foundation](docs/learner-identity.md) for the ownership, sync, migration, and future
+authentication boundary.
+
 ## Stack and topology
 
 - TypeScript, Bun 1.4.x, Svelte 5, and Vite
@@ -23,6 +29,8 @@ surfaces remain deferred.
 - Worker Static Assets for the SPA
 - Cloudflare D1, accessed with prepared SQL and atomic `D1Database.batch()` writes
 - `ts-fsrs` 5.4.1 with explicit, immutable scheduler configurations
+- A canonical internal Learner identity resolved server-side to the fixed owner for the current
+  private/local product
 
 Routes are split as follows:
 
@@ -100,7 +108,9 @@ the server can bind its canonical item and distractor identities; the browser ne
 offline pack. Listening cards are available only when their exact-reading audio was successfully
 staged in Cache Storage. An uncached recording is clearly marked and can be skipped without blocking
 the rest of the set. Reconnecting the page pushes durable attempts before pulling canonical
-learner/content changes.
+learner/content changes. The browser keeps durable device identity separate from learner identity;
+canonical ingestion attaches learner ownership from trusted Worker context rather than an offline
+event payload.
 
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
 when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
@@ -391,17 +401,19 @@ semantics requires a new configuration ID.
 `attempts` is canonical append-only activity history. Only an attempt carrying an intentional FSRS
 review gets a 1:1 `fsrs_reviews` row. Canonical replay order is `occurred_at`, then binary
 `device_id`, `device_seq`, and `event_id`; server receive order never replaces semantic order.
-`card_state` is replaceable derived state with an incrementing version. Attempts associated with a
-study session must carry that session's owning device identity.
+`card_state` is replaceable learner-owned derived state with an incrementing version. Attempts
+associated with a study session must carry that session's learner and owning device identity.
 
-Each scheduled ingestion rebuilds the complete per-card state from immutable history, then submits
+Each scheduled ingestion rebuilds that learner's complete per-card state from immutable history,
+then submits
 the attempt, review, server change rows, and version-guarded state replacement in one D1 `batch()`.
 A failed optimistic update becomes a constraint failure inside the same batch, so D1 rolls the
 write set back before the service retries from canonical history.
 
-`server_changes.seq` is the monotonic pull-sync cursor. `content_revisions` and
-`learner_settings.current_content_revision` establish the distinct content revision boundary.
-`POST /api/sync/pull` reports both boundaries and supplies only the current active sessions' bounded
+`server_changes.seq` is the monotonic pull-sync cursor. `content_revisions` and global
+`content_state.current_content_revision` establish the distinct content revision boundary.
+`POST /api/sync/pull` reports both boundaries, filters learner changes by the server-resolved learner,
+and supplies only that learner's current active sessions' bounded
 Vocabulary, Reflex, Reading, Grammar, and Pronunciation packs. An older scheduled attempt that arrives after
 a newer review is inserted as its original immutable fact; the existing deterministic server replay
 recomputes the canonical `card_state`, which the next pull applies locally.

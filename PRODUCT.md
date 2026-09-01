@@ -15,6 +15,11 @@ material being learned, while English may remain only in content provenance or a
 fallback meaning. The user wants to answer quickly, notice mistakes immediately, and
 return to difficult material without managing a complex study system.
 
+The running product intentionally has one operational owner learner. Canonical persistence is
+learner-scoped internally so future authenticated learners can share corpus definitions without
+sharing learning state, but account UX and production authentication are not current product
+capabilities.
+
 ## Product Purpose
 
 Chinese Learning is an offline-first daily training tool for vocabulary, automaticity,
@@ -55,6 +60,12 @@ read-only view rather than part of the active answering surface.
 - Exact Hanzi-reading identity, deterministic late-event convergence, IndexedDB outbox
   synchronization, D1 canonical state, content provenance, and migration behavior are
   product constraints, not implementation details to trade away for UI simplicity.
+- Learner ownership is resolved by the trusted server boundary. Devices remain separate children of
+  a learner; browser payloads cannot select another learner. FSRS state, attempts, sessions, grammar
+  state, settings, progress, projections, and learner sync changes must remain isolated.
+- Login, signup, profiles, account switching, provider authentication, and public registration are
+  explicitly deferred. A future provider identity must resolve to the stable canonical Learner
+  identity rather than become the domain primary key.
 - Active drill states should fit the prompt, choices, feedback, and progression into
   one viewport at common 320px and 390px phone widths without routine page scrolling.
 - Touch targets must be comfortable; desktop keyboard shortcuts remain effective;
