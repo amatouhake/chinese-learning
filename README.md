@@ -86,6 +86,13 @@ low-friction focus chooser and offers repeatable audio plus a compact sound-syst
 run dev` serves only the Vite frontend, so use `bun run dev:worker` for the real D1-backed flow and
 staged media.
 
+`bun run dev:worker` keeps the local Worker bundle PWA-enabled so offline dogfooding remains
+representative. It also marks that bundle as local: the browser bypasses the HTTP cache when
+checking the service worker, checks again when the window regains focus, and refreshes a controlled
+tab after a new shell activates. Rebuilding and restarting the Worker therefore updates an existing
+local tab without clearing browser storage; the deployed build keeps the normal installable PWA
+update behavior.
+
 After the first online study set is prepared, the browser can install the app and continue that
 bounded Vocabulary set without a connection, including across reloads. Prepared Reflex, Reading,
 Grammar, and Pronunciation sets also work offline. A brand-new Reflex drill requires a connection so
