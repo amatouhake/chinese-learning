@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import { createStudySession } from "../../src/db/study";
@@ -9,6 +9,10 @@ import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
 import type { AttemptInput, StudyCard } from "../../src/domain/types";
 
 describe("offline sync contract", () => {
+  afterEach(async () => {
+    await retireFixtureLexemes(["游标一", "游标二", "配置", "离线"]);
+  });
+
   test("bulk-loads a full learner-change page within the D1 Free query budget", async () => {
     await env.DB.prepare(
       `WITH RECURSIVE numbers(value) AS (
@@ -247,7 +251,7 @@ describe("offline sync contract", () => {
       .at(-1);
     expect(canonicalState).toMatchObject({
       entityType: "card_state",
-      cardState: { cardId: offlineCard.cardId, version: 2 },
+      cardState: { cardId: offlineCard.cardId, version: offlineCard.state.version + 2 },
     });
     expect(
       await env.DB.prepare(
@@ -289,6 +293,16 @@ async function applyImport(prefix: string, lexemes: V1ImportInput["lexemes"]): P
       .filter((statement) => !statement.startsWith("PRAGMA"))
       .map((statement) => env.DB.prepare(statement)),
   );
+}
+
+async function retireFixtureLexemes(simplified: string[]): Promise<void> {
+  const ids = simplified.map((value) => `lexeme:complete-hsk:${encodeURIComponent(value)}`);
+  await env.DB.prepare(
+    `UPDATE cards SET retired_at = created_at
+     WHERE lexeme_id IN (${ids.map(() => "?").join(", ")})`,
+  )
+    .bind(...ids)
+    .run();
 }
 
 function lexeme(simplified: string, frequency: number): V1ImportInput["lexemes"][number] {

@@ -1,4 +1,5 @@
 import { InvalidInputError } from "./errors";
+import type { StudyDirection } from "./types";
 
 export const DEFAULT_STUDY_SESSION_SIZE = 10;
 export const MAX_STUDY_SESSION_SIZE = 20;
@@ -7,6 +8,7 @@ export interface CreateStudySessionInput {
   sessionId: string;
   deviceId: string;
   maxCards: number;
+  direction?: StudyDirection;
 }
 
 export interface NextStudyCardInput {
@@ -24,6 +26,7 @@ export function parseCreateStudySessionInput(value: unknown): CreateStudySession
     sessionId: boundedText(body.sessionId, "sessionId"),
     deviceId: boundedText(body.deviceId, "deviceId"),
     maxCards,
+    direction: studyDirection(body.direction),
   };
 }
 
@@ -56,4 +59,10 @@ function boundedInteger(value: unknown, field: string, minimum: number, maximum:
     throw new InvalidInputError(`${field} must be an integer from ${minimum} to ${maximum}`);
   }
   return value;
+}
+
+function studyDirection(value: unknown): StudyDirection {
+  if (value === undefined || value === "mixed") return "mixed";
+  if (value === "hanzi_to_meaning" || value === "meaning_to_hanzi") return value;
+  throw new InvalidInputError("direction must be mixed, hanzi_to_meaning, or meaning_to_hanzi");
 }

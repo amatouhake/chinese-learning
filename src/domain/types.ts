@@ -26,6 +26,7 @@ export const PRACTICE_MODES = ["study", "reflex", "pronunciation", "reading", "g
 
 export type PracticeMode = (typeof PRACTICE_MODES)[number];
 export type FsrsRating = 1 | 2 | 3 | 4;
+export type StudyDirection = "mixed" | "hanzi_to_meaning" | "meaning_to_hanzi";
 
 export interface FsrsReviewInput {
   rating: FsrsRating;
@@ -128,6 +129,7 @@ export interface StudyCard {
     meanings: StudyMeaning[];
     hskLevel: number | null;
   };
+  media?: PronunciationMedia | null;
   example: StudyExample | null;
 }
 
@@ -135,6 +137,7 @@ export interface StudySessionView {
   id: string;
   deviceId: string;
   maxCards: number;
+  direction: StudyDirection;
   reviewedCards: number;
   startedAt: number;
   endedAt: number | null;
@@ -173,6 +176,7 @@ export interface ReflexCard {
   answerChoiceId: string;
   choices: ReflexChoice[];
   history: ReflexHistorySummary;
+  media?: PronunciationMedia | null;
 }
 
 export interface ReflexSessionView {

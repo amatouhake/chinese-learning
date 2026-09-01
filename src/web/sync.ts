@@ -91,8 +91,13 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
         };
       }
 
-      if (pull.pronunciationPack) {
-        const audio = await cachePronunciationAudio(pull.pronunciationPack.cards);
+      const audioCards = [
+        ...(pull.studyPack?.cards ?? []),
+        ...(pull.reflexPack?.cards ?? []),
+        ...(pull.pronunciationPack?.cards ?? []),
+      ];
+      if (audioCards.length > 0) {
+        const audio = await cachePronunciationAudio(audioCards);
         audio.failedUrls.forEach((url) => audioCacheFailures.add(url));
       }
       state = await store.applyPull(pull);

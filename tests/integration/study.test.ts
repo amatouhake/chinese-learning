@@ -139,6 +139,113 @@ describe("vocabulary study flow", () => {
     await retireLexemes(["爱"]);
   });
 
+  test("persists a requested direction and filters the prepared card pool", async () => {
+    await applyImport("direction-choice", [lexeme("向", 1)]);
+    const created = await createStudySession(env.DB, {
+      sessionId: "direction-choice-session",
+      deviceId: "direction-choice-device",
+      maxCards: 1,
+      direction: "meaning_to_hanzi",
+    });
+    expect(created.session).toMatchObject({
+      maxCards: 1,
+      direction: "meaning_to_hanzi",
+    });
+    const next = await getNextStudyCard(
+      env.DB,
+      "direction-choice-session",
+      "direction-choice-device",
+    );
+    expect(next.card).toMatchObject({
+      activityType: "meaning_to_hanzi",
+      lexeme: { simplified: "向" },
+    });
+    await retireLexemes(["向"]);
+  });
+
+  test("defers a recent lexeme sibling without dropping its due card", async () => {
+    await applyImport("lexical-variety", [lexeme("甲", 1), lexeme("乙", 2)]);
+    const setupTime = Date.parse("2026-08-01T08:00:00Z");
+    const setupCards = ["hanzi_to_meaning", "meaning_to_hanzi"] as const;
+    for (const [index, activityType] of setupCards.entries()) {
+      await ingestAttempt(
+        env.DB,
+        scheduledAttempt({
+          eventId: `lexical-variety-setup-${index}`,
+          cardId: cardId("甲", activityType),
+          deviceId: "lexical-variety-setup-device",
+          deviceSeq: index + 1,
+          occurredAt: new Date(setupTime).toISOString(),
+          activityType,
+          rating: 1,
+        }),
+        { now: () => setupTime + 1 },
+      );
+    }
+
+    const now = Date.parse("2026-08-31T08:00:00Z");
+    await createStudySession(env.DB, {
+      sessionId: "lexical-variety-session",
+      deviceId: "lexical-variety-device",
+      maxCards: 3,
+    });
+    const first = await getNextStudyCard(
+      env.DB,
+      "lexical-variety-session",
+      "lexical-variety-device",
+      { now: () => now },
+    );
+    expect(first.card?.lexeme.simplified).toBe("甲");
+    if (!first.card) throw new Error("missing first lexical variety card");
+    await ingestAttempt(
+      env.DB,
+      scheduledAttempt({
+        eventId: "lexical-variety-session-first",
+        cardId: first.card.cardId,
+        deviceId: "lexical-variety-device",
+        deviceSeq: 1,
+        occurredAt: new Date(now).toISOString(),
+        activityType: first.card.activityType,
+        rating: 3,
+        studySessionId: "lexical-variety-session",
+        expectedCardStateVersion: first.card.state.version,
+      }),
+      { now: () => now + 1 },
+    );
+
+    const second = await getNextStudyCard(
+      env.DB,
+      "lexical-variety-session",
+      "lexical-variety-device",
+      { now: () => now + 2 },
+    );
+    expect(second.card).toMatchObject({ source: "new", lexeme: { simplified: "乙" } });
+    if (!second.card) throw new Error("missing deferred sibling alternative");
+    await ingestAttempt(
+      env.DB,
+      scheduledAttempt({
+        eventId: "lexical-variety-session-second",
+        cardId: second.card.cardId,
+        deviceId: "lexical-variety-device",
+        deviceSeq: 2,
+        occurredAt: new Date(now + 2).toISOString(),
+        activityType: second.card.activityType,
+        rating: 3,
+        studySessionId: "lexical-variety-session",
+        expectedCardStateVersion: second.card.state.version,
+      }),
+      { now: () => now + 3 },
+    );
+    const deferred = await getNextStudyCard(
+      env.DB,
+      "lexical-variety-session",
+      "lexical-variety-device",
+      { now: () => now + 4 },
+    );
+    expect(deferred.card).toMatchObject({ source: "due", lexeme: { simplified: "甲" } });
+    await retireLexemes(["甲", "乙"]);
+  });
+
   test("aligns displayed meanings with the preferred reading", async () => {
     await applyImport(
       "preferred-reading-meaning",

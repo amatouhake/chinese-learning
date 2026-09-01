@@ -12,4 +12,6 @@ if (!target) {
 
 mount(App, { target });
 
-registerProductionServiceWorker(import.meta.env.PROD);
+registerProductionServiceWorker(import.meta.env.PROD, undefined, undefined, {
+  watchForUpdates: import.meta.env.VITE_LOCAL_WORKER === "true",
+});

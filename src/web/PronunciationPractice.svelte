@@ -10,22 +10,29 @@
   import { isPronunciationAudioCached } from "./audio-cache";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
+  import {
+    getSoundEnabled,
+    playAnswerFeedback,
+    playPronunciationAudio,
+    prepareSound,
+  } from "./sound";
   import { synchronizeLearning } from "./sync";
+  import { learnerError } from "./ui-copy";
 
   type Phase =
-    "loading" | "choose" | "prompt" | "revealed" | "submitting" | "empty" | "completed" | "error";
+    "loading" | "choose" | "prompt" | "revealed" | "advancing" | "empty" | "completed" | "error";
   const focuses: Array<{ id: PronunciationFocus; label: string; hint: string }> = [
-    { id: "mixed", label: "Mixed practice", hint: "Pinyin, tones, listening, and speaking" },
-    { id: "pinyin", label: "Pinyin", hint: "Recognize and recall exact readings" },
-    { id: "tones", label: "Tones", hint: "Single tones and two-syllable pairs" },
-    { id: "listening", label: "Listening", hint: "Audio to Hanzi or meaning" },
-    { id: "speaking", label: "Speaking", hint: "Say the word, compare, self-rate" },
+    { id: "mixed", label: "おまかせ", hint: "ピンイン・声調・聞き取り・発話" },
+    { id: "pinyin", label: "ピンイン", hint: "正確な読みを見分ける" },
+    { id: "tones", label: "声調", hint: "単音節と二音節の声調" },
+    { id: "listening", label: "聞き取り", hint: "音声から漢字や意味を選ぶ" },
+    { id: "speaking", label: "発話", hint: "声に出して比べ、自己評価する" },
   ];
   const selfRatings = [
-    { value: 1, label: "Try again", hint: "Tone or syllable missed" },
-    { value: 2, label: "Approximate", hint: "Recognizable, but shaky" },
-    { value: 3, label: "Good", hint: "Broadly matched" },
-    { value: 4, label: "Clear", hint: "Confident and controlled" },
+    { value: 1, label: "もう一度", hint: "声調・音節を外した" },
+    { value: 2, label: "だいたい", hint: "通じるが不安定" },
+    { value: 3, label: "できた", hint: "おおむね一致" },
+    { value: 4, label: "明瞭", hint: "自信を持って発音" },
   ] as const;
 
   let phase: Phase = "loading";
@@ -41,7 +48,9 @@
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
   let audioAvailableOffline = true;
-  let syncMessage = "Choose a focus to prepare its offline set.";
+  let syncMessage = "練習内容を選ぶと、端末用のセットを準備できます。";
+  let answerInFlight = false;
+  let autoplayedCardKey: string | null = null;
 
   onMount(() => void initializePronunciation());
 
@@ -56,7 +65,7 @@
         return;
       }
       if (!browserState.activePronunciationFocus) {
-        throw new Error("The active pronunciation session has no practice focus.");
+        throw new Error("発音セッションの練習内容がありません。");
       }
       if (!browserOffline) {
         try {
@@ -72,8 +81,8 @@
           }
           isOffline = browserOffline || !(error instanceof ApiError);
           syncMessage = isOffline
-            ? "Network unavailable · using the cached pronunciation set"
-            : "Service unavailable · using the cached pronunciation set";
+            ? "通信できないため、保存済みの発音セットを使います"
+            : "サーバーに接続できないため、保存済みの発音セットを使います";
         }
       }
       await loadNextCard();
@@ -86,7 +95,7 @@
     phase = "loading";
     errorMessage = "";
     try {
-      if (browserOffline) throw new Error("Reconnect to prepare a new pronunciation offline set.");
+      if (browserOffline) throw new Error("再接続すると、新しい発音セットを準備できます。");
       store ??= await OfflineLearningStore.open(localStorage);
       browserState ??= await store.snapshot();
       browserState = await store.setActivePronunciationSession(
@@ -94,7 +103,7 @@
         focus,
       );
       if (!browserState.activePronunciationSessionId || !browserState.activePronunciationFocus) {
-        throw new Error("No active pronunciation session is available.");
+        throw new Error("発音セッションを開始できませんでした。");
       }
       await ensureSession(
         browserState.activePronunciationSessionId,
@@ -118,15 +127,15 @@
       { sessionId, deviceId, focus, maxItems: 10 },
     );
     session = result.session;
-    if (!store) throw new Error("Offline storage is not ready.");
+    if (!store) throw new Error("オフライン保存を準備できませんでした。");
     await store.rememberPronunciationSession(result.session);
   }
 
-  async function loadNextCard(): Promise<void> {
+  async function loadNextCard(showLoading = true): Promise<void> {
     if (!store || !browserState?.activePronunciationSessionId) {
-      throw new Error("No pronunciation session is active.");
+      throw new Error("発音セッションがありません。");
     }
-    phase = "loading";
+    phase = showLoading ? "loading" : "advancing";
     const sessionId = browserState.activePronunciationSessionId;
     const [cachedSession, cachedCard] = await Promise.all([
       store.getPronunciationSession(sessionId),
@@ -135,8 +144,8 @@
     if (!cachedSession) {
       throw new Error(
         isOffline
-          ? "This pronunciation set was not cached before the connection was lost."
-          : "The canonical pronunciation set has not been pulled yet.",
+          ? "接続が切れる前に、この発音セットを保存できませんでした。"
+          : "発音セットをまだ取得できていません。",
       );
     }
     session = cachedSession;
@@ -148,6 +157,7 @@
       audioAvailableOffline = await isPronunciationAudioCached(cachedCard);
       promptStartedAt = performance.now();
       phase = "prompt";
+      if (shouldAutoplayOnPrompt(cachedCard.activityType)) void autoplayCardAudio();
       return;
     }
     if (cachedSession.endedAt !== null) {
@@ -158,22 +168,32 @@
 
   function revealRecall(): void {
     if (phase !== "prompt" || !card) return;
+    prepareSound();
     phase = "revealed";
-    if (card.activityType === "pronunciation_production" && card.media) void playAudio();
+    if (card.media && !shouldAutoplayOnPrompt(card.activityType)) void autoplayCardAudio();
   }
 
   async function selectChoice(choiceId: string): Promise<void> {
-    if (phase !== "prompt" || !card?.answerChoiceId) return;
+    if (phase !== "prompt" || !card?.answerChoiceId || answerInFlight) return;
     const correct = choiceId === card.answerChoiceId;
+    prepareSound();
+    playAnswerFeedback(correct ? "correct" : "incorrect");
     await saveAttempt({
       correct,
       metadata: { interaction: "choice", selectedChoiceId: choiceId, readingId: card.readingId },
     });
     wasCorrect = correct;
+    if (card.media && !shouldAutoplayOnPrompt(card.activityType)) void autoplayCardAudio();
   }
 
   async function saveRecall(correct: boolean): Promise<void> {
-    if (phase !== "revealed" || answerSaved || card?.activityType !== "hanzi_to_pinyin") return;
+    if (
+      phase !== "revealed" ||
+      answerSaved ||
+      answerInFlight ||
+      card?.activityType !== "hanzi_to_pinyin"
+    )
+      return;
     await saveAttempt({
       correct,
       metadata: { interaction: "reveal-and-self-check", readingId: card.readingId },
@@ -182,7 +202,12 @@
   }
 
   async function saveProduction(selfRating: number): Promise<void> {
-    if (phase !== "revealed" || answerSaved || card?.activityType !== "pronunciation_production")
+    if (
+      phase !== "revealed" ||
+      answerSaved ||
+      answerInFlight ||
+      card?.activityType !== "pronunciation_production"
+    )
       return;
     await saveAttempt({
       selfRating,
@@ -198,13 +223,14 @@
     },
     continueImmediately = false,
   ): Promise<void> {
-    if (!card || !browserState?.activePronunciationSessionId) return;
+    if (!card || !browserState?.activePronunciationSessionId || answerInFlight) return;
+    answerInFlight = true;
     try {
-      phase = "submitting";
-      if (!store) throw new Error("Offline storage is not ready.");
-      const staged = await store.stageAttempt(browserState, {
+      if (!store) throw new Error("オフライン保存を準備できませんでした。");
+      const sessionId = browserState.activePronunciationSessionId;
+      const staged = await store.stageAttemptFromCurrentState({
         cardId: card.cardId,
-        studySessionId: browserState.activePronunciationSessionId,
+        studySessionId: sessionId,
         mode: "pronunciation",
         activityType: card.activityType,
         correct: result.correct,
@@ -213,18 +239,17 @@
         metadata: result.metadata,
       });
       browserState = staged.state;
-      if (!browserOffline) await syncNow();
       answerSaved = true;
-      if (session && isOffline) {
-        session = { ...session, completedItems: session.completedItems + 1 };
-      }
+      syncInBackground();
       if (continueImmediately) {
-        await loadNextCard();
+        await loadNextCard(false);
         return;
       }
       phase = "revealed";
     } catch (error) {
       showError(error);
+    } finally {
+      answerInFlight = false;
     }
   }
 
@@ -234,13 +259,21 @@
     browserState = result.state;
     isOffline = browserOffline || result.networkUnavailable;
     if (result.error) {
-      syncMessage = `${result.pending} queued · ${result.error}`;
+      syncMessage = `${result.pending}件を同期待ちにしています`;
       return;
     }
     syncMessage =
       result.audioCacheFailures.length === 0
-        ? "Offline set ready · synced"
-        : `${result.audioCacheFailures.length} audio item(s) unavailable offline`;
+        ? "この端末に保存済み · 同期済み"
+        : `音声${result.audioCacheFailures.length}件を保存できませんでした`;
+  }
+
+  function syncInBackground(): void {
+    if (browserOffline) return;
+    void syncNow().catch(() => {
+      isOffline = true;
+      syncMessage = `${browserState?.pendingCount ?? 0}件を同期待ちにしています`;
+    });
   }
 
   async function skipUncachedAudio(): Promise<void> {
@@ -265,12 +298,14 @@
   async function handleOnline(): Promise<void> {
     browserOffline = false;
     isOffline = false;
-    syncMessage = "Connection restored · synchronizing…";
+    syncMessage = "接続を確認しています…";
     try {
       if (!store) return await initializePronunciation();
       await syncNow();
       if (card) audioAvailableOffline = await isPronunciationAudioCached(card);
-      if (phase !== "revealed" && phase !== "prompt") await loadNextCard();
+      if (phase !== "revealed" && phase !== "prompt" && phase !== "advancing") {
+        await loadNextCard();
+      }
     } catch (error) {
       showError(error);
     }
@@ -279,67 +314,94 @@
   function handleOffline(): void {
     browserOffline = true;
     isOffline = true;
-    syncMessage = `${browserState?.pendingCount ?? 0} queued · offline`;
+    syncMessage = `${browserState?.pendingCount ?? 0}件を端末に保存 · オフライン`;
   }
 
   async function playAudio(): Promise<void> {
     audioError = "";
+    if (!getSoundEnabled()) return;
     if (!card?.media) {
-      audioError = "No reliable source recording is mapped to this exact reading.";
+      audioError = "この正確な読みには、信頼できる音声がありません。";
       return;
     }
     if (isOffline && !audioAvailableOffline) {
-      audioError =
-        "This recording was not cached before the connection was lost. Skip it to continue.";
+      audioError = "接続が切れる前に音声を保存できませんでした。スキップして続けられます。";
       return;
     }
-    try {
-      await new Audio(card.media.url).play();
-    } catch {
-      audioError = "Audio could not play. Tap replay or check that local media was staged.";
+    if (!(await playPronunciationAudio(card.media.url))) {
+      audioError = "音声を再生できませんでした。聞き直すか、保存状態を確認してください。";
     }
+  }
+
+  async function autoplayCardAudio(): Promise<void> {
+    if (!card?.media || !getSoundEnabled()) return;
+    const cardKey = `${session?.id ?? browserState?.activePronunciationSessionId ?? "pronunciation"}:${card.cardId}`;
+    if (autoplayedCardKey === cardKey || readAutoplayMarker() === cardKey) return;
+    autoplayedCardKey = cardKey;
+    writeAutoplayMarker(cardKey);
+    await playAudio();
+  }
+
+  function readAutoplayMarker(): string | null {
+    try {
+      return sessionStorage.getItem("chinese-learning.pronunciation-autoplay.v1");
+    } catch {
+      return null;
+    }
+  }
+
+  function writeAutoplayMarker(value: string): void {
+    try {
+      sessionStorage.setItem("chinese-learning.pronunciation-autoplay.v1", value);
+    } catch {
+      // Autoplay deduplication is best effort; the drill remains usable.
+    }
+  }
+
+  function shouldAutoplayOnPrompt(activity: PronunciationCard["activityType"]): boolean {
+    return activity !== "hanzi_to_pinyin" && activity !== "pronunciation_production";
   }
 
   function activityLabel(value: PronunciationCard): string {
     switch (value.activityType) {
       case "hanzi_to_pinyin":
-        return "Hanzi → pinyin recall";
+        return "漢字 → ピンイン";
       case "pinyin_to_hanzi":
-        return "Pinyin → Hanzi";
+        return "ピンイン → 漢字";
       case "audio_to_hanzi":
-        return "Audio → Hanzi";
+        return "音声 → 漢字";
       case "audio_to_meaning":
-        return "Audio → meaning";
+        return "音声 → 意味";
       case "tone_identification":
-        return "Tone identification";
+        return "声調を聞き分ける";
       case "tone_pair_identification":
-        return "Tone pair";
+        return "声調の組み合わせ";
       case "pronunciation_production":
-        return "Pronunciation production";
+        return "発音して確認";
     }
   }
 
   function promptInstruction(value: PronunciationCard): string {
     switch (value.activityType) {
       case "hanzi_to_pinyin":
-        return "Recall the exact pinyin, including tones";
+        return "声調を含む正確なピンインを思い出す";
       case "pinyin_to_hanzi":
-        return "Choose the Hanzi for this reading and sense";
+        return "この読みと意味に合う漢字を選ぶ";
       case "audio_to_hanzi":
-        return "Replay as needed, then choose the Hanzi";
+        return "必要なら聞き直して、漢字を選ぶ";
       case "audio_to_meaning":
-        return "Replay as needed, then choose the exact sense";
+        return "必要なら聞き直して、正しい意味を選ぶ";
       case "tone_identification":
-        return "Choose the dictionary tone";
+        return "辞書の声調を選ぶ";
       case "tone_pair_identification":
-        return "Choose the dictionary tone pair";
+        return "辞書の声調の組み合わせを選ぶ";
       case "pronunciation_production":
-        return "Say this word aloud before comparing";
+        return "声に出してから、答えと比べる";
     }
   }
 
   function showError(error: unknown): void {
-    errorMessage = error instanceof Error ? error.message : "Something went wrong.";
+    errorMessage = learnerError(error, "問題が発生しました。");
     phase = "error";
   }
 </script>
@@ -347,11 +409,14 @@
 <svelte:window ononline={() => void handleOnline()} onoffline={handleOffline} />
 
 <header class="app-header surface-header">
-  <div><p class="eyebrow">Pronunciation foundation</p></div>
-  {#if session && (phase === "prompt" || phase === "revealed" || phase === "submitting")}
+  <div class="surface-title">
+    <span class="section-mark">03</span>
+    <h2>発音</h2>
+  </div>
+  {#if session && (phase === "prompt" || phase === "revealed" || phase === "advancing")}
     <p
       class="progress"
-      aria-label={`Item ${Math.min(session.completedItems + (answerSaved ? 0 : 1), session.maxItems)} of ${session.maxItems}`}
+      aria-label={`発音 ${Math.min(session.completedItems + (answerSaved ? 0 : 1), session.maxItems)} / ${session.maxItems}`}
     >
       <strong>{Math.min(session.completedItems + (answerSaved ? 0 : 1), session.maxItems)}</strong
       ><span>/ {session.maxItems}</span>
@@ -360,27 +425,21 @@
 </header>
 
 <p class:offline={isOffline} class="sync-status" aria-live="polite">
-  {isOffline ? `${browserState?.pendingCount ?? 0} queued · offline` : syncMessage}
+  {isOffline ? `${browserState?.pendingCount ?? 0}件を端末に保存 · オフライン` : syncMessage}
 </p>
 
-{#if phase === "loading" || phase === "submitting"}
+{#if phase === "loading"}
   <section class="status-panel" aria-live="polite">
     <div class="pulse pronunciation-pulse" aria-hidden="true"></div>
-    <h2>{phase === "submitting" ? "Saving practice…" : "Preparing sounds…"}</h2>
-    <p>
-      {phase === "submitting"
-        ? "This ordinary-practice event is durable and idempotent."
-        : "Every prompt stays attached to one exact reading."}
-    </p>
+    <h2>発音練習を準備しています…</h2>
+    <p>一つの正確な読みを使って出題します。</p>
   </section>
 {:else if phase === "choose"}
   <section class="mode-picker">
     <div class="mode-picker-heading">
-      <p class="status-kicker">Ten focused items</p>
-      <h2>What do you want to hear?</h2>
-      <p>
-        Mixed practice is the best default. All pronunciation work here is unscheduled practice.
-      </p>
+      <p class="status-kicker">10問の集中練習</p>
+      <h2>発音の練習内容を選ぶ</h2>
+      <p>迷ったら「おまかせ」から始めましょう。</p>
     </div>
     <div class="focus-grid">
       {#each focuses as focus}
@@ -396,39 +455,49 @@
   </section>
 {:else if phase === "error"}
   <section class="status-panel error-panel" role="alert">
-    <p class="status-kicker">Practice paused safely</p>
-    <h2>Nothing was discarded</h2>
+    <p class="status-kicker">練習を一時停止しました</p>
+    <h2>記録は失われていません</h2>
     <p>{errorMessage}</p>
-    <button class="primary-button" onclick={() => void initializePronunciation()}>Try again</button>
+    <button class="primary-button" onclick={() => void initializePronunciation()}
+      >もう一度試す</button
+    >
   </section>
 {:else if phase === "empty"}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">声</p>
-    <h2>No matching practice is available</h2>
-    <p>Import the pronunciation corpus, or choose a focus with available exact-reading content.</p>
-    <button class="primary-button" onclick={() => (phase = "choose")}>Choose another focus</button>
+    <p class="completion-mark" aria-hidden="true">—</p>
+    <h2>該当する練習がありません</h2>
+    <p>別の内容を選ぶか、単語が準備されるまで待ってください。</p>
+    <button class="primary-button" onclick={() => (phase = "choose")}>別の内容を選ぶ</button>
   </section>
 {:else if phase === "completed"}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">听</p>
-    <h2>Pronunciation set complete</h2>
+    <p class="completion-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
+    </p>
+    <h2>発音練習を完了</h2>
     <p>
-      {session?.completedItems ?? 0} non-FSRS attempts are {browserState?.pendingCount
-        ? "durably queued for reconnect"
-        : "safely synchronized"}.
+      {session?.completedItems ?? 0}問を確認しました。記録は{browserState?.pendingCount
+        ? "同期待ちです"
+        : "同期済みです"}。
     </p>
     <button
       class="primary-button"
       onclick={() =>
         void (browserState?.pendingCount ? initializePronunciation() : (phase = "choose"))}
     >
-      {browserState?.pendingCount ? "Retry synchronization" : "Practice another focus"}
+      {browserState?.pendingCount ? "同期を再試行" : "別の内容を練習する"}
     </button>
   </section>
 {:else if card}
-  <section class="study-card pronunciation-card" aria-live="polite">
+  <section
+    class:advancing={phase === "advancing"}
+    class="study-card pronunciation-card"
+    data-phase={phase}
+    aria-live="polite"
+    aria-busy={phase === "advancing"}
+  >
     <div class="card-meta">
-      <span class="queue-badge sound-badge">Sound</span><span>{activityLabel(card)}</span>
+      <span class="queue-badge sound-badge">発音</span><span>{activityLabel(card)}</span>
       {#if card.lexeme.hskLevel}<span>HSK {card.lexeme.hskLevel}</span>{/if}
     </div>
     <div class="prompt-block pronunciation-prompt">
@@ -438,15 +507,19 @@
           class="audio-button"
           disabled={isOffline && !audioAvailableOffline}
           onclick={() => void playAudio()}
-          aria-label="Play or replay word audio"
-          ><span aria-hidden="true">▶</span><strong>Play / replay</strong></button
+          aria-label="単語の音声を再生・聞き直す"
+          ><svg aria-hidden="true" viewBox="0 0 20 20"
+            ><path d="M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z" /><path
+              d="M13 7a4.2 4.2 0 0 1 0 6M15.2 4.8a7.3 7.3 0 0 1 0 10.4"
+            /></svg
+          ><strong>再生 / 聞き直す</strong></button
         >
         {#if isOffline && !audioAvailableOffline}
           <p class="audio-error" role="status">
-            This recording was not cached before network loss. Other pronunciation cards still work.
+            接続が切れる前に音声を保存できませんでした。他の発音カードは続けて使えます。
           </p>
           <button class="audio-replay-small" onclick={() => void skipUncachedAudio()}
-            >Skip uncached audio</button
+            >音声をスキップ</button
           >
         {/if}
       {:else}
@@ -480,14 +553,16 @@
       <button class="reveal-button" onclick={revealRecall}
         ><span
           >{card.activityType === "pronunciation_production"
-            ? "I said it — compare"
-            : "Reveal pinyin"}</span
+            ? "発音した — 答えと比べる"
+            : "ピンインを見る"}</span
         ></button
       >
+    {:else if phase === "advancing"}
+      <div class="advancing-note" role="status">次のカードを準備しています…</div>
     {:else}
       <div class="pronunciation-answer">
         {#if wasCorrect !== null}<p class:correct={wasCorrect} class="feedback">
-            {wasCorrect ? "Correct" : "Not this time"}
+            {wasCorrect ? "正解" : "今回は不正解"}
           </p>{/if}
         <div class="answer-heading">
           <p class="answer-hanzi">{card.lexeme.simplified}</p>
@@ -501,20 +576,21 @@
           </div>{/if}
         {#if card.media}
           <button class="audio-replay-small" onclick={() => void playAudio()}
-            >▶ Replay exact-reading audio</button
+            ><svg aria-hidden="true" viewBox="0 0 20 20"
+              ><path d="M3.5 8.1h3l3.3-2.8v9.4l-3.3-2.8h-3z" /><path
+                d="M13 7a4.2 4.2 0 0 1 0 6M15.2 4.8a7.3 7.3 0 0 1 0 10.4"
+              /></svg
+            > 正確な読みを聞き直す</button
           >
           <p class="media-credit">{card.media.attribution} · {card.media.license}</p>
         {:else if card.activityType === "pronunciation_production"}<p class="safe-degrade">
-            No reliable recording is mapped to this exact reading; compare against pinyin and tones
-            only.
+            この正確な読みに信頼できる録音がないため、ピンインと声調だけで確認します。
           </p>{/if}
       </div>
       {#if !answerSaved && card.activityType === "hanzi_to_pinyin"}
         <div class="binary-grid">
-          <button class="missed" onclick={() => void saveRecall(false)}>Missed it</button><button
-            class="got-it"
-            onclick={() => void saveRecall(true)}>Got it</button
-          >
+          <button class="missed" onclick={() => void saveRecall(false)}>思い出せなかった</button
+          ><button class="got-it" onclick={() => void saveRecall(true)}>思い出せた</button>
         </div>
       {:else if !answerSaved && card.activityType === "pronunciation_production"}
         <div class="production-ratings">
@@ -523,8 +599,8 @@
             >{/each}
         </div>
       {:else if answerSaved}
-        <button class="primary-button continue-button" onclick={() => void loadNextCard()}
-          >Continue</button
+        <button class="primary-button continue-button" onclick={() => void loadNextCard(false)}
+          >次へ</button
         >
       {/if}
     {/if}
@@ -532,37 +608,31 @@
 {/if}
 
 <details class="sound-reference">
-  <summary>Quick pinyin & tone reference</summary>
+  <summary>ピンインと声調の早見表</summary>
   <div class="reference-content">
     <div>
-      <h3>Tones</h3>
+      <h3>声調</h3>
       <p>
-        <b>1</b> high level · <b>2</b> rising · <b>3</b> low/dipping · <b>4</b> falling · <b>5</b> neutral/light
+        <b>1</b> 高く平ら · <b>2</b> 上がる · <b>3</b> 低く曲がる · <b>4</b> 下がる · <b>5</b> 軽声
       </p>
       <p>
-        Pair cards show dictionary tones. Natural speech may change their surface shape, especially
-        3–3 and 一/不.
-      </p>
-    </div>
-    <div>
-      <h3>Initials</h3>
-      <p>
-        <b>j q x</b> use a high, front tongue position; <b>zh ch sh r</b> curl back; <b>z c s</b> stay
-        forward. Unaspirated/aspirated pairs include b/p, d/t, g/k, j/q, zh/ch, z/c.
+        組み合わせカードは辞書上の声調を示します。自然な発話では、特に3声+3声や一・不の
+        声調が変化することがあります。
       </p>
     </div>
     <div>
-      <h3>Finals & spelling</h3>
+      <h3>声母</h3>
       <p>
-        <b>ü</b> is written <b>u</b> after j/q/x/y. Keep ian vs iang, en vs eng, and in vs ing distinct.
-        Tone marks belong to the vowel nucleus; numeric pinyin uses 1–4 and 5 for neutral.
+        <b>j q x</b> は舌を前上方へ、<b>zh ch sh r</b> は舌を反らせ、<b>z c s</b> は前方で発音します。
+        無気音・有気音の組み合わせは b/p、d/t、g/k、j/q、zh/ch、z/c です。
+      </p>
+    </div>
+    <div>
+      <h3>韻母とつづり</h3>
+      <p>
+        j/q/x/y の後の <b>ü</b> は <b>u</b> と書きます。ian と iang、en と eng、in と ing を区別します。
+        声調記号は母音の中心に置き、数字表記では軽声を5とします。
       </p>
     </div>
   </div>
 </details>
-
-<footer>
-  <span>Correctness, production self-rating, and FSRS rating are separate fields.</span><span
-    >Pronunciation sessions never mutate card_state.</span
-  >
-</footer>

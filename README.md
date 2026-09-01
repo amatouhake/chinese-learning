@@ -72,9 +72,12 @@ bun run dev:worker
 ```
 
 Open the loopback URL printed by Wrangler (normally `http://localhost:8787`). The page offers
-Progress, Study, Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a 10-card session:
-due cards are
-selected first, followed by deterministic new cards. Reflex starts a 12-answer automaticity drill
+Progress, Study, Reflex, Reading, and Pronunciation surfaces. Vocabulary starts a bounded session
+after the learner chooses 5, 10, or 20 cards and a direction (mixed, Chinese → Japanese meaning,
+or Japanese meaning → Chinese). Due cards are selected first, with lexical variety preferred when
+the pool allows it; the completed session keeps a local review recap. Answers are staged durably in
+IndexedDB and synchronize in the background, so cached practice does not pause on a network round
+trip. Reflex starts a 12-answer automaticity drill
 once enough introduced material can supply honest distractors. Reading starts Chinese-first, then
 reveals vocabulary, pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its
 Grammar path teaches one linked pattern, reveals the example only on request, then checks one
@@ -82,6 +85,13 @@ bounded completion exercise and records explicit confidence. Pronunciation start
 low-friction focus chooser and offers repeatable audio plus a compact sound-system reference. `bun
 run dev` serves only the Vite frontend, so use `bun run dev:worker` for the real D1-backed flow and
 staged media.
+
+`bun run dev:worker` keeps the local Worker bundle PWA-enabled so offline dogfooding remains
+representative. It also marks that bundle as local: the browser bypasses the HTTP cache when
+checking the service worker, checks again when the window regains focus, and refreshes a controlled
+tab after a new shell activates. Rebuilding and restarting the Worker therefore updates an existing
+local tab without clearing browser storage; the deployed build keeps the normal installable PWA
+update behavior.
 
 After the first online study set is prepared, the browser can install the app and continue that
 bounded Vocabulary set without a connection, including across reloads. Prepared Reflex, Reading,

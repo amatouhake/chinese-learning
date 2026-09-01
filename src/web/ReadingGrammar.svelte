@@ -1,28 +1,29 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
 
   import type { GrammarCard, GuidedSessionView, ReadingCard } from "../domain/types";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
   import { synchronizeLearning } from "./sync";
+  import { learnerError } from "./ui-copy";
 
   type SurfaceMode = "reading" | "grammar";
-  type ReadingPhase = "loading" | "prompt" | "submitting" | "empty" | "completed" | "error";
+  type ReadingPhase = "loading" | "prompt" | "advancing" | "empty" | "completed" | "error";
   type GrammarPhase =
     | "loading"
     | "introduction"
     | "practice"
     | "feedback"
-    | "submitting"
+    | "advancing"
     | "empty"
     | "completed"
     | "error";
 
   const confidenceRatings = [
-    { value: 1, label: "Lost", hint: "Need the explanation again" },
-    { value: 2, label: "With help", hint: "Hints carried me" },
-    { value: 3, label: "Mostly", hint: "Structure is becoming clear" },
-    { value: 4, label: "Understood", hint: "Could explain the pattern" },
+    { value: 1, label: "忘れた", hint: "もう一度説明を見る" },
+    { value: 2, label: "手がかりあり", hint: "ヒントで進めた" },
+    { value: 3, label: "だいたい", hint: "構造が見えてきた" },
+    { value: 4, label: "理解した", hint: "パターンを説明できる" },
   ] as const;
 
   let mode: SurfaceMode = "reading";
@@ -41,7 +42,7 @@
   let promptStartedAt = 0;
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
-  let syncMessage = "Preparing a five-item offline set…";
+  let syncMessage = "5問の例文セットを準備しています…";
 
   onMount(() => void initializeMode());
 
@@ -69,14 +70,16 @@
         browserState.activeGrammarTopicId !== requestedGrammarTopicId
       ) {
         if (browserOffline) {
-          throw new Error("Reconnect once to open this connected grammar topic.");
+          throw new Error("再接続すると、この文法トピックを開けます。");
         }
         browserState = await store.clearActiveGrammarSession(browserState.activeGrammarSessionId);
       }
       const activeId = activeSessionId();
       if (!activeId) {
         if (browserOffline) {
-          throw new Error(`Reconnect once to prepare a new offline ${mode} set.`);
+          throw new Error(
+            `再接続すると、新しい${mode === "reading" ? "読解" : "文法"}セットを準備できます。`,
+          );
         }
         await createSession(mode === "grammar" ? requestedGrammarTopicId : null);
         return;
@@ -93,8 +96,8 @@
           if (!cached) throw error;
           isOffline = browserOffline || !(error instanceof ApiError);
           syncMessage = isOffline
-            ? `Network unavailable · using cached ${mode} content`
-            : `Service unavailable · using cached ${mode} content`;
+            ? `通信できないため、保存済みの${mode === "reading" ? "読解" : "文法"}内容を使います`
+            : `サーバーに接続できないため、保存済みの${mode === "reading" ? "読解" : "文法"}内容を使います`;
         }
       }
       await loadNextCard();
@@ -106,7 +109,11 @@
   async function createSession(topicId: string | null = null): Promise<void> {
     setLoading();
     try {
-      if (browserOffline) throw new Error(`Reconnect to prepare another offline ${mode} set.`);
+      if (browserOffline) {
+        throw new Error(
+          `再接続すると、別の${mode === "reading" ? "読解" : "文法"}セットを準備できます。`,
+        );
+      }
       store ??= await OfflineLearningStore.open(localStorage);
       browserState ??= await store.snapshot();
       if (mode === "reading") {
@@ -120,7 +127,11 @@
         );
       }
       const activeId = activeSessionId();
-      if (!activeId) throw new Error(`No active ${mode} session is available.`);
+      if (!activeId) {
+        throw new Error(
+          `${mode === "reading" ? "読解" : "文法"}セッションを開始できませんでした。`,
+        );
+      }
       await ensureSession(activeId, browserState.deviceId);
       await syncNow();
       await loadNextCard();
@@ -136,15 +147,17 @@
     }
     const result = await postJson<{ session: GuidedSessionView }>(`/api/${mode}/sessions`, body);
     session = result.session;
-    if (!store) throw new Error("Offline storage is not ready.");
+    if (!store) throw new Error("オフライン保存を準備できませんでした。");
     await store.rememberGuidedSession(result.session);
   }
 
-  async function loadNextCard(): Promise<void> {
-    if (!store) throw new Error("Offline storage is not ready.");
+  async function loadNextCard(showLoading = true): Promise<void> {
+    if (!store) throw new Error("オフライン保存を準備できませんでした。");
     const activeId = activeSessionId();
-    if (!activeId) throw new Error(`No ${mode} session is active.`);
-    setLoading();
+    if (!activeId) {
+      throw new Error(`${mode === "reading" ? "読解" : "文法"}セッションがありません。`);
+    }
+    setLoading(showLoading);
     if (mode === "reading") {
       const [cachedSession, cachedCard] = await Promise.all([
         store.getReadingSession(activeId),
@@ -186,9 +199,40 @@
     grammarPhase = cachedSession.completedItems === 0 ? "empty" : "completed";
   }
 
-  function revealNext(): void {
+  async function revealNext(): Promise<void> {
     if (readingPhase !== "prompt" || revealStage >= 4) return;
     revealStage += 1;
+    await tick();
+    followReveal(revealStage);
+  }
+
+  function followReveal(stage: number): void {
+    const revealedSection = document.querySelector<HTMLElement>(
+      `.reading-card [data-reveal-stage="${stage}"]`,
+    );
+    const nextAction = document.querySelector<HTMLElement>(
+      stage === 4 ? ".reading-card .rating-area" : ".reading-card .staged-reveal",
+    );
+    if (nextAction && !isComfortablyVisible(nextAction)) {
+      nextAction.scrollIntoView({ behavior: revealScrollBehavior(), block: "nearest" });
+      return;
+    }
+    if (revealedSection && !isComfortablyVisible(revealedSection)) {
+      revealedSection.scrollIntoView({ behavior: revealScrollBehavior(), block: "nearest" });
+    }
+  }
+
+  function isComfortablyVisible(element: HTMLElement): boolean {
+    const bounds = element.getBoundingClientRect();
+    const margin = 12;
+    return bounds.top >= margin && bounds.bottom <= globalThis.innerHeight - margin;
+  }
+
+  function revealScrollBehavior(): ScrollBehavior {
+    const reducedMotion =
+      typeof globalThis.matchMedia === "function" &&
+      globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return reducedMotion ? "auto" : "smooth";
   }
 
   async function saveReading(selfRating: number): Promise<void> {
@@ -201,10 +245,11 @@
     )
       return;
     try {
-      readingPhase = "submitting";
-      const staged = await store.stageAttempt(browserState, {
+      readingPhase = "advancing";
+      const sessionId = browserState.activeReadingSessionId;
+      const staged = await store.stageAttemptFromCurrentState({
         cardId: readingCard.cardId,
-        studySessionId: browserState.activeReadingSessionId,
+        studySessionId: sessionId,
         mode: "reading",
         activityType: "sentence_reading",
         selfRating,
@@ -217,8 +262,8 @@
         },
       });
       browserState = staged.state;
-      if (!browserOffline) await syncNow();
-      await loadNextCard();
+      syncInBackground();
+      await loadNextCard(false);
     } catch (error) {
       showError(error);
     }
@@ -249,12 +294,13 @@
     const example = grammarCard.examples.find(
       ({ sentenceId }) => sentenceId === practiceSentenceId,
     );
-    if (!example) return showError(new Error("This grammar topic has no linked example sentence."));
+    if (!example) return showError(new Error("この文法トピックに例文がありません。"));
     try {
-      grammarPhase = "submitting";
-      const staged = await store.stageAttempt(browserState, {
+      grammarPhase = "advancing";
+      const sessionId = browserState.activeGrammarSessionId;
+      const staged = await store.stageAttemptFromCurrentState({
         cardId: grammarCard.cardId,
-        studySessionId: browserState.activeGrammarSessionId,
+        studySessionId: sessionId,
         mode: "grammar",
         activityType: "sentence_reading",
         correct: grammarCorrect,
@@ -269,8 +315,8 @@
         },
       });
       browserState = staged.state;
-      if (!browserOffline) await syncNow();
-      await loadNextCard();
+      syncInBackground();
+      await loadNextCard(false);
     } catch (error) {
       showError(error);
     }
@@ -282,25 +328,34 @@
     browserState = result.state;
     isOffline = browserOffline || result.networkUnavailable;
     syncMessage = result.error
-      ? `${result.pending} queued · ${result.error}`
+      ? `${result.pending}件を同期待ちにしています`
       : result.pending === 0
-        ? "Offline set ready · synced"
-        : `${result.pending} queued`;
+        ? "この端末に保存済み · 同期済み"
+        : `${result.pending}件を同期待ち`;
+  }
+
+  function syncInBackground(): void {
+    if (browserOffline) return;
+    void syncNow().catch(() => {
+      isOffline = true;
+      syncMessage = `${browserState?.pendingCount ?? 0}件を同期待ちにしています`;
+    });
   }
 
   async function handleOnline(): Promise<void> {
     browserOffline = false;
     isOffline = false;
-    syncMessage = "Connection restored · synchronizing…";
+    syncMessage = "接続を確認しています…";
     try {
       if (!store) return await initializeMode();
       await syncNow();
       const hasActivePrompt =
         mode === "reading"
-          ? readingPhase === "prompt"
+          ? readingPhase === "prompt" || readingPhase === "advancing"
           : grammarPhase === "introduction" ||
             grammarPhase === "practice" ||
-            grammarPhase === "feedback";
+            grammarPhase === "feedback" ||
+            grammarPhase === "advancing";
       if (!hasActivePrompt) await loadNextCard();
     } catch (error) {
       showError(error);
@@ -310,7 +365,7 @@
   function handleOffline(): void {
     browserOffline = true;
     isOffline = true;
-    syncMessage = `${browserState?.pendingCount ?? 0} queued · offline`;
+    syncMessage = `${browserState?.pendingCount ?? 0}件を端末に保存 · オフライン`;
   }
 
   function activeSessionId(): string | null {
@@ -320,16 +375,16 @@
       : browserState.activeGrammarSessionId;
   }
 
-  function setLoading(): void {
-    if (mode === "reading") readingPhase = "loading";
-    else grammarPhase = "loading";
+  function setLoading(showLoading = true): void {
+    if (mode === "reading") readingPhase = showLoading ? "loading" : "advancing";
+    else grammarPhase = showLoading ? "loading" : "advancing";
   }
 
   function missingCacheError(kind: SurfaceMode): Error {
     return new Error(
       isOffline
-        ? `This ${kind} set was not cached before the connection was lost.`
-        : `The canonical ${kind} set has not been pulled yet.`,
+        ? `接続が切れる前に、この${kind === "reading" ? "読解" : "文法"}セットを保存できませんでした。`
+        : `${kind === "reading" ? "読解" : "文法"}セットをまだ取得できていません。`,
     );
   }
 
@@ -338,7 +393,7 @@
   }
 
   function showError(error: unknown): void {
-    errorMessage = error instanceof Error ? error.message : "Something went wrong.";
+    errorMessage = learnerError(error, "問題が発生しました。");
     if (mode === "reading") readingPhase = "error";
     else grammarPhase = "error";
   }
@@ -349,7 +404,7 @@
         meanings.find(({ language }) => language === "ja") ??
         meanings.find(({ language }) => language === "en") ??
         meanings[0]
-      )?.text ?? "Meaning unavailable"
+      )?.text ?? "意味がありません"
     );
   }
 
@@ -364,78 +419,85 @@
 <svelte:window ononline={() => void handleOnline()} onoffline={handleOffline} />
 
 <header class="app-header surface-header guided-header">
-  <div><p class="eyebrow">Reading / Grammar foundation</p></div>
-  {#if session && (readingPhase === "prompt" || grammarPhase === "introduction" || grammarPhase === "practice" || grammarPhase === "feedback")}
-    <p class="progress" aria-label={`Item ${session.completedItems + 1} of ${session.maxItems}`}>
+  <div class="surface-title">
+    <span class="section-mark">04</span>
+    <h2>{mode === "reading" ? "読解" : "文法"}</h2>
+  </div>
+  {#if session && (readingPhase === "prompt" || readingPhase === "advancing" || grammarPhase === "introduction" || grammarPhase === "practice" || grammarPhase === "feedback" || grammarPhase === "advancing")}
+    <p class="progress" aria-label={`項目 ${session.completedItems + 1} / ${session.maxItems}`}>
       <strong>{session.completedItems + 1}</strong><span>/ {session.maxItems}</span>
     </p>
   {/if}
 </header>
 
-<nav class="guided-nav" aria-label="Reading and grammar mode">
+<nav class="guided-nav" aria-label="読解と文法">
   <button class:active={mode === "reading"} onclick={() => void selectMode("reading")}
-    >Read sentences</button
+    >例文を読む</button
   ><button class:active={mode === "grammar"} onclick={() => void selectMode("grammar")}
-    >Grammar path</button
+    >文法コース</button
   >
 </nav>
 
 <p class:offline={isOffline} class="sync-status" aria-live="polite">
-  {isOffline ? `${browserState?.pendingCount ?? 0} queued · offline` : syncMessage}
+  {isOffline ? `${browserState?.pendingCount ?? 0}件を端末に保存 · オフライン` : syncMessage}
 </p>
 
-{#if (mode === "reading" && (readingPhase === "loading" || readingPhase === "submitting")) || (mode === "grammar" && (grammarPhase === "loading" || grammarPhase === "submitting"))}
+{#if (mode === "reading" && readingPhase === "loading") || (mode === "grammar" && grammarPhase === "loading")}
   <section class="status-panel" aria-live="polite">
     <div class="pulse guided-pulse" aria-hidden="true"></div>
-    <h2>
-      {readingPhase === "submitting" || grammarPhase === "submitting"
-        ? "Saving learning history…"
-        : "Preparing real sentences…"}
-    </h2>
-    <p>Reading and grammar stay ordinary practice; vocabulary FSRS state is untouched.</p>
+    <h2>例文セットを準備しています…</h2>
+    <p>次のレッスンを開いています。</p>
   </section>
 {:else if (mode === "reading" && readingPhase === "error") || (mode === "grammar" && grammarPhase === "error")}
   <section class="status-panel error-panel" role="alert">
-    <p class="status-kicker">Practice paused safely</p>
-    <h2>Nothing was discarded</h2>
+    <p class="status-kicker">練習を一時停止しました</p>
+    <h2>記録は失われていません</h2>
     <p>{errorMessage}</p>
-    <button class="primary-button" onclick={() => void initializeMode()}>Try again</button>
+    <button class="primary-button" onclick={() => void initializeMode()}>もう一度試す</button>
   </section>
 {:else if (mode === "reading" && readingPhase === "empty") || (mode === "grammar" && grammarPhase === "empty")}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">文</p>
-    <h2>No foundation content is available</h2>
-    <p>Run the pinned full corpus import to activate the reviewed sentence and grammar path.</p>
+    <p class="completion-mark" aria-hidden="true">—</p>
+    <h2>まだ教材がありません</h2>
+    <p>このコースで使えるレッスンが準備されていません。</p>
   </section>
 {:else if (mode === "reading" && readingPhase === "completed") || (mode === "grammar" && grammarPhase === "completed")}
   <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">读</p>
-    <h2>{mode === "reading" ? "Reading set complete" : "Grammar set complete"}</h2>
+    <p class="completion-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
+    </p>
+    <h2>{mode === "reading" ? "読解を完了" : "文法を完了"}</h2>
     <p>
-      {session?.completedItems ?? 0} non-FSRS attempts are {browserState?.pendingCount
-        ? "durably queued for reconnect"
-        : "safely synchronized"}.
+      {session?.completedItems ?? 0}項目を確認しました。記録は{browserState?.pendingCount
+        ? "同期待ちです"
+        : "同期済みです"}。
     </p>
     <button
       class="primary-button"
       onclick={() => void (browserState?.pendingCount ? initializeMode() : createSession())}
-      >{browserState?.pendingCount ? "Retry synchronization" : `Start another ${mode} set`}</button
+      >{browserState?.pendingCount
+        ? "同期を再試行"
+        : `別の${mode === "reading" ? "読解" : "文法"}を始める`}</button
     >
   </section>
 {:else if mode === "reading" && readingCard}
   <section class="study-card reading-card" aria-live="polite">
     <div class="card-meta">
-      <span class="queue-badge reading-badge">Sentence</span><span>Chinese first</span>
+      <span class="queue-badge reading-badge">例文</span><span>中国語から読む</span>
     </div>
     <div class="reading-prompt">
-      <p class="prompt-instruction">Read, segment, and form a meaning before asking for help</p>
+      <p class="prompt-instruction">意味を考えながら読む</p>
       <h2>{readingCard.sentence.chinese}</h2>
     </div>
 
     {#if revealStage >= 1}
-      <section class="reveal-panel vocabulary-reveal" aria-label="Vocabulary hints">
-        <p class="reveal-kicker">1 · Vocabulary / readings</p>
-        <p class="reading-note">Dictionary readings; the sentence pinyin follows its context.</p>
+      <section
+        class="reveal-panel vocabulary-reveal"
+        data-reveal-stage="1"
+        aria-label="単語と読みのヒント"
+      >
+        <p class="reveal-kicker">1 · 単語と読み</p>
+        <p class="reading-note">辞書上の読みです。例文のピンインは文脈に合わせています。</p>
         <div class="vocabulary-list">
           {#each readingCard.vocabulary as hint}
             <div>
@@ -448,21 +510,21 @@
       </section>
     {/if}
     {#if revealStage >= 2}
-      <section class="reveal-panel" aria-label="Sentence pinyin">
-        <p class="reveal-kicker">2 · Pinyin</p>
+      <section class="reveal-panel" data-reveal-stage="2" aria-label="例文のピンイン">
+        <p class="reveal-kicker">2 · ピンイン</p>
         <p class="sentence-pinyin">{readingCard.sentence.pinyin}</p>
       </section>
     {/if}
     {#if revealStage >= 3}
-      <section class="reveal-panel" aria-label="Sentence meaning">
-        <p class="reveal-kicker">3 · Meaning</p>
+      <section class="reveal-panel" data-reveal-stage="3" aria-label="例文の意味">
+        <p class="reveal-kicker">3 · 意味</p>
         <p class="sentence-meaning">{readingCard.sentence.meaningJa}</p>
         <p class="sentence-meaning secondary">{readingCard.sentence.meaningEn}</p>
       </section>
     {/if}
     {#if revealStage >= 4}
-      <section class="reveal-panel grammar-reveal" aria-label="Grammar explanation">
-        <p class="reveal-kicker">4 · Grammar</p>
+      <section class="reveal-panel grammar-reveal" data-reveal-stage="4" aria-label="文法の説明">
+        <p class="reveal-kicker">4 · 文法</p>
         {#each readingCard.grammarTopics as topic}
           <div class="topic-explanation">
             <div>
@@ -476,26 +538,28 @@
         <button
           class="text-button"
           onclick={() => void selectMode("grammar", readingCard?.grammarTopics[0]?.id ?? null)}
-          >Open the connected grammar path</button
+          >関連する文法コースを開く</button
         >
       </section>
     {/if}
 
     {#if revealStage < 4}
-      <button class="reveal-button staged-reveal" onclick={revealNext}>
-        <span
-          >{["Reveal vocabulary", "Reveal pinyin", "Reveal meaning", "Reveal grammar"][
-            revealStage
-          ]}</span
+      <button
+        class="reveal-button staged-reveal"
+        disabled={readingPhase === "advancing"}
+        onclick={() => void revealNext()}
+      >
+        <span>{["単語を表示", "ピンインを表示", "意味を表示", "文法を表示"][revealStage]}</span
         ><small>{revealStage + 1} / 4</small>
       </button>
     {:else}
       <div class="rating-area">
-        <p>How well did you understand the sentence?</p>
+        <p>どのくらい理解できましたか？</p>
         <div class="rating-grid guided-ratings">
           {#each confidenceRatings as rating}
             <button
               class={`rating rating-${rating.value}`}
+              disabled={readingPhase === "advancing"}
               onclick={() => void saveReading(rating.value)}
             >
               <strong>{rating.label}</strong><span>{rating.hint}</span>
@@ -508,8 +572,8 @@
 {:else if mode === "grammar" && grammarCard}
   <section class="study-card grammar-card" aria-live="polite">
     <div class="card-meta">
-      <span class="queue-badge grammar-badge">Topic {grammarCard.topic.sequence}</span>
-      <span>{grammarCard.topic.state?.status ?? "New topic"}</span>
+      <span class="queue-badge grammar-badge">文法 {grammarCard.topic.sequence}</span>
+      <span>{grammarCard.topic.state?.status ?? "新しい項目"}</span>
     </div>
     <div class="grammar-heading">
       <h2>{grammarCard.topic.title}</h2>
@@ -523,7 +587,7 @@
         <p class="contrast">{grammarCard.topic.contrastJa}</p>
         {#each grammarCard.examples as example}
           <div class="grammar-example">
-            <p class="example-label">Read this example</p>
+            <p class="example-label">この例文を読む</p>
             <p class="example-chinese">{example.chinese}</p>
             {#if exampleHelpRevealed}<p class="example-pinyin">{example.pinyin}</p>
               <p class="example-meaning">{example.meaningJa}</p>{/if}
@@ -531,15 +595,15 @@
         {/each}
         {#if !exampleHelpRevealed}<button
             class="text-button"
-            onclick={() => (exampleHelpRevealed = true)}>Reveal example pinyin & meaning</button
+            onclick={() => (exampleHelpRevealed = true)}>例文のピンインと意味を表示</button
           >{/if}
         <button class="primary-button grammar-practice-button" onclick={beginGrammarPractice}
-          >Practice this pattern</button
+          >このパターンを練習する</button
         >
       </div>
     {:else if grammarPhase === "practice"}
       <div class="grammar-question">
-        <p class="prompt-instruction">Choose the word that completes the sentence</p>
+        <p class="prompt-instruction">文を完成させる語を選ぶ</p>
         <h3>{grammarCard.topic.practice.prompt}</h3>
       </div>
       <div class="choice-grid grammar-choices">
@@ -550,13 +614,13 @@
     {:else if grammarPhase === "feedback"}
       <div class="grammar-feedback">
         <p class:correct={grammarCorrect} class="feedback">
-          {grammarCorrect ? "Correct" : "Review the distinction"}
+          {grammarCorrect ? "正解" : "違いを確認しましょう"}
         </p>
         <p class="practice-answer">{completedPracticeSentence(grammarCard)}</p>
         <p>{grammarCard.topic.practice.explanationJa}</p>
       </div>
       <div class="rating-area">
-        <p>How confident are you in this grammar point?</p>
+        <p>この文法をどのくらい理解できましたか？</p>
         <div class="rating-grid guided-ratings">
           {#each confidenceRatings as rating}
             <button
@@ -568,12 +632,8 @@
           {/each}
         </div>
       </div>
+    {:else if grammarPhase === "advancing"}
+      <div class="advancing-note" role="status">次の項目を準備しています…</div>
     {/if}
   </section>
 {/if}
-
-<footer>
-  <span>Sentence and grammar attempts are immutable ordinary-practice events.</span><span
-    >Grammar topic state is durable; vocabulary card_state and fsrs_reviews are unchanged.</span
-  >
-</footer>

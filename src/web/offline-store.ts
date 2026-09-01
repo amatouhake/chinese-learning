@@ -55,6 +55,8 @@ interface PersistedMeta {
   activeReadingSessionId: string | null;
   activeGrammarSessionId: string | null;
   activeGrammarTopicId: string | null;
+  lastCompletedStudySessionId: string | null;
+  dismissedStudySessionId: string | null;
   learnerCursor: number;
   contentRevision: number | null;
 }
@@ -102,6 +104,20 @@ interface CachedStudySession {
   key: string;
   mode: "study";
   session: StudySessionView;
+  reviews: StudyReviewRecord[];
+}
+
+export interface StudyReviewRecord {
+  eventId: string;
+  cardId: string;
+  activityType: StudyCard["activityType"];
+  source: StudyCard["source"];
+  simplified: string;
+  pinyin: string | null;
+  meaning: string;
+  prompt: string;
+  answer: string;
+  rating: 1 | 2 | 3 | 4;
 }
 
 interface CachedPronunciationSession {
@@ -202,6 +218,39 @@ export class OfflineLearningStore {
     return this.clearActiveSession("study", sessionId);
   }
 
+  dismissStudyResult(sessionId: string): Promise<BrowserOfflineState> {
+    if (sessionId.trim().length === 0) throw new Error("study result ID must be non-empty");
+    return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
+      const transaction = this.db.transaction(META_STORE, "readwrite");
+      const metaStore = transaction.objectStore(META_STORE);
+      const latest = await requiredMeta(metaStore);
+      const dismissesCompletedResult = latest.lastCompletedStudySessionId === sessionId;
+      const dismissesActiveSession = latest.activeSessionId === sessionId;
+      if (!dismissesCompletedResult && !dismissesActiveSession) {
+        await transactionDone(transaction);
+        return this.snapshot();
+      }
+      const next: PersistedMeta = {
+        ...latest,
+        revision: latest.revision + 1,
+        // Hiding a result must not orphan a session whose canonical closure has
+        // not reached this device yet. The active ID keeps the session in the
+        // next sync payload; clearActiveSession owns the lifecycle transition.
+        activeSessionId: latest.activeSessionId,
+        lastCompletedStudySessionId: dismissesCompletedResult
+          ? null
+          : latest.lastCompletedStudySessionId,
+        dismissedStudySessionId: sessionId,
+      };
+      metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
+      await transactionDone(transaction);
+      persistIdentityMirror(this.storage, next);
+      return this.snapshot();
+    });
+  }
+
   clearActiveReflexSession(sessionId: string): Promise<BrowserOfflineState> {
     return this.clearActiveSession("reflex", sessionId);
   }
@@ -231,6 +280,7 @@ export class OfflineLearningStore {
       key: sessionKey("study", session.id),
       mode: "study",
       session,
+      reviews: [],
     });
   }
 
@@ -328,6 +378,22 @@ export class OfflineLearningStore {
       await transactionDone(transaction);
       persistIdentityMirror(this.storage, next);
       return { state: await this.snapshot(), attempt };
+    });
+  }
+
+  /**
+   * Stage a learner action against the latest local state while sharing the
+   * sync lock. Background pull/ack work must not make a normal tap look stale
+   * between its state read and the durable write.
+   */
+  stageAttemptFromCurrentState(
+    draft: StudyAttemptDraft,
+    createId: () => string = () => crypto.randomUUID(),
+    now: () => number = () => Date.now(),
+  ): Promise<StagedOfflineAttempt> {
+    return this.locks.request(OFFLINE_SYNC_LOCK, async () => {
+      const state = await this.snapshot();
+      return this.stageAttempt(state, draft, createId, now);
     });
   }
 
@@ -491,8 +557,21 @@ export class OfflineLearningStore {
   }
 
   getStudySession(sessionId: string): Promise<StudySessionView | null> {
-    return this.getCachedSession<CachedStudySession>("study", sessionId).then(
-      (value) => value?.session ?? null,
+    return this.getCachedSession<CachedStudySession>("study", sessionId).then((value) =>
+      value ? normalizeStudySession(value.session) : null,
+    );
+  }
+
+  getStudySessionRecord(
+    sessionId: string,
+  ): Promise<{ session: StudySessionView; reviews: StudyReviewRecord[] } | null> {
+    return this.getCachedSession<CachedStudySession>("study", sessionId).then((value) =>
+      value
+        ? {
+            session: normalizeStudySession(value.session),
+            reviews: value.reviews ?? [],
+          }
+        : null,
     );
   }
 
@@ -537,7 +616,9 @@ export class OfflineLearningStore {
         existing.activeReflexSessionId === undefined ||
         existing.activeReadingSessionId === undefined ||
         existing.activeGrammarSessionId === undefined ||
-        existing.activeGrammarTopicId === undefined
+        existing.activeGrammarTopicId === undefined ||
+        existing.lastCompletedStudySessionId === undefined ||
+        existing.dismissedStudySessionId === undefined
       ) {
         const transaction = this.db.transaction(META_STORE, "readwrite");
         transaction.objectStore(META_STORE).put({
@@ -547,6 +628,8 @@ export class OfflineLearningStore {
           activeReadingSessionId: existing.activeReadingSessionId ?? null,
           activeGrammarSessionId: existing.activeGrammarSessionId ?? null,
           activeGrammarTopicId: existing.activeGrammarTopicId ?? null,
+          lastCompletedStudySessionId: existing.lastCompletedStudySessionId ?? null,
+          dismissedStudySessionId: existing.dismissedStudySessionId ?? null,
         } satisfies PersistedMeta);
         await transactionDone(transaction);
       }
@@ -697,6 +780,8 @@ export class OfflineLearningStore {
         activeReadingSessionId: mode === "reading" ? sessionId : latest.activeReadingSessionId,
         activeGrammarSessionId: mode === "grammar" ? sessionId : latest.activeGrammarSessionId,
         activeGrammarTopicId: mode === "grammar" ? topicId : latest.activeGrammarTopicId,
+        lastCompletedStudySessionId: mode === "study" ? null : latest.lastCompletedStudySessionId,
+        dismissedStudySessionId: mode === "study" ? null : latest.dismissedStudySessionId,
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -712,13 +797,24 @@ export class OfflineLearningStore {
   ): Promise<BrowserOfflineState> {
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
       await this.reconcileLegacyStateUnderLock();
-      const transaction = this.db.transaction(META_STORE, "readwrite");
+      const transaction = this.db.transaction([META_STORE, SESSION_STORE], "readwrite");
       const metaStore = transaction.objectStore(META_STORE);
       const latest = await requiredMeta(metaStore);
       const current = activeSessionId(latest, mode);
       if (current !== sessionId) {
         await transactionDone(transaction);
         return this.snapshot();
+      }
+      if (mode === "study") {
+        const cached = (await request(
+          transaction.objectStore(SESSION_STORE).get(sessionKey("study", sessionId)),
+        )) as CachedStudySession | undefined;
+        if (!cached || typeof cached.session.endedAt !== "number") {
+          // A local pack can be exhausted before the server has observed the
+          // final attempt. Keep the identity so the next pull can close it.
+          await transactionDone(transaction);
+          return this.snapshot();
+        }
       }
       const next: PersistedMeta = {
         ...latest,
@@ -731,6 +827,8 @@ export class OfflineLearningStore {
         activeReadingSessionId: mode === "reading" ? null : latest.activeReadingSessionId,
         activeGrammarSessionId: mode === "grammar" ? null : latest.activeGrammarSessionId,
         activeGrammarTopicId: mode === "grammar" ? null : latest.activeGrammarTopicId,
+        lastCompletedStudySessionId:
+          mode === "study" ? sessionId : latest.lastCompletedStudySessionId,
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -776,6 +874,7 @@ async function replaceStudyPack(
     key: sessionKey("study", session.id),
     mode: "study",
     session,
+    reviews: [],
   } satisfies CachedStudySession);
 }
 
@@ -849,6 +948,7 @@ async function putMergedSession(store: IDBObjectStore, incoming: CachedSession):
         reviewedCards: Math.max(incoming.session.reviewedCards, previous.session.reviewedCards),
         endedAt: incoming.session.endedAt ?? previous.session.endedAt,
       },
+      reviews: previous.reviews ?? [],
     } satisfies CachedStudySession);
     return;
   }
@@ -943,12 +1043,14 @@ async function advanceCachedSessionProgress(
     return;
   }
   if (cached.mode === "study") {
+    const review = studyReviewFromAttempt(attempt);
     store.put({
       ...cached,
       session: {
         ...cached.session,
         reviewedCards: Math.min(cached.session.maxCards, cached.session.reviewedCards + 1),
       },
+      reviews: review ? [...(cached.reviews ?? []), review] : (cached.reviews ?? []),
     } satisfies CachedStudySession);
     return;
   }
@@ -1037,6 +1139,8 @@ function migrateMeta(
       activeReadingSessionId: null,
       activeGrammarSessionId: null,
       activeGrammarTopicId: null,
+      lastCompletedStudySessionId: null,
+      dismissedStudySessionId: null,
       learnerCursor: 0,
       contentRevision: null,
     },
@@ -1099,6 +1203,49 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
+function normalizeStudySession(session: StudySessionView): StudySessionView {
+  return {
+    ...session,
+    direction: session.direction ?? "mixed",
+  };
+}
+
+function studyReviewFromAttempt(attempt: AttemptInput): StudyReviewRecord | null {
+  const value = attempt.metadata?.studyReview;
+  if (!isRecord(value)) return null;
+  const rating = attempt.fsrsReview?.rating;
+  const activityType = value.activityType;
+  const source = value.source;
+  if (
+    (rating !== 1 && rating !== 2 && rating !== 3 && rating !== 4) ||
+    (activityType !== "hanzi_to_meaning" && activityType !== "meaning_to_hanzi") ||
+    (source !== "due" && source !== "new") ||
+    typeof value.simplified !== "string" ||
+    (value.pinyin !== null && typeof value.pinyin !== "string") ||
+    typeof value.meaning !== "string" ||
+    typeof value.prompt !== "string" ||
+    typeof value.answer !== "string"
+  ) {
+    return null;
+  }
+  return {
+    eventId: attempt.eventId,
+    cardId: attempt.cardId,
+    activityType,
+    source,
+    simplified: value.simplified,
+    pinyin: value.pinyin,
+    meaning: value.meaning,
+    prompt: value.prompt,
+    answer: value.answer,
+    rating,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function parseIdentityMirror(json: string | null): IdentityMirror | null {
   if (json === null) return null;
   let value: unknown;
@@ -1158,6 +1305,8 @@ function mapState(meta: PersistedMeta, pendingCount: number): BrowserOfflineStat
     activeReadingSessionId: meta.activeReadingSessionId,
     activeGrammarSessionId: meta.activeGrammarSessionId,
     activeGrammarTopicId: meta.activeGrammarTopicId,
+    lastCompletedStudySessionId: meta.lastCompletedStudySessionId,
+    dismissedStudySessionId: meta.dismissedStudySessionId,
     learnerCursor: meta.learnerCursor,
     contentRevision: meta.contentRevision,
     pendingCount,
@@ -1235,6 +1384,8 @@ async function requiredMeta(store: IDBObjectStore): Promise<PersistedMeta> {
     activeReadingSessionId: value.activeReadingSessionId ?? null,
     activeGrammarSessionId: value.activeGrammarSessionId ?? null,
     activeGrammarTopicId: value.activeGrammarTopicId ?? null,
+    lastCompletedStudySessionId: value.lastCompletedStudySessionId ?? null,
+    dismissedStudySessionId: value.dismissedStudySessionId ?? null,
   };
 }
 

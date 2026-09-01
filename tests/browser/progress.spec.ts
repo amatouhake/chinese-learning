@@ -20,7 +20,7 @@ test.describe("local progress dashboard dogfood", () => {
     expect(payload.snapshotVersion).toBe(1);
     expect(payload.timezone).toBe("Asia/Tokyo");
     expect(payload.pronunciation.byActivity).toHaveLength(7);
-    await expect(page.getByRole("heading", { name: "Progress snapshot" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
     await expect(page.locator(".mode-progress-grid .mode-card-progress")).toHaveCount(5);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
@@ -50,21 +50,51 @@ test.describe("local progress dashboard dogfood", () => {
 
     await page.setViewportSize({ width: 320, height: 844 });
     await page.goto("/#progress");
-    await expect(page.getByRole("heading", { name: "Progress snapshot" })).toBeVisible();
-    await expect(page.getByText("3 due · 17 new", { exact: true })).toBeVisible();
-    await expect(page.getByText("50% recorded correctness", { exact: true })).toHaveCount(3);
-    await expect(page.getByText("2.8 / 4 self-rating", { exact: true })).toBeVisible();
-    await expect(page.getByText(/no objective correctness is inferred/)).toBeVisible();
-    await expect(page.getByText(/Automaticity evidence only/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
+    await expect(page.getByText("復習 3 · 新規 17", { exact: true })).toBeVisible();
+    await expect(page.getByText("正答率 50%", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("自己評価 2.8 / 4", { exact: true })).toBeVisible();
+    await expect(page.getByText(/正誤は判定しません/)).toBeVisible();
+    await expect(page.getByText(/自動化の記録のみ/)).toBeVisible();
     await expect(page.getByText("好", { exact: true })).toBeVisible();
-    await expect(page.getByText(/response at or above 2.5s/)).toBeVisible();
-    await expect(page.getByText("Boundary", { exact: true })).toBeVisible();
+    await expect(page.getByText(/2.5秒以上/)).toBeVisible();
+    await expect(page.getByText(/集計は実際に練習した時刻/)).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    const readingButton = await page.getByRole("button", { name: "Reading" }).boundingBox();
-    expect(readingButton).not.toBeNull();
-    expect(readingButton!.x + readingButton!.width).toBeLessThanOrEqual(320);
+    const modeTrigger = page.locator("#mobile-mode-trigger");
+    await expect(modeTrigger).toBeVisible();
+    await expect(modeTrigger).toHaveAttribute("aria-haspopup", "menu");
+    await expect(modeTrigger).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".surface-nav")).toBeHidden();
+    await modeTrigger.click();
+    await expect(page.locator("#mobile-mode-menu")).toBeVisible();
+    await expect(page.locator("#mobile-mode-menu [role='menuitemradio']")).toHaveCount(5);
+    await expect(page.locator("#mobile-mode-menu [aria-checked='true']")).toHaveText("進捗");
+    await expect(page.locator("#mobile-mode-menu [aria-checked='true']")).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(page.getByRole("menuitemradio", { name: "単語" })).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByRole("menuitemradio", { name: "瞬発" })).toBeFocused();
+    const mobileMode = await modeTrigger.boundingBox();
+    expect(mobileMode).not.toBeNull();
+    expect(mobileMode!.x + mobileMode!.width).toBeLessThanOrEqual(320);
+    const menu = await page.locator("#mobile-mode-menu").boundingBox();
+    expect(menu).not.toBeNull();
+    expect(menu!.x).toBeGreaterThanOrEqual(0);
+    expect(menu!.x + menu!.width).toBeLessThanOrEqual(320);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#mobile-mode-menu")).toBeHidden();
+    await expect(modeTrigger).toBeFocused();
+    await modeTrigger.click();
+    await page.mouse.click(8, 300);
+    await expect(page.locator("#mobile-mode-menu")).toBeHidden();
+    await modeTrigger.click();
+    await page.getByRole("menuitemradio", { name: "発音" }).click();
+    await expect(modeTrigger).toHaveText("発音");
+    await modeTrigger.click();
+    await page.getByRole("menuitemradio", { name: "進捗" }).click();
+    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.locator(".mode-progress-grid .mode-card-progress")).toHaveCount(5);
@@ -73,10 +103,10 @@ test.describe("local progress dashboard dogfood", () => {
       true,
     );
 
-    await page.getByRole("button", { name: "Pronunciation" }).click();
-    await expect(page.getByRole("button", { name: "Mixed practice" })).toBeVisible();
-    await page.getByRole("button", { name: "Progress" }).click();
-    await expect(page.getByRole("heading", { name: "Progress snapshot" })).toBeVisible();
+    await page.getByRole("button", { name: "発音", exact: true }).click();
+    await expect(page.getByRole("button", { name: "おまかせ" })).toBeVisible();
+    await page.getByRole("button", { name: "進捗" }).click();
+    await expect(page.getByRole("heading", { name: "進捗" })).toBeVisible();
     expect(consoleErrors).toEqual([]);
   });
 });

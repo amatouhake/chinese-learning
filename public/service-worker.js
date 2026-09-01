@@ -14,6 +14,7 @@ self.addEventListener("install", (event) => {
         "/icon.svg",
         "/icon-192.png",
         "/icon-512.png",
+        "/icon-maskable-512.png",
       ]);
       for (const match of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
         const path = match[1];

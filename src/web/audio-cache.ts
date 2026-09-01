@@ -7,8 +7,12 @@ export interface AudioCacheResult {
   failedUrls: string[];
 }
 
+interface MediaCard {
+  media?: { url: string } | null;
+}
+
 export async function cachePronunciationAudio(
-  cards: readonly PronunciationCard[],
+  cards: readonly MediaCard[],
   cacheStorage: CacheStorage = caches,
   fetcher: typeof fetch = fetch,
 ): Promise<AudioCacheResult> {
@@ -46,6 +50,13 @@ export async function isPronunciationAudioCached(
   cacheStorage: CacheStorage = caches,
 ): Promise<boolean> {
   if (!card.activityType.startsWith("audio_to_") || !card.media) return true;
+  return isMediaAudioCached(card.media.url, cacheStorage);
+}
+
+export async function isMediaAudioCached(
+  url: string,
+  cacheStorage: CacheStorage = caches,
+): Promise<boolean> {
   const cache = await cacheStorage.open(PRONUNCIATION_AUDIO_CACHE);
-  return (await cache.match(card.media.url)) !== undefined;
+  return (await cache.match(url)) !== undefined;
 }

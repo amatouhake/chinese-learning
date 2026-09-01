@@ -39,27 +39,30 @@ test.describe("pronunciation dogfood", () => {
     });
 
     await page.goto("/#pronunciation");
-    await page.getByRole("button", { name: "Mixed practice" }).click();
+    await page.getByRole("button", { name: "おまかせ" }).click();
 
     for (let item = 0; item < 10; item += 1) {
       const activity = await page.locator(".card-meta span").nth(1).textContent();
-      if (activity?.startsWith("Audio")) {
-        await page.getByRole("button", { name: "Play or replay word audio" }).click();
+      if (activity?.startsWith("音声")) {
+        await page.getByRole("button", { name: "単語の音声を再生・聞き直す" }).click();
       }
       const choices = page.locator(".choice-grid button");
       if ((await choices.count()) > 0) {
         await choices.first().click();
-      } else if (activity === "Pronunciation production") {
-        await page.getByRole("button", { name: "I said it — compare" }).click();
-        await page.getByRole("button", { name: /^Good/ }).click();
+      } else if (activity === "発音して確認") {
+        await page.getByRole("button", { name: "発音した — 答えと比べる" }).click();
+        await page.getByRole("button", { name: /できた/ }).click();
       } else {
-        await page.getByRole("button", { name: "Reveal pinyin" }).click();
-        await page.getByRole("button", { name: "Got it" }).click();
+        await page.getByRole("button", { name: "ピンインを見る" }).click();
+        await page.getByRole("button", { name: "思い出せた" }).click();
       }
-      await page.getByRole("button", { name: "Continue" }).click();
+      await page.getByRole("button", { name: "次へ" }).click();
+      if (item < 9) {
+        await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt");
+      }
     }
 
-    await expect(page.getByRole("heading", { name: "Pronunciation set complete" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "発音練習を完了" })).toBeVisible({
       timeout: 20_000,
     });
     await Promise.all(nextResponses);
@@ -87,17 +90,17 @@ test.describe("pronunciation dogfood", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/#pronunciation");
-    await page.getByRole("button", { name: /^Tones / }).click();
+    await page.getByRole("button", { name: /^声調/ }).click();
 
-    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible({
+    await expect(page.getByText("声調を聞き分ける", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
     await page.locator(".choice-grid button").first().click();
-    await page.getByRole("button", { name: "Continue" }).click();
-    await expect(page.getByText("Tone pair", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "次へ" }).click();
+    await expect(page.getByText("声調の組み合わせ", { exact: true })).toBeVisible();
     await expect(page.locator(".pair-grid button")).toHaveCount(25);
-    await page.getByText("Quick pinyin & tone reference").click();
-    await expect(page.getByRole("heading", { name: "Initials" })).toBeVisible();
+    await page.getByText("ピンインと声調の早見表").click();
+    await expect(page.getByRole("heading", { name: "声母" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
@@ -123,11 +126,11 @@ test.describe("pronunciation dogfood", () => {
     });
 
     await page.goto("/#pronunciation");
-    await page.getByRole("button", { name: /^Tones / }).click();
+    await page.getByRole("button", { name: /^声調/ }).click();
     await expect(page.getByRole("alert")).toContainText("simulated session creation failure");
-    await page.getByRole("button", { name: "Try again" }).click();
+    await page.getByRole("button", { name: "もう一度試す" }).click();
 
-    await expect(page.getByText("Tone identification", { exact: true })).toBeVisible({
+    await expect(page.getByText("声調を聞き分ける", { exact: true })).toBeVisible({
       timeout: 20_000,
     });
     expect(sessionRequests).toHaveLength(2);
