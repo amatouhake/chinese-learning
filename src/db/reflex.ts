@@ -7,6 +7,7 @@ import {
   type CreateReflexSessionInput,
 } from "../domain/reflex";
 import type {
+  LearnerId,
   OfflineReflexPack,
   ReflexActivityType,
   ReflexCard,
@@ -15,6 +16,7 @@ import type {
   PronunciationMedia,
   StudyMeaning,
 } from "../domain/types";
+import { registerLearnerDevice } from "./learners";
 
 interface ReflexCandidateRow {
   card_id: string;
@@ -38,6 +40,7 @@ interface ReflexCandidateRow {
 
 interface ReflexSessionRow {
   id: string;
+  learner_id: string;
   device_id: string;
   started_at: number;
   ended_at: number | null;
@@ -68,14 +71,16 @@ export interface CreateReflexSessionResult {
 
 export async function createReflexSession(
   db: D1Database,
+  learnerId: LearnerId,
   input: CreateReflexSessionInput,
   options: ReflexServiceOptions = {},
 ): Promise<CreateReflexSessionResult> {
-  const existing = await loadSession(db, input.sessionId);
+  await registerLearnerDevice(db, learnerId, input.deviceId);
+  const existing = await loadSession(db, learnerId, input.sessionId);
   if (existing) return existingSessionResult(db, existing, input.deviceId);
 
   const now = serverTime(options);
-  const candidates = await buildCandidateCards(db, now);
+  const candidates = await buildCandidateCards(db, learnerId, now);
   const cards = selectReflexPool(
     candidates,
     input.sessionId,
@@ -92,37 +97,38 @@ export async function createReflexSession(
       db
         .prepare(
           `INSERT INTO server_changes
-            (change_id, entity_type, entity_id, operation, changed_at)
-           VALUES (?, 'study_session', ?, 'upsert', ?)`,
+            (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+           VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
         )
-        .bind(changeId, input.sessionId, now),
+        .bind(changeId, learnerId, input.sessionId, now),
       db
         .prepare(
           `INSERT INTO study_sessions
-            (id, device_id, mode, started_at, context_json, server_seq)
-           VALUES (?, ?, 'reflex', ?, ?,
+            (id, learner_id, device_id, mode, started_at, context_json, server_seq)
+           VALUES (?, ?, ?, 'reflex', ?, ?,
              (SELECT seq FROM server_changes WHERE change_id = ?))`,
         )
-        .bind(input.sessionId, input.deviceId, now, contextJson, changeId),
+        .bind(input.sessionId, learnerId, input.deviceId, now, contextJson, changeId),
     ]);
   } catch (error) {
-    const raced = await loadSession(db, input.sessionId);
+    const raced = await loadSession(db, learnerId, input.sessionId);
     if (raced) return existingSessionResult(db, raced, input.deviceId);
     throw error;
   }
 
-  const created = await loadSession(db, input.sessionId);
+  const created = await loadSession(db, learnerId, input.sessionId);
   if (!created) throw new Error("created reflex session could not be reloaded");
   return { disposition: "created", session: await mapSession(db, created) };
 }
 
 export async function getOfflineReflexPack(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: ReflexServiceOptions = {},
 ): Promise<OfflineReflexPack> {
-  const row = await loadOwnedSession(db, sessionId, deviceId);
+  const row = await loadOwnedSession(db, learnerId, sessionId, deviceId);
   const context = parseContext(row.context_json);
   let session = await mapSession(db, row);
   if (
@@ -132,7 +138,7 @@ export async function getOfflineReflexPack(
   ) {
     if (row.ended_at === null) {
       await completeSession(db, row, session, options);
-      session = await mapSession(db, (await loadSession(db, sessionId)) ?? row);
+      session = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? row);
     }
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
@@ -145,6 +151,7 @@ export async function getOfflineReflexPack(
 
 export async function getPreparedReflexItem(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   cardId: string,
 ): Promise<{
@@ -153,7 +160,7 @@ export async function getPreparedReflexItem(
   completedItems: number;
   endedAt: number | null;
 } | null> {
-  const row = await loadSession(db, sessionId);
+  const row = await loadSession(db, learnerId, sessionId);
   if (!row) return null;
   const context = parseContext(row.context_json);
   const card = context.cards.find((candidate) => candidate.cardId === cardId);
@@ -161,12 +168,16 @@ export async function getPreparedReflexItem(
   return {
     card,
     maxItems: context.maxItems,
-    completedItems: await canonicalAttemptCount(db, sessionId),
+    completedItems: await canonicalAttemptCount(db, learnerId, sessionId),
     endedAt: row.ended_at,
   };
 }
 
-async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexCard[]> {
+async function buildCandidateCards(
+  db: D1Database,
+  learnerId: LearnerId,
+  now: number,
+): Promise<ReflexCard[]> {
   const result = await db
     .prepare(
       `SELECT
@@ -293,7 +304,7 @@ async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexC
        FROM cards c
        LEFT JOIN lexeme_readings r ON r.id = c.lexeme_reading_id
        JOIN lexemes l ON l.id = COALESCE(c.lexeme_id, r.lexeme_id)
-       LEFT JOIN attempts a ON a.card_id = c.id AND a.mode = 'reflex'
+       LEFT JOIN attempts a ON a.learner_id = ? AND a.card_id = c.id AND a.mode = 'reflex'
          AND json_extract(a.metadata_json, '$.interaction') = 'reflex-multiple-choice'
        WHERE c.activity_type IN (
            'hanzi_to_meaning', 'meaning_to_hanzi', 'hanzi_to_pinyin', 'pinyin_to_hanzi'
@@ -304,6 +315,7 @@ async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexC
            SELECT 1
            FROM cards introduced
            JOIN card_state introduced_state ON introduced_state.card_id = introduced.id
+             AND introduced_state.learner_id = ?
            WHERE introduced.lexeme_id = l.id
              AND introduced.activity_type IN ('hanzi_to_meaning', 'meaning_to_hanzi')
              AND introduced_state.reps > 0
@@ -319,7 +331,7 @@ async function buildCandidateCards(db: D1Database, now: number): Promise<ReflexC
          r.sense_scope, l.meanings_json
        ORDER BY c.activity_type, c.id`,
     )
-    .bind(REFLEX_SLOW_RESPONSE_MS, REFLEX_SLOW_RESPONSE_MS)
+    .bind(REFLEX_SLOW_RESPONSE_MS, REFLEX_SLOW_RESPONSE_MS, learnerId, learnerId)
     .all<ReflexCandidateRow>();
 
   const models = result.results.map(toCandidateModel);
@@ -449,10 +461,11 @@ function buildChoices(target: CandidateModel, models: readonly CandidateModel[])
 
 async function loadOwnedSession(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
 ): Promise<ReflexSessionRow> {
-  const row = await loadSession(db, sessionId);
+  const row = await loadSession(db, learnerId, sessionId);
   if (!row) throw new ReferenceNotFoundError("reflex session", sessionId);
   if (row.device_id !== deviceId) {
     throw new ConflictError(`reflex session ${sessionId} belongs to another device`);
@@ -460,13 +473,17 @@ async function loadOwnedSession(
   return row;
 }
 
-function loadSession(db: D1Database, sessionId: string): Promise<ReflexSessionRow | null> {
+function loadSession(
+  db: D1Database,
+  learnerId: LearnerId,
+  sessionId: string,
+): Promise<ReflexSessionRow | null> {
   return db
     .prepare(
-      `SELECT id, device_id, started_at, ended_at, context_json
-       FROM study_sessions WHERE id = ? AND mode = 'reflex'`,
+      `SELECT id, learner_id, device_id, started_at, ended_at, context_json
+       FROM study_sessions WHERE learner_id = ? AND id = ? AND mode = 'reflex'`,
     )
-    .bind(sessionId)
+    .bind(learnerId, sessionId)
     .first<ReflexSessionRow>();
 }
 
@@ -487,7 +504,7 @@ async function mapSession(db: D1Database, row: ReflexSessionRow): Promise<Reflex
     id: row.id,
     deviceId: row.device_id,
     maxItems: context.maxItems,
-    completedItems: await canonicalAttemptCount(db, row.id),
+    completedItems: await canonicalAttemptCount(db, row.learner_id, row.id),
     poolSize: context.cards.length,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -507,10 +524,10 @@ async function completeSession(
       `SELECT
          COALESCE(SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
          AVG(response_ms) AS average_response_ms
-       FROM attempts WHERE study_session_id = ? AND mode = 'reflex'
+       FROM attempts WHERE learner_id = ? AND study_session_id = ? AND mode = 'reflex'
          AND json_extract(metadata_json, '$.interaction') = 'reflex-multiple-choice'`,
     )
-    .bind(row.id)
+    .bind(row.learner_id, row.id)
     .first<{ correct: number; average_response_ms: number | null }>();
   const aggregate = JSON.stringify({
     completedItems: session.completedItems,
@@ -521,29 +538,33 @@ async function completeSession(
     db
       .prepare(
         `INSERT OR IGNORE INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'study_session', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
       )
-      .bind(changeId, row.id, now),
+      .bind(changeId, row.learner_id, row.id, now),
     db
       .prepare(
         `UPDATE study_sessions SET ended_at = ?, aggregate_json = ?,
           server_seq = (SELECT seq FROM server_changes WHERE change_id = ?)
-         WHERE id = ? AND ended_at IS NULL`,
+         WHERE learner_id = ? AND id = ? AND ended_at IS NULL`,
       )
-      .bind(now, aggregate, changeId, row.id),
+      .bind(now, aggregate, changeId, row.learner_id, row.id),
   ]);
 }
 
-async function canonicalAttemptCount(db: D1Database, sessionId: string): Promise<number> {
+async function canonicalAttemptCount(
+  db: D1Database,
+  learnerId: LearnerId,
+  sessionId: string,
+): Promise<number> {
   return (
     (await db
       .prepare(
         `SELECT COUNT(*) AS count FROM attempts
-         WHERE study_session_id = ? AND mode = 'reflex'
+         WHERE learner_id = ? AND study_session_id = ? AND mode = 'reflex'
            AND json_extract(metadata_json, '$.interaction') = 'reflex-multiple-choice'`,
       )
-      .bind(sessionId)
+      .bind(learnerId, sessionId)
       .first<number>("count")) ?? 0
   );
 }

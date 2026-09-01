@@ -12,6 +12,7 @@ import type {
   GrammarNextResult,
   GrammarTopicStateView,
   GuidedSessionView,
+  LearnerId,
   OfflineGrammarPack,
   OfflineReadingPack,
   ReadingCard,
@@ -20,11 +21,13 @@ import type {
   ReadingVocabularyHint,
   StudyMeaning,
 } from "../domain/types";
+import { registerLearnerDevice } from "./learners";
 
 type GuidedMode = "reading" | "grammar";
 
 interface GuidedSessionRow {
   id: string;
+  learner_id: string;
   device_id: string;
   mode: GuidedMode;
   started_at: number;
@@ -103,14 +106,16 @@ export interface CreateGuidedSessionResult {
 
 export function createReadingSession(
   db: D1Database,
+  learnerId: LearnerId,
   input: CreateReadingSessionInput,
   options: GuidedServiceOptions = {},
 ): Promise<CreateGuidedSessionResult> {
-  return createGuidedSession(db, "reading", { ...input, topicId: undefined }, options);
+  return createGuidedSession(db, learnerId, "reading", { ...input, topicId: undefined }, options);
 }
 
 export async function createGrammarSession(
   db: D1Database,
+  learnerId: LearnerId,
   input: CreateGrammarSessionInput,
   options: GuidedServiceOptions = {},
 ): Promise<CreateGuidedSessionResult> {
@@ -121,56 +126,62 @@ export async function createGrammarSession(
       .first<{ id: string }>();
     if (!topic) throw new ReferenceNotFoundError("grammar topic", input.topicId);
   }
-  return createGuidedSession(db, "grammar", input, options);
+  return createGuidedSession(db, learnerId, "grammar", input, options);
 }
 
 export async function getNextReadingCard(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: GuidedServiceOptions = {},
 ): Promise<ReadingNextResult> {
-  const result = await nextGuidedCard(db, "reading", sessionId, deviceId, options);
+  const result = await nextGuidedCard(db, learnerId, "reading", sessionId, deviceId, options);
   return { ...result, card: result.card as ReadingCard | null };
 }
 
 export async function getNextGrammarCard(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: GuidedServiceOptions = {},
 ): Promise<GrammarNextResult> {
-  const result = await nextGuidedCard(db, "grammar", sessionId, deviceId, options);
+  const result = await nextGuidedCard(db, learnerId, "grammar", sessionId, deviceId, options);
   return { ...result, card: result.card as GrammarCard | null };
 }
 
 export async function getOfflineReadingPack(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: GuidedServiceOptions = {},
 ): Promise<OfflineReadingPack> {
-  const result = await offlineGuidedPack(db, "reading", sessionId, deviceId, options);
+  const result = await offlineGuidedPack(db, learnerId, "reading", sessionId, deviceId, options);
   return { ...result, cards: result.cards as ReadingCard[] };
 }
 
 export async function getOfflineGrammarPack(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: GuidedServiceOptions = {},
 ): Promise<OfflineGrammarPack> {
-  const result = await offlineGuidedPack(db, "grammar", sessionId, deviceId, options);
+  const result = await offlineGuidedPack(db, learnerId, "grammar", sessionId, deviceId, options);
   return { ...result, cards: result.cards as GrammarCard[] };
 }
 
 async function createGuidedSession(
   db: D1Database,
+  learnerId: LearnerId,
   mode: GuidedMode,
   input: CreateGrammarSessionInput,
   options: GuidedServiceOptions,
 ): Promise<CreateGuidedSessionResult> {
-  const existing = await loadSession(db, input.sessionId, mode);
+  await registerLearnerDevice(db, learnerId, input.deviceId);
+  const existing = await loadSession(db, learnerId, input.sessionId, mode);
   if (existing) return existingSessionResult(db, existing, input);
 
   const now = serverTime(options);
@@ -184,31 +195,40 @@ async function createGuidedSession(
       db
         .prepare(
           `INSERT INTO server_changes
-            (change_id, entity_type, entity_id, operation, changed_at)
-           VALUES (?, 'study_session', ?, 'upsert', ?)`,
+            (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+           VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
         )
-        .bind(changeId, input.sessionId, now),
+        .bind(changeId, learnerId, input.sessionId, now),
       db
         .prepare(
           `INSERT INTO study_sessions
-            (id, device_id, mode, started_at, context_json, server_seq)
-           VALUES (?, ?, ?, ?, ?,
+            (id, learner_id, device_id, mode, started_at, context_json, server_seq)
+           VALUES (?, ?, ?, ?, ?, ?,
              (SELECT seq FROM server_changes WHERE change_id = ?))`,
         )
-        .bind(input.sessionId, input.deviceId, mode, now, JSON.stringify(context), changeId),
+        .bind(
+          input.sessionId,
+          learnerId,
+          input.deviceId,
+          mode,
+          now,
+          JSON.stringify(context),
+          changeId,
+        ),
     ]);
   } catch (error) {
-    const raced = await loadSession(db, input.sessionId, mode);
+    const raced = await loadSession(db, learnerId, input.sessionId, mode);
     if (raced) return existingSessionResult(db, raced, input);
     throw error;
   }
-  const created = await loadSession(db, input.sessionId, mode);
+  const created = await loadSession(db, learnerId, input.sessionId, mode);
   if (!created) throw new Error(`created ${mode} session could not be reloaded`);
   return { disposition: "created", session: await mapSession(db, created) };
 }
 
 async function nextGuidedCard(
   db: D1Database,
+  learnerId: LearnerId,
   mode: GuidedMode,
   sessionId: string,
   deviceId: string,
@@ -218,22 +238,22 @@ async function nextGuidedCard(
   session: GuidedSessionView;
   card: ReadingCard | GrammarCard | null;
 }> {
-  const row = await loadOwnedSession(db, sessionId, deviceId, mode);
+  const row = await loadOwnedSession(db, learnerId, sessionId, deviceId, mode);
   const session = await mapSession(db, row);
   if (row.ended_at !== null || session.completedItems >= session.maxItems) {
     if (row.ended_at === null) await completeSession(db, row, session, options);
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, sessionId, mode)) ?? row),
+      session: await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row),
       card: null,
     };
   }
-  const selected = await selectCard(db, mode, sessionId, session.focusTopicId);
+  const selected = await selectCard(db, learnerId, mode, sessionId, session.focusTopicId);
   if (!selected) {
     await completeSession(db, row, session, options);
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, sessionId, mode)) ?? row),
+      session: await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row),
       card: null,
     };
   }
@@ -242,13 +262,14 @@ async function nextGuidedCard(
     session,
     card:
       mode === "reading"
-        ? await mapReadingCard(db, selected as ReadingCardRow)
+        ? await mapReadingCard(db, learnerId, selected as ReadingCardRow)
         : await mapGrammarCard(db, selected as GrammarCardRow),
   };
 }
 
 async function offlineGuidedPack(
   db: D1Database,
+  learnerId: LearnerId,
   mode: GuidedMode,
   sessionId: string,
   deviceId: string,
@@ -258,12 +279,12 @@ async function offlineGuidedPack(
   session: GuidedSessionView;
   cards: Array<ReadingCard | GrammarCard>;
 }> {
-  const row = await loadOwnedSession(db, sessionId, deviceId, mode);
+  const row = await loadOwnedSession(db, learnerId, sessionId, deviceId, mode);
   let session = await mapSession(db, row);
   if (row.ended_at !== null || session.completedItems >= session.maxItems) {
     if (row.ended_at === null) {
       await completeSession(db, row, session, options);
-      session = await mapSession(db, (await loadSession(db, sessionId, mode)) ?? row);
+      session = await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row);
     }
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
@@ -276,14 +297,21 @@ async function offlineGuidedPack(
   const excludedCardIds: string[] = [];
   const remaining = session.maxItems - session.completedItems;
   for (let index = 0; index < remaining; index += 1) {
-    const selected = await selectCard(db, mode, sessionId, session.focusTopicId, excludedCardIds);
+    const selected = await selectCard(
+      db,
+      learnerId,
+      mode,
+      sessionId,
+      session.focusTopicId,
+      excludedCardIds,
+    );
     if (!selected) break;
     selectedRows.push(selected);
     excludedCardIds.push(selected.card_id);
   }
   if (selectedRows.length === 0) {
     await completeSession(db, row, session, options);
-    session = await mapSession(db, (await loadSession(db, sessionId, mode)) ?? row);
+    session = await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row);
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
       session,
@@ -293,7 +321,7 @@ async function offlineGuidedPack(
   const cards = await Promise.all(
     selectedRows.map((selected) =>
       mode === "reading"
-        ? mapReadingCard(db, selected as ReadingCardRow)
+        ? mapReadingCard(db, learnerId, selected as ReadingCardRow)
         : mapGrammarCard(db, selected as GrammarCardRow),
     ),
   );
@@ -302,6 +330,7 @@ async function offlineGuidedPack(
 
 function selectCard(
   db: D1Database,
+  learnerId: LearnerId,
   mode: GuidedMode,
   sessionId: string,
   focusTopicId: string | null,
@@ -329,14 +358,16 @@ function selectCard(
            )
            AND NOT EXISTS (
              SELECT 1 FROM attempts a
-             WHERE a.study_session_id = ? AND a.card_id = c.id
+             WHERE a.learner_id = ? AND a.study_session_id = ? AND a.card_id = c.id
            )
            ${exclusion}
          ORDER BY
            (SELECT COUNT(*) FROM attempts practice
-            WHERE practice.card_id = c.id AND practice.mode = 'reading'),
+            WHERE practice.learner_id = ? AND practice.card_id = c.id
+              AND practice.mode = 'reading'),
            (SELECT MAX(practice.occurred_at) FROM attempts practice
-            WHERE practice.card_id = c.id AND practice.mode = 'reading'),
+            WHERE practice.learner_id = ? AND practice.card_id = c.id
+              AND practice.mode = 'reading'),
            (SELECT MIN(CAST(json_extract(g.teaching_metadata_json, '$.sequence') AS INTEGER))
             FROM sentence_grammar_topics ordered_sgt
             JOIN grammar_topics g ON g.id = ordered_sgt.grammar_topic_id
@@ -344,7 +375,7 @@ function selectCard(
            s.id
          LIMIT 1`,
       )
-      .bind(sessionId, ...excludedCardIds)
+      .bind(learnerId, sessionId, ...excludedCardIds, learnerId, learnerId)
       .first<ReadingCardRow>();
   }
   const focusPredicate = focusTopicId === null ? "" : "AND g.id = ?";
@@ -356,7 +387,8 @@ function selectCard(
          gs.version, gs.server_seq
        FROM cards c
        JOIN grammar_topics g ON g.id = c.grammar_topic_id
-       LEFT JOIN grammar_topic_state gs ON gs.grammar_topic_id = g.id
+       LEFT JOIN grammar_topic_state gs
+         ON gs.grammar_topic_id = g.id AND gs.learner_id = ?
        WHERE c.subject_type = 'grammar_topic'
          AND c.activity_type = 'sentence_reading'
          AND c.scheduler_eligible = 0
@@ -364,23 +396,35 @@ function selectCard(
          ${focusPredicate}
          AND NOT EXISTS (
            SELECT 1 FROM attempts a
-           WHERE a.study_session_id = ? AND a.card_id = c.id
+           WHERE a.learner_id = ? AND a.study_session_id = ? AND a.card_id = c.id
          )
          ${exclusion}
        ORDER BY
          CASE WHEN gs.grammar_topic_id IS NULL THEN 0 ELSE 1 END,
          CAST(json_extract(g.teaching_metadata_json, '$.sequence') AS INTEGER),
          (SELECT COUNT(*) FROM attempts practice
-          WHERE practice.card_id = c.id AND practice.mode = 'grammar'),
+          WHERE practice.learner_id = ? AND practice.card_id = c.id
+            AND practice.mode = 'grammar'),
          gs.last_studied_at,
          g.id
        LIMIT 1`,
     )
-    .bind(...(focusTopicId === null ? [] : [focusTopicId]), sessionId, ...excludedCardIds)
+    .bind(
+      learnerId,
+      ...(focusTopicId === null ? [] : [focusTopicId]),
+      learnerId,
+      sessionId,
+      ...excludedCardIds,
+      learnerId,
+    )
     .first<GrammarCardRow>();
 }
 
-async function mapReadingCard(db: D1Database, row: ReadingCardRow): Promise<ReadingCard> {
+async function mapReadingCard(
+  db: D1Database,
+  learnerId: LearnerId,
+  row: ReadingCardRow,
+): Promise<ReadingCard> {
   const [vocabularyRows, topicRows] = await Promise.all([
     db
       .prepare(
@@ -402,11 +446,12 @@ async function mapReadingCard(db: D1Database, row: ReadingCardRow): Promise<Read
            gs.version, gs.server_seq
          FROM sentence_grammar_topics sgt
          JOIN grammar_topics g ON g.id = sgt.grammar_topic_id
-         LEFT JOIN grammar_topic_state gs ON gs.grammar_topic_id = g.id
+         LEFT JOIN grammar_topic_state gs
+           ON gs.grammar_topic_id = g.id AND gs.learner_id = ?
          WHERE sgt.sentence_id = ?
          ORDER BY CAST(json_extract(g.teaching_metadata_json, '$.sequence') AS INTEGER), g.id`,
       )
-      .bind(row.sentence_id)
+      .bind(learnerId, row.sentence_id)
       .all<TopicRow>(),
   ]);
   return {
@@ -526,6 +571,7 @@ function mapTopicState(row: TopicRow): GrammarTopicStateView | null {
 
 async function loadOwnedSession(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   mode: GuidedMode,
@@ -533,7 +579,7 @@ async function loadOwnedSession(
   if (!sessionId.trim() || !deviceId.trim()) {
     throw new InvalidInputError("session and device IDs must be non-empty");
   }
-  const session = await loadSession(db, sessionId, mode);
+  const session = await loadSession(db, learnerId, sessionId, mode);
   if (!session) throw new ReferenceNotFoundError(`${mode} session`, sessionId);
   if (session.device_id !== deviceId) {
     throw new ConflictError(`${mode} session ${sessionId} belongs to another device`);
@@ -543,15 +589,16 @@ async function loadOwnedSession(
 
 function loadSession(
   db: D1Database,
+  learnerId: LearnerId,
   id: string,
   mode: GuidedMode,
 ): Promise<GuidedSessionRow | null> {
   return db
     .prepare(
-      `SELECT id, device_id, mode, started_at, ended_at, context_json
-       FROM study_sessions WHERE id = ? AND mode = ?`,
+      `SELECT id, learner_id, device_id, mode, started_at, ended_at, context_json
+       FROM study_sessions WHERE learner_id = ? AND id = ? AND mode = ?`,
     )
-    .bind(id, mode)
+    .bind(learnerId, id, mode)
     .first<GuidedSessionRow>();
 }
 
@@ -578,9 +625,9 @@ async function mapSession(db: D1Database, row: GuidedSessionRow): Promise<Guided
   const completed = await db
     .prepare(
       `SELECT COUNT(*) AS count FROM attempts
-       WHERE study_session_id = ? AND mode = ?`,
+       WHERE learner_id = ? AND study_session_id = ? AND mode = ?`,
     )
-    .bind(row.id, row.mode)
+    .bind(row.learner_id, row.id, row.mode)
     .first<{ count: number }>();
   return {
     id: row.id,
@@ -606,18 +653,24 @@ async function completeSession(
     db
       .prepare(
         `INSERT OR IGNORE INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'study_session', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
       )
-      .bind(changeId, row.id, now),
+      .bind(changeId, row.learner_id, row.id, now),
     db
       .prepare(
         `UPDATE study_sessions SET
           ended_at = ?, aggregate_json = ?,
           server_seq = (SELECT seq FROM server_changes WHERE change_id = ?)
-         WHERE id = ? AND ended_at IS NULL`,
+         WHERE learner_id = ? AND id = ? AND ended_at IS NULL`,
       )
-      .bind(now, JSON.stringify({ completedItems: view.completedItems }), changeId, row.id),
+      .bind(
+        now,
+        JSON.stringify({ completedItems: view.completedItems }),
+        changeId,
+        row.learner_id,
+        row.id,
+      ),
   ]);
 }
 

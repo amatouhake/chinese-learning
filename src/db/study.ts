@@ -1,6 +1,7 @@
 import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
 import type {
   OfflineStudyPack,
+  LearnerId,
   StudyCard,
   StudyMeaning,
   StudyNextResult,
@@ -8,9 +9,11 @@ import type {
   StudySessionView,
 } from "../domain/types";
 import type { CreateStudySessionInput } from "../domain/study-validation";
+import { registerLearnerDevice } from "./learners";
 
 interface StudySessionRow {
   id: string;
+  learner_id: string;
   device_id: string;
   started_at: number;
   ended_at: number | null;
@@ -62,10 +65,12 @@ export interface CreateStudySessionResult {
 
 export async function createStudySession(
   db: D1Database,
+  learnerId: LearnerId,
   input: CreateStudySessionInput,
   options: StudyServiceOptions = {},
 ): Promise<CreateStudySessionResult> {
-  const existing = await loadSession(db, input.sessionId);
+  await registerLearnerDevice(db, learnerId, input.deviceId);
+  const existing = await loadSession(db, learnerId, input.sessionId);
   if (existing) return existingSessionResult(db, existing, input.deviceId);
 
   const now = serverTime(options);
@@ -80,26 +85,26 @@ export async function createStudySession(
       db
         .prepare(
           `INSERT INTO server_changes
-            (change_id, entity_type, entity_id, operation, changed_at)
-           VALUES (?, 'study_session', ?, 'upsert', ?)`,
+            (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+           VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
         )
-        .bind(changeId, input.sessionId, now),
+        .bind(changeId, learnerId, input.sessionId, now),
       db
         .prepare(
           `INSERT INTO study_sessions
-            (id, device_id, mode, started_at, context_json, server_seq)
-           VALUES (?, ?, 'study', ?, ?,
+            (id, learner_id, device_id, mode, started_at, context_json, server_seq)
+           VALUES (?, ?, ?, 'study', ?, ?,
              (SELECT seq FROM server_changes WHERE change_id = ?))`,
         )
-        .bind(input.sessionId, input.deviceId, now, contextJson, changeId),
+        .bind(input.sessionId, learnerId, input.deviceId, now, contextJson, changeId),
     ]);
   } catch (error) {
-    const raced = await loadSession(db, input.sessionId);
+    const raced = await loadSession(db, learnerId, input.sessionId);
     if (raced) return existingSessionResult(db, raced, input.deviceId);
     throw error;
   }
 
-  const created = await loadSession(db, input.sessionId);
+  const created = await loadSession(db, learnerId, input.sessionId);
   if (!created) throw new Error("created study session could not be reloaded");
   return {
     disposition: "created",
@@ -109,18 +114,19 @@ export async function createStudySession(
 
 export async function getNextStudyCard(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: StudyServiceOptions = {},
 ): Promise<StudyNextResult> {
-  const session = await loadOwnedStudySession(db, sessionId, deviceId);
+  const session = await loadOwnedStudySession(db, learnerId, sessionId, deviceId);
   const sessionView = await mapSession(db, session);
 
   if (session.ended_at !== null || sessionView.reviewedCards >= sessionView.maxCards) {
     if (session.ended_at === null) await completeStudySession(db, session, sessionView, options);
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, sessionId)) ?? session),
+      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
       card: null,
     };
   }
@@ -128,17 +134,18 @@ export async function getNextStudyCard(
   const now = serverTime(options);
   const selection = await selectPreferredStudyCard(
     db,
+    learnerId,
     sessionId,
     now,
     sessionView.direction,
     [],
-    await recentStudyLexemeIds(db, sessionId),
+    await recentStudyLexemeIds(db, learnerId, sessionId),
   );
   if (!selection) {
     await completeStudySession(db, session, sessionView, { now: () => now });
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, sessionId)) ?? session),
+      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
       card: null,
     };
   }
@@ -154,16 +161,17 @@ export async function getNextStudyCard(
 
 export async function getOfflineStudyPack(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: StudyServiceOptions = {},
 ): Promise<OfflineStudyPack> {
-  const session = await loadOwnedStudySession(db, sessionId, deviceId);
+  const session = await loadOwnedStudySession(db, learnerId, sessionId, deviceId);
   let sessionView = await mapSession(db, session);
   if (session.ended_at !== null || sessionView.reviewedCards >= sessionView.maxCards) {
     if (session.ended_at === null) {
       await completeStudySession(db, session, sessionView, options);
-      sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+      sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
     }
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
@@ -176,11 +184,12 @@ export async function getOfflineStudyPack(
   const schedulerConfigId = await currentSchedulerId(db);
   const cards: StudyCard[] = [];
   const excludedCardIds: string[] = [];
-  let recentLexemeIds = await recentStudyLexemeIds(db, sessionId);
+  let recentLexemeIds = await recentStudyLexemeIds(db, learnerId, sessionId);
   const remaining = sessionView.maxCards - sessionView.reviewedCards;
   for (let index = 0; index < remaining; index += 1) {
     const selection = await selectPreferredStudyCard(
       db,
+      learnerId,
       sessionId,
       now,
       sessionView.direction,
@@ -198,7 +207,7 @@ export async function getOfflineStudyPack(
 
   if (cards.length === 0) {
     await completeStudySession(db, session, sessionView, { now: () => now });
-    sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+    sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
       session: sessionView,
@@ -210,6 +219,7 @@ export async function getOfflineStudyPack(
 
 async function selectStudyCard(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   now: number,
   source: "due" | "new",
@@ -360,7 +370,7 @@ async function selectStudyCard(
           ORDER BY CASE WHEN sl.role = 'target' THEN 0 ELSE 1 END, s.id LIMIT 1
         ) AS example_meaning_en
        FROM cards c
-       JOIN card_state cs ON cs.card_id = c.id
+       JOIN card_state cs ON cs.card_id = c.id AND cs.learner_id = ?
        JOIN lexemes l ON l.id = c.lexeme_id
        WHERE c.subject_type = 'lexeme'
          ${directionPredicate}
@@ -369,7 +379,7 @@ async function selectStudyCard(
          AND ${schedulingPredicate}
          AND NOT EXISTS (
            SELECT 1 FROM attempts a
-           WHERE a.study_session_id = ? AND a.card_id = c.id
+           WHERE a.learner_id = ? AND a.study_session_id = ? AND a.card_id = c.id
          )
          ${exclusionPredicate}
          ${avoidedLexemePredicate}
@@ -383,8 +393,10 @@ async function selectStudyCard(
        LIMIT 1`,
     )
     .bind(
+      learnerId,
       ...(direction === "mixed" ? [] : [direction]),
       ...(source === "due" ? [now] : []),
+      learnerId,
       sessionId,
       ...excludedCardIds,
       ...avoidedLexemeIds,
@@ -394,6 +406,7 @@ async function selectStudyCard(
 
 async function selectPreferredStudyCard(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   now: number,
   direction: StudyDirection,
@@ -402,6 +415,7 @@ async function selectPreferredStudyCard(
 ): Promise<{ card: StudyCardRow; source: "due" | "new" } | null> {
   const dueAwayFromRecent = await selectStudyCard(
     db,
+    learnerId,
     sessionId,
     now,
     "due",
@@ -415,6 +429,7 @@ async function selectPreferredStudyCard(
   // card when one exists. The due sibling remains eligible for the next slot.
   const newAwayFromRecent = await selectStudyCard(
     db,
+    learnerId,
     sessionId,
     now,
     "new",
@@ -424,23 +439,43 @@ async function selectPreferredStudyCard(
   );
   if (newAwayFromRecent) return { card: newAwayFromRecent, source: "new" };
 
-  const dueFallback = await selectStudyCard(db, sessionId, now, "due", excludedCardIds, direction);
+  const dueFallback = await selectStudyCard(
+    db,
+    learnerId,
+    sessionId,
+    now,
+    "due",
+    excludedCardIds,
+    direction,
+  );
   if (dueFallback) return { card: dueFallback, source: "due" };
-  const newFallback = await selectStudyCard(db, sessionId, now, "new", excludedCardIds, direction);
+  const newFallback = await selectStudyCard(
+    db,
+    learnerId,
+    sessionId,
+    now,
+    "new",
+    excludedCardIds,
+    direction,
+  );
   return newFallback ? { card: newFallback, source: "new" } : null;
 }
 
-async function recentStudyLexemeIds(db: D1Database, sessionId: string): Promise<string[]> {
+async function recentStudyLexemeIds(
+  db: D1Database,
+  learnerId: LearnerId,
+  sessionId: string,
+): Promise<string[]> {
   const result = await db
     .prepare(
       `SELECT c.lexeme_id
        FROM attempts a
        JOIN cards c ON c.id = a.card_id
-       WHERE a.study_session_id = ?
+       WHERE a.learner_id = ? AND a.study_session_id = ?
        ORDER BY a.occurred_at DESC, a.device_id DESC, a.device_seq DESC
        LIMIT 2`,
     )
-    .bind(sessionId)
+    .bind(learnerId, sessionId)
     .all<{ lexeme_id: string }>();
   return result.results.map(({ lexeme_id }) => lexeme_id);
 }
@@ -455,13 +490,14 @@ async function currentSchedulerId(db: D1Database): Promise<string> {
 
 async function loadOwnedStudySession(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
 ): Promise<StudySessionRow> {
   if (!sessionId.trim() || !deviceId.trim()) {
     throw new InvalidInputError("session and device IDs must be non-empty");
   }
-  const session = await loadSession(db, sessionId);
+  const session = await loadSession(db, learnerId, sessionId);
   if (!session) throw new ReferenceNotFoundError("study session", sessionId);
   if (session.device_id !== deviceId) {
     throw new ConflictError(`study session ${sessionId} belongs to another device`);
@@ -469,13 +505,17 @@ async function loadOwnedStudySession(
   return session;
 }
 
-async function loadSession(db: D1Database, id: string): Promise<StudySessionRow | null> {
+async function loadSession(
+  db: D1Database,
+  learnerId: LearnerId,
+  id: string,
+): Promise<StudySessionRow | null> {
   return db
     .prepare(
-      `SELECT id, device_id, started_at, ended_at, context_json
-       FROM study_sessions WHERE id = ? AND mode = 'study'`,
+      `SELECT id, learner_id, device_id, started_at, ended_at, context_json
+       FROM study_sessions WHERE learner_id = ? AND id = ? AND mode = 'study'`,
     )
-    .bind(id)
+    .bind(learnerId, id)
     .first<StudySessionRow>();
 }
 
@@ -496,9 +536,9 @@ async function mapSession(db: D1Database, row: StudySessionRow): Promise<StudySe
     .prepare(
       `SELECT COUNT(*) AS count
        FROM attempts a JOIN fsrs_reviews r ON r.attempt_id = a.event_id
-       WHERE a.study_session_id = ?`,
+       WHERE a.learner_id = ? AND a.study_session_id = ?`,
     )
-    .bind(row.id)
+    .bind(row.learner_id, row.id)
     .first<{ count: number }>();
   return {
     id: row.id,
@@ -524,18 +564,18 @@ async function completeStudySession(
     db
       .prepare(
         `INSERT OR IGNORE INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'study_session', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
       )
-      .bind(changeId, row.id, now),
+      .bind(changeId, row.learner_id, row.id, now),
     db
       .prepare(
         `UPDATE study_sessions SET
           ended_at = ?, aggregate_json = ?,
           server_seq = (SELECT seq FROM server_changes WHERE change_id = ?)
-         WHERE id = ? AND ended_at IS NULL`,
+         WHERE learner_id = ? AND id = ? AND ended_at IS NULL`,
       )
-      .bind(now, aggregateJson, changeId, row.id),
+      .bind(now, aggregateJson, changeId, row.learner_id, row.id),
   ]);
 }
 

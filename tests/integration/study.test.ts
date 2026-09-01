@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
+import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import { createStudySession, getNextStudyCard } from "../../src/db/study";
@@ -19,6 +20,7 @@ describe("vocabulary study flow", () => {
     const reviewTime = Date.parse("2026-08-29T08:00:00Z");
     await ingestAttempt(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       scheduledAttempt({
         eventId: "due-priority-setup",
         cardId: dueCardId,
@@ -34,12 +36,19 @@ describe("vocabulary study flow", () => {
     const now = reviewTime + 60 * 60 * 1000;
     await createStudySession(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       { sessionId: "due-priority-session", deviceId: "due-priority-device", maxCards: 4 },
       { now: () => now },
     );
-    const next = await getNextStudyCard(env.DB, "due-priority-session", "due-priority-device", {
-      now: () => now,
-    });
+    const next = await getNextStudyCard(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      "due-priority-session",
+      "due-priority-device",
+      {
+        now: () => now,
+      },
+    );
 
     expect(next.status).toBe("card");
     expect(next.card).toMatchObject({ cardId: dueCardId, source: "due" });
@@ -141,7 +150,7 @@ describe("vocabulary study flow", () => {
 
   test("persists a requested direction and filters the prepared card pool", async () => {
     await applyImport("direction-choice", [lexeme("向", 1)]);
-    const created = await createStudySession(env.DB, {
+    const created = await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "direction-choice-session",
       deviceId: "direction-choice-device",
       maxCards: 1,
@@ -153,6 +162,7 @@ describe("vocabulary study flow", () => {
     });
     const next = await getNextStudyCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "direction-choice-session",
       "direction-choice-device",
     );
@@ -170,6 +180,7 @@ describe("vocabulary study flow", () => {
     for (const [index, activityType] of setupCards.entries()) {
       await ingestAttempt(
         env.DB,
+        FIXED_OWNER_LEARNER_ID,
         scheduledAttempt({
           eventId: `lexical-variety-setup-${index}`,
           cardId: cardId("甲", activityType),
@@ -184,13 +195,14 @@ describe("vocabulary study flow", () => {
     }
 
     const now = Date.parse("2026-08-31T08:00:00Z");
-    await createStudySession(env.DB, {
+    await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "lexical-variety-session",
       deviceId: "lexical-variety-device",
       maxCards: 3,
     });
     const first = await getNextStudyCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "lexical-variety-session",
       "lexical-variety-device",
       { now: () => now },
@@ -199,6 +211,7 @@ describe("vocabulary study flow", () => {
     if (!first.card) throw new Error("missing first lexical variety card");
     await ingestAttempt(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       scheduledAttempt({
         eventId: "lexical-variety-session-first",
         cardId: first.card.cardId,
@@ -215,6 +228,7 @@ describe("vocabulary study flow", () => {
 
     const second = await getNextStudyCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "lexical-variety-session",
       "lexical-variety-device",
       { now: () => now + 2 },
@@ -223,6 +237,7 @@ describe("vocabulary study flow", () => {
     if (!second.card) throw new Error("missing deferred sibling alternative");
     await ingestAttempt(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       scheduledAttempt({
         eventId: "lexical-variety-session-second",
         cardId: second.card.cardId,
@@ -238,6 +253,7 @@ describe("vocabulary study flow", () => {
     );
     const deferred = await getNextStudyCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "lexical-variety-session",
       "lexical-variety-device",
       { now: () => now + 4 },
@@ -270,7 +286,7 @@ describe("vocabulary study flow", () => {
       ],
       [{ simplified: "行", meaning_ja: "歩く；できる" }],
     );
-    await createStudySession(env.DB, {
+    await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "preferred-reading-meaning-session",
       deviceId: "preferred-reading-meaning-device",
       maxCards: 1,
@@ -278,6 +294,7 @@ describe("vocabulary study flow", () => {
 
     const next = await getNextStudyCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "preferred-reading-meaning-session",
       "preferred-reading-meaning-device",
     );

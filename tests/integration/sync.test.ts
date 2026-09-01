@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, test } from "vitest";
+import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import { createStudySession } from "../../src/db/study";
@@ -14,18 +15,24 @@ describe("offline sync contract", () => {
   });
 
   test("bulk-loads a full learner-change page within the D1 Free query budget", async () => {
+    await env.DB.prepare("INSERT INTO learner_devices (id, learner_id) VALUES (?, ?)")
+      .bind("bulk-device", FIXED_OWNER_LEARNER_ID)
+      .run();
     await env.DB.prepare(
       `WITH RECURSIVE numbers(value) AS (
          SELECT 1
          UNION ALL
          SELECT value + 1 FROM numbers WHERE value < 101
        )
-       INSERT INTO study_sessions (id, device_id, mode, started_at, context_json)
-       SELECT printf('bulk-session-%03d', value), 'bulk-device',
+       INSERT INTO study_sessions
+         (id, learner_id, device_id, mode, started_at, context_json)
+       SELECT printf('bulk-session-%03d', value), ?, 'bulk-device',
          CASE WHEN value % 2 = 0 THEN 'pronunciation' ELSE 'study' END,
          value, '{}'
        FROM numbers`,
-    ).run();
+    )
+      .bind(FIXED_OWNER_LEARNER_ID)
+      .run();
     await env.DB.prepare(
       `WITH RECURSIVE numbers(value) AS (
          SELECT 1
@@ -33,15 +40,17 @@ describe("offline sync contract", () => {
          SELECT value + 1 FROM numbers WHERE value < 101
        )
        INSERT INTO server_changes
-         (change_id, entity_type, entity_id, operation, changed_at)
-       SELECT printf('bulk-change-%03d', value), 'study_session',
+         (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+       SELECT printf('bulk-change-%03d', value), ?, 'study_session',
          printf('bulk-session-%03d', value), 'upsert', value
        FROM numbers`,
-    ).run();
+    )
+      .bind(FIXED_OWNER_LEARNER_ID)
+      .run();
 
     try {
       const measured = measurePreparedQueries(env.DB);
-      const first = await pullSyncChanges(measured.database, {
+      const first = await pullSyncChanges(measured.database, FIXED_OWNER_LEARNER_ID, {
         cursor: 0,
         contentRevision: null,
         deviceId: "bulk-device",
@@ -53,33 +62,34 @@ describe("offline sync contract", () => {
         sessionId: "bulk-session-001",
         mode: "study",
       });
-      expect(measured.count()).toBe(2);
+      expect(measured.count()).toBe(3);
 
-      const second = await pullSyncChanges(measured.database, {
+      const second = await pullSyncChanges(measured.database, FIXED_OWNER_LEARNER_ID, {
         cursor: first.nextCursor,
         contentRevision: first.currentContentRevision,
         deviceId: "bulk-device",
       });
       expect(second.learnerChanges).toHaveLength(1);
       expect(second.hasMore).toBe(false);
-      expect(measured.count()).toBe(4);
+      expect(measured.count()).toBe(6);
     } finally {
       await env.DB.batch([
         env.DB.prepare("DELETE FROM server_changes WHERE change_id LIKE 'bulk-change-%'"),
         env.DB.prepare("DELETE FROM study_sessions WHERE device_id = 'bulk-device'"),
+        env.DB.prepare("DELETE FROM learner_devices WHERE id = 'bulk-device'"),
       ]);
     }
   });
 
   test("pulls bounded canonical changes by cursor and duplicate delivery adds no change", async () => {
     await applyImport("cursor", [lexeme("游标一", 1), lexeme("游标二", 2)]);
-    await createStudySession(env.DB, {
+    await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "cursor-session",
       deviceId: "cursor-device",
       maxCards: 3,
     });
 
-    const initial = await pullSyncChanges(env.DB, {
+    const initial = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: 0,
       contentRevision: null,
       deviceId: "cursor-device",
@@ -98,8 +108,10 @@ describe("offline sync contract", () => {
       occurredAt: "2026-08-30T02:00:00Z",
     });
 
-    expect((await ingestAttempt(env.DB, attempt)).disposition).toBe("inserted");
-    const incremental = await pullSyncChanges(env.DB, {
+    expect((await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, attempt)).disposition).toBe(
+      "inserted",
+    );
+    const incremental = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: initial.nextCursor,
       contentRevision: initial.currentContentRevision,
       deviceId: "cursor-device",
@@ -116,8 +128,10 @@ describe("offline sync contract", () => {
       ]),
     );
     const duplicateCursor = incremental.nextCursor;
-    expect((await ingestAttempt(env.DB, attempt)).disposition).toBe("duplicate");
-    const afterDuplicate = await pullSyncChanges(env.DB, {
+    expect((await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, attempt)).disposition).toBe(
+      "duplicate",
+    );
+    const afterDuplicate = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: duplicateCursor,
       contentRevision: incremental.currentContentRevision,
       deviceId: "cursor-device",
@@ -140,12 +154,12 @@ describe("offline sync contract", () => {
 
   test("offline vocabulary facts preserve the scheduler selected before configuration changes", async () => {
     await applyImport("config", [lexeme("配置", 1)]);
-    await createStudySession(env.DB, {
+    await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "config-session",
       deviceId: "config-device",
       maxCards: 1,
     });
-    const cached = await pullSyncChanges(env.DB, {
+    const cached = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: 0,
       contentRevision: null,
       deviceId: "config-device",
@@ -174,7 +188,7 @@ describe("offline sync contract", () => {
       studySessionId: "config-session",
       occurredAt: "2026-08-30T03:00:00Z",
     });
-    await ingestAttempt(env.DB, attempt);
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, attempt);
     expect(
       await env.DB.prepare("SELECT scheduler_config_id FROM fsrs_reviews WHERE attempt_id = ?")
         .bind(attempt.eventId)
@@ -185,25 +199,25 @@ describe("offline sync contract", () => {
   test("a content revision and newer online review do not rewrite a pending older review", async () => {
     await applyImport("pending-a", [lexeme("离线", 1)]);
     await Promise.all([
-      createStudySession(env.DB, {
+      createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
         sessionId: "late-offline-session",
         deviceId: "late-offline-device",
         maxCards: 1,
       }),
-      createStudySession(env.DB, {
+      createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
         sessionId: "late-online-session",
         deviceId: "late-online-device",
         maxCards: 1,
       }),
     ]);
-    const offlinePull = await pullSyncChanges(env.DB, {
+    const offlinePull = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: 0,
       contentRevision: null,
       deviceId: "late-offline-device",
       studySessionId: "late-offline-session",
     });
     const offlineCard = requiredCard(offlinePull.studyPack?.cards[0]);
-    const onlinePull = await pullSyncChanges(env.DB, {
+    const onlinePull = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: 0,
       contentRevision: null,
       deviceId: "late-online-device",
@@ -220,7 +234,9 @@ describe("offline sync contract", () => {
       occurredAt: "2026-08-30T05:00:00Z",
       rating: 4,
     });
-    await ingestAttempt(env.DB, newer, { now: () => Date.parse("2026-08-30T05:00:01Z") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, newer, {
+      now: () => Date.parse("2026-08-30T05:00:01Z"),
+    });
 
     await applyImport("pending-b", [
       {
@@ -236,9 +252,11 @@ describe("offline sync contract", () => {
       occurredAt: "2026-08-30T04:00:00Z",
       rating: 2,
     });
-    await ingestAttempt(env.DB, older, { now: () => Date.parse("2026-08-30T05:10:00Z") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, older, {
+      now: () => Date.parse("2026-08-30T05:10:00Z"),
+    });
 
-    const converged = await pullSyncChanges(env.DB, {
+    const converged = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: offlinePull.nextCursor,
       contentRevision: offlinePull.currentContentRevision,
       deviceId: "late-offline-device",

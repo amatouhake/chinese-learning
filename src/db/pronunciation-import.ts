@@ -244,7 +244,7 @@ export async function buildPronunciationImportStatements(
     }
   }
 
-  statements.push(`UPDATE learner_settings
+  statements.push(`UPDATE content_state
     SET current_content_revision = ${revision}, updated_at = ${createdAt}
     WHERE singleton = 1 AND ${importAllowed};`);
   statements.push(`INSERT OR IGNORE INTO server_changes

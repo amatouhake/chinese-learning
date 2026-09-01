@@ -3,6 +3,7 @@ import { REFLEX_SLOW_RESPONSE_MS } from "../domain/reflex";
 import type {
   ActivityType,
   FsrsRating,
+  LearnerId,
   PracticeMode,
   ProgressCorrectness,
   ProgressSelfRatings,
@@ -117,6 +118,7 @@ interface RankedTroubleItem {
 
 export async function getProgressSnapshot(
   db: D1Database,
+  learnerId: LearnerId,
   options: ProgressSnapshotOptions = {},
 ): Promise<ProgressSnapshot> {
   const generatedAt = options.now?.() ?? Date.now();
@@ -126,15 +128,23 @@ export async function getProgressSnapshot(
   const recentCutoff = generatedAt - RECENT_DAYS * DAY_MS;
 
   const results = await db.batch<ProgressQueryRow>([
-    db.prepare(
-      `SELECT
+    db
+      .prepare(
+        `SELECT
          timezone,
-         (SELECT seq FROM server_changes ORDER BY seq DESC LIMIT 1) AS server_seq,
-         (SELECT changed_at FROM server_changes ORDER BY seq DESC LIMIT 1) AS changed_at,
-         (SELECT MAX(received_at) FROM attempts) AS latest_attempt_received_at,
-         (SELECT MAX(occurred_at) FROM attempts) AS latest_attempt_occurred_at
-       FROM learner_settings WHERE singleton = 1`,
-    ),
+         (SELECT seq FROM server_changes
+          WHERE learner_id IS NULL OR learner_id = ?
+          ORDER BY seq DESC LIMIT 1) AS server_seq,
+         (SELECT changed_at FROM server_changes
+          WHERE learner_id IS NULL OR learner_id = ?
+          ORDER BY seq DESC LIMIT 1) AS changed_at,
+         (SELECT MAX(received_at) FROM attempts WHERE learner_id = ?)
+           AS latest_attempt_received_at,
+         (SELECT MAX(occurred_at) FROM attempts WHERE learner_id = ?)
+           AS latest_attempt_occurred_at
+       FROM learner_settings WHERE learner_id = ?`,
+      )
+      .bind(learnerId, learnerId, learnerId, learnerId, learnerId),
     db
       .prepare(
         `SELECT
@@ -144,12 +154,12 @@ export async function getProgressSnapshot(
            COALESCE(SUM(CASE WHEN cs.reps = 0 THEN 1 ELSE 0 END), 0) AS new_cards,
            COALESCE(SUM(CASE WHEN cs.state IN (1, 3) THEN 1 ELSE 0 END), 0) AS learning,
            COALESCE(SUM(CASE WHEN cs.state = 2 THEN 1 ELSE 0 END), 0) AS review
-         FROM cards c JOIN card_state cs ON cs.card_id = c.id
+         FROM cards c JOIN card_state cs ON cs.card_id = c.id AND cs.learner_id = ?
          WHERE c.subject_type = 'lexeme'
            AND c.activity_type IN ('hanzi_to_meaning', 'meaning_to_hanzi')
            AND c.scheduler_eligible = 1 AND c.retired_at IS NULL`,
       )
-      .bind(generatedAt),
+      .bind(generatedAt, learnerId),
     db
       .prepare(
         `SELECT
@@ -194,11 +204,11 @@ export async function getProgressSnapshot(
            MAX(CASE WHEN r.attempt_id IS NOT NULL THEN a.occurred_at END)
              AS last_fsrs_review_at
          FROM attempts a LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
-         WHERE a.occurred_at >= ? AND a.occurred_at <= ?
+         WHERE a.learner_id = ? AND a.occurred_at >= ? AND a.occurred_at <= ?
          GROUP BY a.mode, a.activity_type
          ORDER BY a.mode, a.activity_type`,
       )
-      .bind(REFLEX_SLOW_RESPONSE_MS, recentCutoff, generatedAt),
+      .bind(REFLEX_SLOW_RESPONSE_MS, learnerId, recentCutoff, generatedAt),
     db
       .prepare(
         `SELECT
@@ -212,16 +222,19 @@ export async function getProgressSnapshot(
            END AS answered,
            CASE WHEN r.attempt_id IS NULL THEN 0 ELSE 1 END AS scheduled_review
          FROM attempts a LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
-         WHERE a.occurred_at >= ? AND a.occurred_at <= ?
+         WHERE a.learner_id = ? AND a.occurred_at >= ? AND a.occurred_at <= ?
          ORDER BY a.occurred_at, a.event_id`,
       )
-      .bind(recentCutoff, generatedAt),
-    db.prepare(
-      `SELECT g.id, g.title, state.status, state.self_confidence, state.last_studied_at
+      .bind(learnerId, recentCutoff, generatedAt),
+    db
+      .prepare(
+        `SELECT g.id, g.title, state.status, state.self_confidence, state.last_studied_at
        FROM grammar_topics g
-       LEFT JOIN grammar_topic_state state ON state.grammar_topic_id = g.id
+       LEFT JOIN grammar_topic_state state
+         ON state.grammar_topic_id = g.id AND state.learner_id = ?
        ORDER BY CAST(json_extract(g.teaching_metadata_json, '$.sequence') AS INTEGER), g.id`,
-    ),
+      )
+      .bind(learnerId),
     db
       .prepare(
         `SELECT
@@ -249,9 +262,9 @@ export async function getProgressSnapshot(
            cs.due_at,
            MAX(a.occurred_at) AS last_practiced_at
          FROM cards c
-         JOIN card_state cs ON cs.card_id = c.id
+         JOIN card_state cs ON cs.card_id = c.id AND cs.learner_id = ?
          JOIN lexemes l ON l.id = c.lexeme_id
-         LEFT JOIN attempts a ON a.card_id = c.id AND a.mode = 'study'
+         LEFT JOIN attempts a ON a.learner_id = ? AND a.card_id = c.id AND a.mode = 'study'
            AND a.occurred_at >= ? AND a.occurred_at <= ?
          LEFT JOIN fsrs_reviews review ON review.attempt_id = a.event_id
          WHERE c.subject_type = 'lexeme'
@@ -268,7 +281,7 @@ export async function getProgressSnapshot(
            c.id
          LIMIT 40`,
       )
-      .bind(recentCutoff, generatedAt),
+      .bind(learnerId, learnerId, recentCutoff, generatedAt),
     db
       .prepare(
         `WITH trouble AS (
@@ -322,7 +335,8 @@ export async function getProgressSnapshot(
          LEFT JOIN lexemes reading_lexeme ON reading_lexeme.id = reading.lexeme_id
          LEFT JOIN sentences sentence ON sentence.id = c.sentence_id
          LEFT JOIN grammar_topics grammar ON grammar.id = c.grammar_topic_id
-         WHERE a.occurred_at >= ? AND a.occurred_at <= ? AND a.mode <> 'study'
+         WHERE a.learner_id = ? AND a.occurred_at >= ? AND a.occurred_at <= ?
+           AND a.mode <> 'study'
            AND NOT (
              a.mode = 'pronunciation'
              AND json_extract(a.metadata_json, '$.interaction') = 'skip-uncached-audio'
@@ -348,6 +362,7 @@ export async function getProgressSnapshot(
       .bind(
         REFLEX_SLOW_RESPONSE_MS,
         REFLEX_SLOW_RESPONSE_MS,
+        learnerId,
         recentCutoff,
         generatedAt,
         REFLEX_SLOW_RESPONSE_MS,

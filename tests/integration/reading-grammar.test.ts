@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, test } from "vitest";
+import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import {
@@ -22,12 +23,17 @@ describe("reading and grammar foundation", () => {
 
   test("serves Chinese-first sentences with exact linked readings and the ordered grammar path", async () => {
     const deviceId = "reading-content-device";
-    await createReadingSession(env.DB, {
+    await createReadingSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "reading-content-session",
       deviceId,
       maxItems: 5,
     });
-    const reading = await getOfflineReadingPack(env.DB, "reading-content-session", deviceId);
+    const reading = await getOfflineReadingPack(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      "reading-content-session",
+      deviceId,
+    );
 
     expect(reading.status).toBe("cards");
     expect(reading.cards).toHaveLength(5);
@@ -61,12 +67,17 @@ describe("reading and grammar foundation", () => {
       ),
     ).toBe(true);
 
-    await createGrammarSession(env.DB, {
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "grammar-content-session",
       deviceId,
       maxItems: 5,
     });
-    const grammar = await getOfflineGrammarPack(env.DB, "grammar-content-session", deviceId);
+    const grammar = await getOfflineGrammarPack(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      "grammar-content-session",
+      deviceId,
+    );
     expect(grammar.cards.map((card) => card.topic.sequence)).toEqual([1, 2, 3, 4, 5]);
     expect(grammar.cards[0]).toMatchObject({
       topicId: "grammar:foundation:shi-noun-link",
@@ -127,10 +138,28 @@ describe("reading and grammar foundation", () => {
     const deviceId = "guided-history-device";
     const readingSessionId = "guided-history-reading";
     const grammarSessionId = "guided-history-grammar";
-    await createReadingSession(env.DB, { sessionId: readingSessionId, deviceId, maxItems: 1 });
-    await createGrammarSession(env.DB, { sessionId: grammarSessionId, deviceId, maxItems: 1 });
-    const reading = await getOfflineReadingPack(env.DB, readingSessionId, deviceId);
-    const grammar = await getOfflineGrammarPack(env.DB, grammarSessionId, deviceId);
+    await createReadingSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: readingSessionId,
+      deviceId,
+      maxItems: 1,
+    });
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: grammarSessionId,
+      deviceId,
+      maxItems: 1,
+    });
+    const reading = await getOfflineReadingPack(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      readingSessionId,
+      deviceId,
+    );
+    const grammar = await getOfflineGrammarPack(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      grammarSessionId,
+      deviceId,
+    );
     const readingCard = required(reading.cards[0]);
     const grammarCard = required(grammar.cards[0]);
     const example = required(grammarCard.examples[0]);
@@ -174,9 +203,15 @@ describe("reading and grammar foundation", () => {
       },
     };
 
-    expect(await ingestAttempt(env.DB, readingAttempt)).toMatchObject({ reviewCreated: false });
-    expect(await ingestAttempt(env.DB, grammarAttempt)).toMatchObject({ reviewCreated: false });
-    expect(await ingestAttempt(env.DB, grammarAttempt)).toMatchObject({ disposition: "duplicate" });
+    expect(await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, readingAttempt)).toMatchObject({
+      reviewCreated: false,
+    });
+    expect(await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, grammarAttempt)).toMatchObject({
+      reviewCreated: false,
+    });
+    expect(await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, grammarAttempt)).toMatchObject({
+      disposition: "duplicate",
+    });
 
     const after = await counts();
     expect(after.attempts - before.attempts).toBe(2);
@@ -197,7 +232,7 @@ describe("reading and grammar foundation", () => {
       version: 1,
     });
 
-    const pulled = await pullSyncChanges(env.DB, {
+    const pulled = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: 0,
       contentRevision: null,
       deviceId,
@@ -223,19 +258,22 @@ describe("reading and grammar foundation", () => {
     const topicId = "grammar:foundation:you-possession";
     const firstSession = "grammar-late-newer-session";
     const lateSession = "grammar-late-older-session";
-    await createGrammarSession(env.DB, {
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: firstSession,
       deviceId,
       maxItems: 1,
       topicId,
     });
-    await createGrammarSession(env.DB, {
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: lateSession,
       deviceId,
       maxItems: 1,
       topicId,
     });
-    const card = required((await getOfflineGrammarPack(env.DB, firstSession, deviceId)).cards[0]);
+    const card = required(
+      (await getOfflineGrammarPack(env.DB, FIXED_OWNER_LEARNER_ID, firstSession, deviceId))
+        .cards[0],
+    );
     const example = required(card.examples[0]);
     const base = {
       deviceId,
@@ -251,7 +289,7 @@ describe("reading and grammar foundation", () => {
         selectedChoiceId: card.topic.practice.answerChoiceId,
       },
     };
-    await ingestAttempt(env.DB, {
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
       ...base,
       eventId: "grammar-late-newer",
       deviceSeq: 2,
@@ -259,7 +297,7 @@ describe("reading and grammar foundation", () => {
       studySessionId: firstSession,
       selfRating: 4,
     });
-    await ingestAttempt(env.DB, {
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
       ...base,
       eventId: "grammar-late-older",
       deviceSeq: 1,
@@ -287,8 +325,14 @@ describe("reading and grammar foundation", () => {
   test("rejects forged grammar correctness and cross-mode session reuse", async () => {
     const deviceId = "grammar-validation-device";
     const sessionId = "grammar-validation-session";
-    await createGrammarSession(env.DB, { sessionId, deviceId, maxItems: 1 });
-    const card = required((await getOfflineGrammarPack(env.DB, sessionId, deviceId)).cards[0]);
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId,
+      deviceId,
+      maxItems: 1,
+    });
+    const card = required(
+      (await getOfflineGrammarPack(env.DB, FIXED_OWNER_LEARNER_ID, sessionId, deviceId)).cards[0],
+    );
     const example = required(card.examples[0]);
     const forged: AttemptInput = {
       eventId: "grammar-validation-forged",
@@ -309,9 +353,11 @@ describe("reading and grammar foundation", () => {
         selectedChoiceId: card.topic.practice.answerChoiceId,
       },
     };
-    await expect(ingestAttempt(env.DB, forged)).rejects.toThrow("grammar correctness disagrees");
+    await expect(ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, forged)).rejects.toThrow(
+      "grammar correctness disagrees",
+    );
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         ...forged,
         eventId: "grammar-validation-cross-mode",
         mode: "reading",
@@ -357,13 +403,15 @@ describe("reading and grammar foundation", () => {
 
     const deviceId = "grammar-retirement-device";
     const emptySession = "grammar-retirement-empty-session";
-    await createGrammarSession(env.DB, {
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: emptySession,
       deviceId,
       maxItems: 1,
       topicId: topic.id,
     });
-    expect(await getOfflineGrammarPack(env.DB, emptySession, deviceId)).toMatchObject({
+    expect(
+      await getOfflineGrammarPack(env.DB, FIXED_OWNER_LEARNER_ID, emptySession, deviceId),
+    ).toMatchObject({
       status: "empty",
       cards: [],
     });
@@ -379,14 +427,15 @@ describe("reading and grammar foundation", () => {
         .first<{ retired_at: number | null }>(),
     ).toEqual({ retired_at: null });
     const restoredSession = "grammar-retirement-restored-session";
-    await createGrammarSession(env.DB, {
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: restoredSession,
       deviceId,
       maxItems: 1,
       topicId: topic.id,
     });
     const restoredCard = required(
-      (await getOfflineGrammarPack(env.DB, restoredSession, deviceId)).cards[0],
+      (await getOfflineGrammarPack(env.DB, FIXED_OWNER_LEARNER_ID, restoredSession, deviceId))
+        .cards[0],
     );
     expect(restoredCard.practiceVersionId).not.toBe(beforeVersion.id);
   });
@@ -395,14 +444,15 @@ describe("reading and grammar foundation", () => {
     const topic = BEGINNER_GRAMMAR_TOPICS[0];
     const deviceId = "grammar-version-device";
     const cachedSessionId = "grammar-version-cached-session";
-    await createGrammarSession(env.DB, {
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: cachedSessionId,
       deviceId,
       maxItems: 1,
       topicId: topic.id,
     });
     const cachedCard = required(
-      (await getOfflineGrammarPack(env.DB, cachedSessionId, deviceId)).cards[0],
+      (await getOfflineGrammarPack(env.DB, FIXED_OWNER_LEARNER_ID, cachedSessionId, deviceId))
+        .cards[0],
     );
     const current = await env.DB.prepare(
       `SELECT teaching_metadata_json, content_revision
@@ -443,14 +493,15 @@ describe("reading and grammar foundation", () => {
     ]);
 
     const changedSessionId = "grammar-version-changed-session";
-    await createGrammarSession(env.DB, {
+    await createGrammarSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: changedSessionId,
       deviceId,
       maxItems: 1,
       topicId: topic.id,
     });
     const changedCard = required(
-      (await getOfflineGrammarPack(env.DB, changedSessionId, deviceId)).cards[0],
+      (await getOfflineGrammarPack(env.DB, FIXED_OWNER_LEARNER_ID, changedSessionId, deviceId))
+        .cards[0],
     );
     expect(changedCard).toMatchObject({
       practiceVersionId: changedVersionId,
@@ -459,7 +510,7 @@ describe("reading and grammar foundation", () => {
 
     try {
       expect(
-        await ingestAttempt(env.DB, {
+        await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
           eventId: "grammar-version-delayed-event",
           deviceId,
           deviceSeq: 1,

@@ -25,6 +25,7 @@ export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 export const PRACTICE_MODES = ["study", "reflex", "pronunciation", "reading", "grammar"] as const;
 
 export type PracticeMode = (typeof PRACTICE_MODES)[number];
+export type LearnerId = string;
 export type FsrsRating = 1 | 2 | 3 | 4;
 export type StudyDirection = "mixed" | "hanzi_to_meaning" | "meaning_to_hanzi";
 

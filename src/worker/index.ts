@@ -27,6 +27,7 @@ import {
 } from "../domain/reading-grammar-validation";
 import { parseSyncPullInput } from "../domain/sync-validation";
 import { authorizeStudyWrite } from "./auth";
+import { resolveCurrentLearner } from "./current-learner";
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
 type AppContext = Context<{ Bindings: CloudflareBindings }>;
@@ -48,7 +49,7 @@ app.post("/api/progress", async (context) => {
   if (authError) return authError;
 
   context.header("Cache-Control", "no-store");
-  return context.json(await getProgressSnapshot(context.env.DB));
+  return context.json(await getProgressSnapshot(context.env.DB, resolveCurrentLearner()));
 });
 
 app.post("/api/attempts", async (context) => {
@@ -74,7 +75,7 @@ app.post("/api/attempts", async (context) => {
   }
 
   try {
-    const result = await ingestAttempt(context.env.DB, input);
+    const result = await ingestAttempt(context.env.DB, resolveCurrentLearner(), input);
     return context.json(result, result.disposition === "inserted" ? 201 : 200);
   } catch (error) {
     const response = domainError(context, error);
@@ -94,7 +95,7 @@ app.post("/api/study/sessions", async (context) => {
 
   try {
     const input = parseCreateStudySessionInput(await readJsonBody(context));
-    const result = await createStudySession(context.env.DB, input);
+    const result = await createStudySession(context.env.DB, resolveCurrentLearner(), input);
     return context.json(result, result.disposition === "created" ? 201 : 200);
   } catch (error) {
     const response = domainError(context, error);
@@ -116,6 +117,7 @@ app.post("/api/study/sessions/:sessionId/next", async (context) => {
     const input = parseNextStudyCardInput(await readJsonBody(context));
     const result = await getNextStudyCard(
       context.env.DB,
+      resolveCurrentLearner(),
       context.req.param("sessionId"),
       input.deviceId,
     );
@@ -138,7 +140,7 @@ app.post("/api/reflex/sessions", async (context) => {
 
   try {
     const input = parseCreateReflexSessionInput(await readJsonBody(context));
-    const result = await createReflexSession(context.env.DB, input);
+    const result = await createReflexSession(context.env.DB, resolveCurrentLearner(), input);
     return context.json(result, result.disposition === "created" ? 201 : 200);
   } catch (error) {
     const response = domainError(context, error);
@@ -158,7 +160,7 @@ app.post("/api/pronunciation/sessions", async (context) => {
 
   try {
     const input = parseCreatePronunciationSessionInput(await readJsonBody(context));
-    const result = await createPronunciationSession(context.env.DB, input);
+    const result = await createPronunciationSession(context.env.DB, resolveCurrentLearner(), input);
     return context.json(result, result.disposition === "created" ? 201 : 200);
   } catch (error) {
     const response = domainError(context, error);
@@ -180,6 +182,7 @@ app.post("/api/pronunciation/sessions/:sessionId/next", async (context) => {
     const input = parseNextPronunciationCardInput(await readJsonBody(context));
     const result = await getNextPronunciationCard(
       context.env.DB,
+      resolveCurrentLearner(),
       context.req.param("sessionId"),
       input.deviceId,
     );
@@ -202,7 +205,7 @@ app.post("/api/reading/sessions", async (context) => {
 
   try {
     const input = parseCreateReadingSessionInput(await readJsonBody(context));
-    const result = await createReadingSession(context.env.DB, input);
+    const result = await createReadingSession(context.env.DB, resolveCurrentLearner(), input);
     return context.json(result, result.disposition === "created" ? 201 : 200);
   } catch (error) {
     const response = domainError(context, error);
@@ -223,7 +226,12 @@ app.post("/api/reading/sessions/:sessionId/next", async (context) => {
   try {
     const input = parseNextGuidedCardInput(await readJsonBody(context));
     return context.json(
-      await getNextReadingCard(context.env.DB, context.req.param("sessionId"), input.deviceId),
+      await getNextReadingCard(
+        context.env.DB,
+        resolveCurrentLearner(),
+        context.req.param("sessionId"),
+        input.deviceId,
+      ),
     );
   } catch (error) {
     const response = domainError(context, error);
@@ -243,7 +251,7 @@ app.post("/api/grammar/sessions", async (context) => {
 
   try {
     const input = parseCreateGrammarSessionInput(await readJsonBody(context));
-    const result = await createGrammarSession(context.env.DB, input);
+    const result = await createGrammarSession(context.env.DB, resolveCurrentLearner(), input);
     return context.json(result, result.disposition === "created" ? 201 : 200);
   } catch (error) {
     const response = domainError(context, error);
@@ -264,7 +272,12 @@ app.post("/api/grammar/sessions/:sessionId/next", async (context) => {
   try {
     const input = parseNextGuidedCardInput(await readJsonBody(context));
     return context.json(
-      await getNextGrammarCard(context.env.DB, context.req.param("sessionId"), input.deviceId),
+      await getNextGrammarCard(
+        context.env.DB,
+        resolveCurrentLearner(),
+        context.req.param("sessionId"),
+        input.deviceId,
+      ),
     );
   } catch (error) {
     const response = domainError(context, error);
@@ -284,7 +297,7 @@ app.post("/api/sync/pull", async (context) => {
 
   try {
     const input = parseSyncPullInput(await readJsonBody(context));
-    return context.json(await pullSyncChanges(context.env.DB, input));
+    return context.json(await pullSyncChanges(context.env.DB, resolveCurrentLearner(), input));
   } catch (error) {
     const response = domainError(context, error);
     if (response) return response;

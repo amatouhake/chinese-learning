@@ -1,7 +1,9 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
+import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
+import { registerLearnerDevice } from "../../src/db/learners";
 import { getProgressSnapshot } from "../../src/db/progress";
 import {
   buildV1ImportStatements,
@@ -16,7 +18,7 @@ const NOW = Date.parse("2026-08-31T12:00:00Z");
 
 describe("canonical progress snapshot", () => {
   test("returns an explicit empty state for a new user", async () => {
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
 
     expect(snapshot).toMatchObject({
       snapshotVersion: 1,
@@ -58,6 +60,7 @@ describe("canonical progress snapshot", () => {
     for (const [index, card] of cards.results.entries()) {
       await ingestAttempt(
         env.DB,
+        FIXED_OWNER_LEARNER_ID,
         scheduledAttempt({
           eventId: `mixed-rating-${index + 1}`,
           cardId: card.id,
@@ -70,7 +73,7 @@ describe("canonical progress snapshot", () => {
       );
     }
 
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     expect(snapshot.vocabulary).toMatchObject({
       totalScheduledCards: 4,
       new: 0,
@@ -194,7 +197,7 @@ describe("canonical progress snapshot", () => {
     }
 
     const stateBefore = await canonicalLearningState();
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     const stateAfter = await canonicalLearningState();
 
     const objective = snapshot.pronunciation.byActivity.find(
@@ -256,7 +259,7 @@ describe("canonical progress snapshot", () => {
     await applyImport(
       vocabularyInput("delayed-progress", [sourceLexeme("迟", "chí", "chi2", "late")]),
     );
-    const baseline = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const baseline = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     const card = await vocabularyCardFor("迟");
     const delayedOccurredAt = NOW - 45 * 24 * 60 * 60 * 1_000;
     await insertCanonicalAttempt({
@@ -284,7 +287,7 @@ describe("canonical progress snapshot", () => {
     const live = (await response.json()) as { dataThrough: { latestAttemptReceivedAt: number } };
     expect(live.dataThrough.latestAttemptReceivedAt).toBe(NOW);
 
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     expect(snapshot.overall.last30Days.attempts).toBe(baseline.overall.last30Days.attempts);
     expect(snapshot.reflex.recentResponses).toBe(baseline.reflex.recentResponses);
     expect(snapshot.dataThrough).toMatchObject({
@@ -299,9 +302,10 @@ describe("canonical progress snapshot", () => {
       vocabularyInput("late-review-progress", [sourceLexeme("晚", "wǎn", "wan3", "late")]),
     );
     const card = await vocabularyCardFor("晚");
-    const before = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const before = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     await ingestAttempt(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       scheduledAttempt({
         eventId: "newer-review",
         cardId: card.id,
@@ -314,6 +318,7 @@ describe("canonical progress snapshot", () => {
     );
     const replayed = await ingestAttempt(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       scheduledAttempt({
         eventId: "late-older-review",
         cardId: card.id,
@@ -325,7 +330,7 @@ describe("canonical progress snapshot", () => {
       { now: () => NOW - 1_000 },
     );
 
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     const troublesome = snapshot.vocabulary.troublesomeCards.find(
       ({ cardId }) => cardId === card.id,
     );
@@ -351,6 +356,7 @@ describe("canonical progress snapshot", () => {
     const reviewedAt = NOW - 2 * DAY;
     await ingestAttempt(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       scheduledAttempt({
         eventId: "boundary-fsrs-review",
         cardId: card.id,
@@ -374,7 +380,7 @@ describe("canonical progress snapshot", () => {
       metadata: { interaction: "offline-import" },
     });
 
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     const trouble = snapshot.vocabulary.troublesomeCards.find(({ cardId }) => cardId === card.id);
     expect(trouble).toMatchObject({
       recentAttempts: 1,
@@ -433,7 +439,7 @@ describe("canonical progress snapshot", () => {
       metadata: { interaction: "offline-import" },
     });
 
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     expect(snapshot.reflex.troublesomeItems).toHaveLength(5);
     expect(
       snapshot.reading.difficultSentences.some(({ cardId }) => cardId === sentenceCard.id),
@@ -450,7 +456,7 @@ describe("canonical progress snapshot", () => {
       vocabularyInput("future-progress", [sourceLexeme("未", "wèi", "wei4", "future")]),
     );
     const card = await vocabularyCardFor("未");
-    const before = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const before = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     const futureOccurredAt = NOW + DAY;
     await insertCanonicalAttempt({
       eventId: "future-clock-skew-attempt",
@@ -465,7 +471,7 @@ describe("canonical progress snapshot", () => {
       metadata: { interaction: "offline-import" },
     });
 
-    const snapshot = await getProgressSnapshot(env.DB, { now: () => NOW });
+    const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     expect(snapshot.overall).toEqual(before.overall);
     expect(snapshot.reflex).toEqual(before.reflex);
     expect(snapshot.troublesomeItems).toEqual(before.troublesomeItems);
@@ -485,7 +491,7 @@ async function prepareMixedModeFixture(): Promise<{
   reflexActivity: "hanzi_to_meaning" | "meaning_to_hanzi";
 }> {
   const revision = await env.DB.prepare(
-    "SELECT current_content_revision FROM learner_settings WHERE singleton = 1",
+    "SELECT current_content_revision FROM content_state WHERE singleton = 1",
   ).first<number>("current_content_revision");
   const reading = await env.DB.prepare(
     `SELECT id FROM lexeme_readings WHERE retired_at IS NULL ORDER BY id LIMIT 1`,
@@ -500,6 +506,9 @@ async function prepareMixedModeFixture(): Promise<{
   const reflexCard = await firstVocabularyCard();
   if (revision === null || !reading || !readingCard || !grammarCard) {
     throw new Error("mixed progress fixture content is incomplete");
+  }
+  for (const mode of ["pronunciation", "reading", "grammar", "reflex"] as const) {
+    await registerLearnerDevice(env.DB, FIXED_OWNER_LEARNER_ID, `progress-device-${mode}`);
   }
 
   await env.DB.batch([
@@ -525,14 +534,22 @@ async function prepareMixedModeFixture(): Promise<{
     sessionStatement("progress-reading-session", "reading"),
     sessionStatement("progress-grammar-session", "grammar"),
     env.DB.prepare(
-      `INSERT INTO study_sessions (id, device_id, mode, started_at, context_json)
-         VALUES ('progress-reflex-session', 'progress-device-reflex', 'reflex', ?, '{"maxItems":4}')`,
-    ).bind(NOW - DAY),
+      `INSERT INTO study_sessions
+        (id, learner_id, device_id, mode, started_at, context_json)
+       VALUES (
+         'progress-reflex-session', ?, 'progress-device-reflex', 'reflex', ?, '{"maxItems":4}'
+       )`,
+    ).bind(FIXED_OWNER_LEARNER_ID, NOW - DAY),
     env.DB.prepare(
       `INSERT INTO grammar_topic_state
-          (grammar_topic_id, status, introduced_at, last_studied_at, self_confidence)
-         VALUES (?, 'learning', ?, ?, 0.5)`,
-    ).bind(grammarCard.grammar_topic_id, NOW - DAY, NOW - 19 * 60 * 60 * 1_000),
+          (learner_id, grammar_topic_id, status, introduced_at, last_studied_at, self_confidence)
+         VALUES (?, ?, 'learning', ?, ?, 0.5)`,
+    ).bind(
+      FIXED_OWNER_LEARNER_ID,
+      grammarCard.grammar_topic_id,
+      NOW - DAY,
+      NOW - 19 * 60 * 60 * 1_000,
+    ),
   ]);
   return {
     objectiveCardId: "progress-pronunciation-objective",
@@ -547,9 +564,9 @@ async function prepareMixedModeFixture(): Promise<{
 
 function sessionStatement(id: string, mode: PracticeMode): D1PreparedStatement {
   return env.DB.prepare(
-    `INSERT INTO study_sessions (id, device_id, mode, started_at, context_json)
-       VALUES (?, ?, ?, ?, '{}')`,
-  ).bind(id, `progress-device-${mode}`, mode, NOW - DAY);
+    `INSERT INTO study_sessions (id, learner_id, device_id, mode, started_at, context_json)
+       VALUES (?, ?, ?, ?, ?, '{}')`,
+  ).bind(id, FIXED_OWNER_LEARNER_ID, `progress-device-${mode}`, mode, NOW - DAY);
 }
 
 async function insertCanonicalAttempt(input: {
@@ -567,22 +584,25 @@ async function insertCanonicalAttempt(input: {
   metadata: Record<string, unknown>;
 }): Promise<void> {
   const changeId = `attempt:${input.eventId}`;
+  const deviceId = `progress-device-${input.mode}`;
+  await registerLearnerDevice(env.DB, FIXED_OWNER_LEARNER_ID, deviceId);
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'attempt', ?, 'upsert', ?)`,
-    ).bind(changeId, input.eventId, input.receivedAt),
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'attempt', ?, 'upsert', ?)`,
+    ).bind(changeId, FIXED_OWNER_LEARNER_ID, input.eventId, input.receivedAt),
     env.DB.prepare(
       `INSERT INTO attempts
-          (event_id, device_id, device_seq, occurred_at, received_at, card_id,
+          (event_id, learner_id, device_id, device_seq, occurred_at, received_at, card_id,
            study_session_id, mode, activity_type, correct, self_rating, response_ms,
            metadata_json, server_seq)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
            (SELECT seq FROM server_changes WHERE change_id = ?))`,
     ).bind(
       input.eventId,
-      `progress-device-${input.mode}`,
+      FIXED_OWNER_LEARNER_ID,
+      deviceId,
       input.deviceSeq,
       input.occurredAt,
       input.receivedAt,
@@ -603,22 +623,31 @@ async function canonicalLearningState(): Promise<Record<string, unknown>> {
   const [counts, cards, grammar, sessions] = await Promise.all([
     env.DB.prepare(
       `SELECT
-        (SELECT COUNT(*) FROM attempts) AS attempts,
+        (SELECT COUNT(*) FROM attempts WHERE learner_id = ?) AS attempts,
         (SELECT COUNT(*) FROM fsrs_reviews) AS reviews,
-        (SELECT dirty FROM projection_state WHERE singleton = 1) AS projection_dirty,
-        (SELECT last_attempt_at FROM projection_state WHERE singleton = 1) AS last_attempt_at`,
-    ).first<Record<string, unknown>>(),
+        (SELECT dirty FROM projection_state WHERE learner_id = ?) AS projection_dirty,
+        (SELECT last_attempt_at FROM projection_state WHERE learner_id = ?) AS last_attempt_at`,
+    )
+      .bind(FIXED_OWNER_LEARNER_ID, FIXED_OWNER_LEARNER_ID, FIXED_OWNER_LEARNER_ID)
+      .first<Record<string, unknown>>(),
     env.DB.prepare(
       `SELECT card_id, due_at, stability, difficulty, reps, lapses, state, version, server_seq
-       FROM card_state ORDER BY card_id`,
-    ).all<Record<string, unknown>>(),
+       FROM card_state WHERE learner_id = ? ORDER BY card_id`,
+    )
+      .bind(FIXED_OWNER_LEARNER_ID)
+      .all<Record<string, unknown>>(),
     env.DB.prepare(
       `SELECT grammar_topic_id, status, last_studied_at, self_confidence, version, server_seq
-       FROM grammar_topic_state ORDER BY grammar_topic_id`,
-    ).all<Record<string, unknown>>(),
+       FROM grammar_topic_state WHERE learner_id = ? ORDER BY grammar_topic_id`,
+    )
+      .bind(FIXED_OWNER_LEARNER_ID)
+      .all<Record<string, unknown>>(),
     env.DB.prepare(
-      `SELECT id, ended_at, aggregate_json, server_seq FROM study_sessions ORDER BY id`,
-    ).all<Record<string, unknown>>(),
+      `SELECT id, ended_at, aggregate_json, server_seq
+       FROM study_sessions WHERE learner_id = ? ORDER BY id`,
+    )
+      .bind(FIXED_OWNER_LEARNER_ID)
+      .all<Record<string, unknown>>(),
   ]);
   return {
     counts,
