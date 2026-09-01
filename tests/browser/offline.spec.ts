@@ -456,7 +456,7 @@ test.describe("offline PWA foundation", () => {
       if (!current) throw new Error(`listening session has no cached item ${item + 1}`);
       expect(skippedCardIds.has(current.cardId)).toBe(false);
       skippedCardIds.add(current.cardId);
-      await deleteCachedAudio(page, current.mediaUrl);
+      expect(await deleteCachedAudio(page, current.mediaUrl)).toBe(true);
       await page.reload();
       await expect(
         page.getByText(
@@ -464,6 +464,7 @@ test.describe("offline PWA foundation", () => {
         ),
       ).toBeVisible();
       await page.getByRole("button", { name: "音声をスキップ" }).click();
+      await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(item + 1);
       if (item < 9) {
         await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt", {
           timeout: 20_000,
