@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
+import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import {
@@ -30,7 +31,7 @@ describe("Reflex automaticity foundation", () => {
     await applyStatements(await buildPronunciationImportStatements(pronunciationInput(lexemes)));
 
     for (const [index, lexeme] of lexemes.entries()) {
-      await ingestAttempt(env.DB, {
+      await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         eventId: `reflex-introduction:${index + 1}`,
         deviceId: `reflex-introduction-device:${index + 1}`,
         deviceSeq: 1,
@@ -45,7 +46,7 @@ describe("Reflex automaticity foundation", () => {
     }
 
     const before = await schedulerSnapshot();
-    const created = await createReflexSession(env.DB, {
+    const created = await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "reflex-foundation-session",
       deviceId: "reflex-foundation-device",
       maxItems: 4,
@@ -55,7 +56,7 @@ describe("Reflex automaticity foundation", () => {
       session: { maxItems: 4, completedItems: 0, poolSize: 4 },
     });
 
-    const pull = await pullSyncChanges(env.DB, {
+    const pull = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: 0,
       contentRevision: null,
       deviceId: "reflex-foundation-device",
@@ -87,13 +88,15 @@ describe("Reflex automaticity foundation", () => {
     if (!selected) throw new Error("missing Reflex distractor");
     const attempt = reflexAttempt(card, presentation.choices, selected.id);
 
-    const inserted = await ingestAttempt(env.DB, attempt);
+    const inserted = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, attempt);
     expect(inserted).toMatchObject({
       disposition: "inserted",
       reviewCreated: false,
       cardState: null,
     });
-    expect((await ingestAttempt(env.DB, attempt)).disposition).toBe("duplicate");
+    expect((await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, attempt)).disposition).toBe(
+      "duplicate",
+    );
     expect(await schedulerSnapshot()).toEqual(before);
 
     const persisted = await env.DB.prepare(
@@ -121,12 +124,12 @@ describe("Reflex automaticity foundation", () => {
       options: { length: 4 },
     });
 
-    await createReflexSession(env.DB, {
+    await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "reflex-history-session",
       deviceId: "reflex-history-device",
       maxItems: 4,
     });
-    const historyPull = await pullSyncChanges(env.DB, {
+    const historyPull = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
       cursor: pull.nextCursor,
       contentRevision: pull.currentContentRevision,
       deviceId: "reflex-history-device",
@@ -149,9 +152,11 @@ describe("Reflex automaticity foundation", () => {
         ),
       },
     };
-    await expect(ingestAttempt(env.DB, tampered)).rejects.toThrow("prepared distractor set");
+    await expect(ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, tampered)).rejects.toThrow(
+      "prepared distractor set",
+    );
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         ...attempt,
         eventId: "reflex-over-bound-event",
         deviceSeq: 2,
@@ -164,7 +169,7 @@ describe("Reflex automaticity foundation", () => {
     ).rejects.toThrow("session bound");
 
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         ...attempt,
         eventId: "reflex-reused-round-event",
         deviceSeq: 2,
@@ -180,6 +185,7 @@ describe("Reflex automaticity foundation", () => {
       );
       await ingestAttempt(
         env.DB,
+        FIXED_OWNER_LEARNER_ID,
         reflexAttempt(card, nextPresentation.choices, card.answerChoiceId, {
           eventId: `reflex-foundation-event-${round}`,
           deviceSeq: round,
@@ -208,7 +214,7 @@ describe("Reflex automaticity foundation", () => {
     );
     const concurrent = await Promise.allSettled(
       finalAttempts.map((finalAttempt) =>
-        ingestAttempt(env.DB, finalAttempt, { beforeUnscheduledWrite }),
+        ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, finalAttempt, { beforeUnscheduledWrite }),
       ),
     );
     expect(concurrent.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
@@ -236,7 +242,9 @@ describe("Reflex automaticity foundation", () => {
     ).first<string>("event_id");
     const committedFinal = finalAttempts.find(({ eventId }) => eventId === committedFinalId);
     if (!committedFinal) throw new Error("missing committed final Reflex attempt");
-    expect((await ingestAttempt(env.DB, committedFinal)).disposition).toBe("duplicate");
+    expect((await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, committedFinal)).disposition).toBe(
+      "duplicate",
+    );
     expect(await schedulerSnapshot()).toEqual(before);
 
     await retireFixtureLexemes(lexemes);

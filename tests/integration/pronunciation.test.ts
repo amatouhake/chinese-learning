@@ -1,5 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
+import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import {
@@ -77,7 +78,7 @@ describe("pronunciation foundation", () => {
 
   test("derives neutral tones and lexical tone pairs from the exact reading", async () => {
     await applyPronunciationFixture();
-    await createPronunciationSession(env.DB, {
+    await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "tone-session",
       deviceId: "tone-device",
       focus: "tones",
@@ -93,7 +94,7 @@ describe("pronunciation foundation", () => {
     });
     if (!neutralCard) throw new Error("missing neutral-tone card");
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         eventId: "false-objective-correctness",
         deviceId: "direct-card:吗:tone_identification",
         deviceSeq: 1,
@@ -301,7 +302,7 @@ describe("pronunciation foundation", () => {
       .bind(temporaryRetirement, target.id)
       .run();
     try {
-      await createPronunciationSession(env.DB, {
+      await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
         sessionId: "audio-safety-session",
         deviceId: "audio-safety-device",
         focus: "listening",
@@ -309,6 +310,7 @@ describe("pronunciation foundation", () => {
       });
       const next = await getNextPronunciationCard(
         env.DB,
+        FIXED_OWNER_LEARNER_ID,
         "audio-safety-session",
         "audio-safety-device",
       );
@@ -329,17 +331,22 @@ describe("pronunciation foundation", () => {
       `SELECT card_id, version, due_at, reps FROM card_state ORDER BY card_id LIMIT 1`,
     ).first<Record<string, unknown>>();
 
-    await createPronunciationSession(env.DB, {
+    await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "attempt-session",
       deviceId: "attempt-device",
       focus: "speaking",
       maxItems: 2,
     });
-    const production = await getNextPronunciationCard(env.DB, "attempt-session", "attempt-device");
+    const production = await getNextPronunciationCard(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      "attempt-session",
+      "attempt-device",
+    );
     expect(production.card?.activityType).toBe("pronunciation_production");
     if (!production.card) throw new Error("missing production card");
 
-    const saved = await ingestAttempt(env.DB, {
+    const saved = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
       eventId: "production-event",
       deviceId: "attempt-device",
       deviceSeq: 1,
@@ -368,7 +375,7 @@ describe("pronunciation foundation", () => {
     ).toEqual(vocabularyStateBefore);
 
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         eventId: "invalid-production-event",
         deviceId: "attempt-device",
         deviceSeq: 2,
@@ -383,7 +390,7 @@ describe("pronunciation foundation", () => {
     ).rejects.toThrow("keeps self-rating separate");
 
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         eventId: "invalid-production-mode",
         deviceId: "attempt-device",
         deviceSeq: 2,
@@ -398,7 +405,7 @@ describe("pronunciation foundation", () => {
 
   test("persists an uncached-audio skip as an immutable non-FSRS event", async () => {
     await applyPronunciationFixture();
-    await createPronunciationSession(env.DB, {
+    await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "audio-skip-session",
       deviceId: "audio-skip-device",
       focus: "listening",
@@ -406,6 +413,7 @@ describe("pronunciation foundation", () => {
     });
     const selected = await getNextPronunciationCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "audio-skip-session",
       "audio-skip-device",
     );
@@ -429,12 +437,14 @@ describe("pronunciation foundation", () => {
       },
     };
 
-    expect(await ingestAttempt(env.DB, skipped)).toMatchObject({
+    expect(await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, skipped)).toMatchObject({
       disposition: "inserted",
       reviewCreated: false,
       cardState: null,
     });
-    expect(await ingestAttempt(env.DB, skipped)).toMatchObject({ disposition: "duplicate" });
+    expect(await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, skipped)).toMatchObject({
+      disposition: "duplicate",
+    });
     const persisted = await env.DB.prepare(
       `SELECT correct, score, self_rating, metadata_json
          FROM attempts WHERE event_id = ?`,
@@ -464,6 +474,7 @@ describe("pronunciation foundation", () => {
 
     const completed = await getNextPronunciationCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "audio-skip-session",
       "audio-skip-device",
     );
@@ -474,7 +485,7 @@ describe("pronunciation foundation", () => {
     });
 
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         ...skipped,
         eventId: "invalid-audio-skip-reading",
         deviceSeq: 2,
@@ -482,7 +493,7 @@ describe("pronunciation foundation", () => {
       }),
     ).rejects.toThrow("preserve the exact reading identity");
     await expect(
-      ingestAttempt(env.DB, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         ...skipped,
         eventId: "invalid-audio-skip-grade",
         deviceSeq: 2,
@@ -493,7 +504,7 @@ describe("pronunciation foundation", () => {
 
   test("accepts an immutable offline tone fact after its exact reading is retired", async () => {
     await applyPronunciationFixture();
-    await createPronunciationSession(env.DB, {
+    await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "retired-offline-session",
       deviceId: "retired-offline-device",
       focus: "tones",
@@ -501,6 +512,7 @@ describe("pronunciation foundation", () => {
     });
     const cached = await getNextPronunciationCard(
       env.DB,
+      FIXED_OWNER_LEARNER_ID,
       "retired-offline-session",
       "retired-offline-device",
     );
@@ -515,7 +527,7 @@ describe("pronunciation foundation", () => {
       ).bind(cached.card.readingId),
     ]);
 
-    const saved = await ingestAttempt(env.DB, {
+    const saved = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
       eventId: "retired-offline-event",
       deviceId: "retired-offline-device",
       deviceSeq: 1,
@@ -606,14 +618,19 @@ describe("pronunciation foundation", () => {
       card: null,
     });
 
-    const nextSession = await createPronunciationSession(env.DB, {
+    const nextSession = await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "next-session",
       deviceId: "reload-device",
       focus: "pinyin",
       maxItems: 1,
     });
     expect(nextSession.disposition).toBe("created");
-    const rotated = await getNextPronunciationCard(env.DB, "next-session", "reload-device");
+    const rotated = await getNextPronunciationCard(
+      env.DB,
+      FIXED_OWNER_LEARNER_ID,
+      "next-session",
+      "reload-device",
+    );
     expect(rotated.card?.cardId).not.toBe(first.card.cardId);
   });
 });
@@ -665,7 +682,7 @@ async function importIdentitySummary(): Promise<Record<string, unknown> | null> 
       (SELECT COUNT(*) FROM server_changes WHERE entity_type = 'content') AS content_changes,
       (SELECT COUNT(*) FROM media_assets) AS media_assets,
       (SELECT COUNT(*) FROM cards WHERE subject_type = 'lexeme_reading') AS pronunciation_cards,
-      (SELECT current_content_revision FROM learner_settings WHERE singleton = 1)
+      (SELECT current_content_revision FROM content_state WHERE singleton = 1)
         AS current_content_revision`,
   ).first<Record<string, unknown>>();
 }
@@ -699,13 +716,13 @@ async function cardFor(
   )
     .bind(row.id)
     .run();
-  await createPronunciationSession(env.DB, {
+  await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
     sessionId,
     deviceId: sessionId,
     focus: activityType.startsWith("tone_") ? "tones" : "mixed",
     maxItems: 1,
   });
-  const card = await getNextPronunciationCard(env.DB, sessionId, sessionId);
+  const card = await getNextPronunciationCard(env.DB, FIXED_OWNER_LEARNER_ID, sessionId, sessionId);
   await env.DB.prepare(
     `UPDATE cards SET retired_at = NULL
      WHERE subject_type = 'lexeme_reading' AND retired_at = 0`,

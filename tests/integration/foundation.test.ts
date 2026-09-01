@@ -1,7 +1,9 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
+import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
+import { registerLearnerDevice } from "../../src/db/learners";
 import {
   DEFAULT_SCHEDULER_CONFIG_ID,
   FSRS_ALGORITHM,
@@ -92,7 +94,9 @@ describe("D1 learning foundation", () => {
       correct: true,
       fsrsReview: { rating: 3, schedulerConfigId: DEFAULT_SCHEDULER_CONFIG_ID },
     };
-    const result = await ingestAttempt(env.DB, attempt, { now: () => timestamp("10:01") });
+    const result = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, attempt, {
+      now: () => timestamp("10:01"),
+    });
     expect(result).toMatchObject({ disposition: "inserted", reviewCreated: true });
     expect(await count("attempts", "event_id", attempt.eventId)).toBe(1);
     expect(await count("fsrs_reviews", "attempt_id", attempt.eventId)).toBe(1);
@@ -153,7 +157,7 @@ describe("D1 learning foundation", () => {
     await applyImport(partial);
     expect(await scalar("SELECT MAX(seq) FROM server_changes")).toBe(fullCursor);
     expect(
-      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+      await scalar("SELECT current_content_revision FROM content_state WHERE singleton = 1"),
     ).toBe(fullRevision);
     expect(
       await scalar(
@@ -187,7 +191,7 @@ describe("D1 learning foundation", () => {
          ls.updated_at AS settings_updated_at,
          ls.current_content_revision
        FROM lexemes l
-       JOIN learner_settings ls ON ls.singleton = 1
+       JOIN content_state ls ON ls.singleton = 1
        JOIN content_revisions cr ON cr.revision = ls.current_content_revision
        WHERE l.id = ?`,
     )
@@ -209,7 +213,7 @@ describe("D1 learning foundation", () => {
            ls.updated_at AS settings_updated_at,
            ls.current_content_revision
          FROM lexemes l
-         JOIN learner_settings ls ON ls.singleton = 1
+         JOIN content_state ls ON ls.singleton = 1
          JOIN content_revisions cr ON cr.revision = ls.current_content_revision
          WHERE l.id = ?`,
       )
@@ -277,7 +281,7 @@ describe("D1 learning foundation", () => {
       ),
     ).toBe(revisedRevision);
     expect(
-      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+      await scalar("SELECT current_content_revision FROM content_state WHERE singleton = 1"),
     ).toBe(revisedRevision);
   });
 
@@ -335,7 +339,7 @@ describe("D1 learning foundation", () => {
       },
     ]);
     expect(
-      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+      await scalar("SELECT current_content_revision FROM content_state WHERE singleton = 1"),
     ).toBe(revisedRevision);
     await expect(
       env.DB.prepare(
@@ -406,7 +410,7 @@ describe("D1 learning foundation", () => {
       ),
     ).toBe(1);
     expect(
-      await scalar("SELECT current_content_revision FROM learner_settings WHERE singleton = 1"),
+      await scalar("SELECT current_content_revision FROM content_state WHERE singleton = 1"),
     ).toBe(revisedRevision);
     expect(
       await scalar(
@@ -569,7 +573,9 @@ describe("D1 learning foundation", () => {
     const fixture = await seedScheduledCard("normal");
     const input = scheduledInput(fixture, "normal-event", "2026-08-29T10:00:00Z", 1);
 
-    const result = await ingestAttempt(env.DB, input, { now: () => timestamp("13:00") });
+    const result = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, input, {
+      now: () => timestamp("13:00"),
+    });
 
     expect(result.disposition).toBe("inserted");
     expect(result.reviewCreated).toBe(true);
@@ -607,8 +613,12 @@ describe("D1 learning foundation", () => {
     const fixture = await seedScheduledCard("duplicate");
     const input = scheduledInput(fixture, "duplicate-event", "2026-08-29T10:00:00Z", 1);
 
-    const first = await ingestAttempt(env.DB, input, { now: () => timestamp("13:00") });
-    const second = await ingestAttempt(env.DB, input, { now: () => timestamp("14:00") });
+    const first = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, input, {
+      now: () => timestamp("13:00"),
+    });
+    const second = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, input, {
+      now: () => timestamp("14:00"),
+    });
 
     expect(first.disposition).toBe("inserted");
     expect(second.disposition).toBe("duplicate");
@@ -627,7 +637,9 @@ describe("D1 learning foundation", () => {
       fsrsReview: undefined,
     };
 
-    const result = await ingestAttempt(env.DB, input, { now: () => timestamp("13:00") });
+    const result = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, input, {
+      now: () => timestamp("13:00"),
+    });
 
     expect(result.reviewCreated).toBe(false);
     expect(result.cardState).toBeNull();
@@ -643,9 +655,9 @@ describe("D1 learning foundation", () => {
     const a = scheduledInput(fixture, "late-A", "2026-08-29T10:00:00Z", 1);
     const c = scheduledInput(fixture, "late-C", "2026-08-29T11:00:00Z", 2, { rating: 4 });
     const b = scheduledInput(fixture, "late-B", "2026-08-29T12:00:00Z", 3, { rating: 2 });
-    await ingestAttempt(env.DB, a, { now: () => timestamp("10:01") });
-    await ingestAttempt(env.DB, b, { now: () => timestamp("12:01") });
-    await ingestAttempt(env.DB, c, { now: () => timestamp("13:00") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, a, { now: () => timestamp("10:01") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, b, { now: () => timestamp("12:01") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, c, { now: () => timestamp("13:00") });
 
     const baselineA = scheduledInput(baseline, "baseline-A", "2026-08-29T10:00:00Z", 1, {
       deviceId: "baseline-device",
@@ -658,9 +670,15 @@ describe("D1 learning foundation", () => {
       rating: 2,
       deviceId: "baseline-device",
     });
-    await ingestAttempt(env.DB, baselineA, { now: () => timestamp("10:01") });
-    await ingestAttempt(env.DB, baselineC, { now: () => timestamp("11:01") });
-    await ingestAttempt(env.DB, baselineB, { now: () => timestamp("12:01") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, baselineA, {
+      now: () => timestamp("10:01"),
+    });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, baselineC, {
+      now: () => timestamp("11:01"),
+    });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, baselineB, {
+      now: () => timestamp("12:01"),
+    });
 
     const order = await env.DB.prepare(
       `SELECT event_id FROM attempts
@@ -678,8 +696,10 @@ describe("D1 learning foundation", () => {
   test("projection metadata keeps the maximum scheduled and practice attempt timestamp", async () => {
     const fixture = await seedScheduledCard("projection-max");
     await env.DB.prepare(
-      "UPDATE projection_state SET dirty = 0, last_attempt_at = NULL WHERE singleton = 1",
-    ).run();
+      "UPDATE projection_state SET dirty = 0, last_attempt_at = NULL WHERE learner_id = ?",
+    )
+      .bind(FIXED_OWNER_LEARNER_ID)
+      .run();
 
     const scheduledNoon = scheduledInput(
       fixture,
@@ -695,15 +715,24 @@ describe("D1 learning foundation", () => {
       1,
       { deviceId: "projection-scheduled-device", rating: 2 },
     );
-    await ingestAttempt(env.DB, scheduledNoon, { now: () => timestamp("12:01") });
-    await ingestAttempt(env.DB, scheduledEleven, { now: () => timestamp("13:00") });
-    expect(await scalar("SELECT last_attempt_at FROM projection_state WHERE singleton = 1")).toBe(
-      timestamp("12:00"),
-    );
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, scheduledNoon, {
+      now: () => timestamp("12:01"),
+    });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, scheduledEleven, {
+      now: () => timestamp("13:00"),
+    });
+    expect(
+      await scalar(
+        "SELECT last_attempt_at FROM projection_state WHERE learner_id = ?",
+        FIXED_OWNER_LEARNER_ID,
+      ),
+    ).toBe(timestamp("12:00"));
 
     await env.DB.prepare(
-      "UPDATE projection_state SET dirty = 0, last_attempt_at = NULL WHERE singleton = 1",
-    ).run();
+      "UPDATE projection_state SET dirty = 0, last_attempt_at = NULL WHERE learner_id = ?",
+    )
+      .bind(FIXED_OWNER_LEARNER_ID)
+      .run();
     const practiceFourteen: AttemptInput = {
       ...scheduledInput(fixture, "projection-practice-fourteen", "2026-08-29T14:00:00Z", 2, {
         deviceId: "projection-practice-device",
@@ -718,12 +747,24 @@ describe("D1 learning foundation", () => {
       mode: "reflex",
       fsrsReview: undefined,
     };
-    await ingestAttempt(env.DB, practiceFourteen, { now: () => timestamp("14:01") });
-    await ingestAttempt(env.DB, practiceThirteen, { now: () => timestamp("15:00") });
-    expect(await scalar("SELECT last_attempt_at FROM projection_state WHERE singleton = 1")).toBe(
-      timestamp("14:00"),
-    );
-    expect(await scalar("SELECT dirty FROM projection_state WHERE singleton = 1")).toBe(1);
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, practiceFourteen, {
+      now: () => timestamp("14:01"),
+    });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, practiceThirteen, {
+      now: () => timestamp("15:00"),
+    });
+    expect(
+      await scalar(
+        "SELECT last_attempt_at FROM projection_state WHERE learner_id = ?",
+        FIXED_OWNER_LEARNER_ID,
+      ),
+    ).toBe(timestamp("14:00"));
+    expect(
+      await scalar(
+        "SELECT dirty FROM projection_state WHERE learner_id = ?",
+        FIXED_OWNER_LEARNER_ID,
+      ),
+    ).toBe(1);
   });
 
   test("Unicode review tie-breaks match D1 BINARY order", async () => {
@@ -738,8 +779,10 @@ describe("D1 learning foundation", () => {
       rating: 4,
     });
 
-    await ingestAttempt(env.DB, astral, { now: () => timestamp("10:01") });
-    await ingestAttempt(env.DB, privateUseBmp, { now: () => timestamp("10:02") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, astral, { now: () => timestamp("10:01") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, privateUseBmp, {
+      now: () => timestamp("10:02"),
+    });
 
     const sqlOrder = await env.DB.prepare(
       `SELECT event_id FROM attempts
@@ -773,8 +816,12 @@ describe("D1 learning foundation", () => {
       rating: 1,
     });
 
-    await ingestAttempt(env.DB, prefixedDevice, { now: () => timestamp("10:01") });
-    await ingestAttempt(env.DB, prefixDevice, { now: () => timestamp("10:02") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, prefixedDevice, {
+      now: () => timestamp("10:01"),
+    });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, prefixDevice, {
+      now: () => timestamp("10:02"),
+    });
 
     const byTuple = await env.DB.prepare(
       `SELECT event_id FROM attempts
@@ -815,7 +862,7 @@ describe("D1 learning foundation", () => {
     const configY = schedulerConfig("config-preservation-y", 0.97, 1.8);
     await makeCurrentConfig(configY);
 
-    await ingestAttempt(env.DB, offline, { now: () => timestamp("15:00") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, offline, { now: () => timestamp("15:00") });
 
     const review = await env.DB.prepare(
       "SELECT scheduler_config_id FROM fsrs_reviews WHERE attempt_id = ?",
@@ -899,11 +946,13 @@ describe("D1 learning foundation", () => {
   test("study session device ownership is enforced and preserved", async () => {
     const fixture = await seedScheduledCard("session-device");
     const sessionId = "session-device-session";
+    await registerLearnerDevice(env.DB, FIXED_OWNER_LEARNER_ID, "session-device-a");
+    await registerLearnerDevice(env.DB, FIXED_OWNER_LEARNER_ID, "session-device-b");
     await env.DB.prepare(
-      `INSERT INTO study_sessions (id, device_id, mode, started_at)
-       VALUES (?, 'session-device-a', 'reflex', ?)`,
+      `INSERT INTO study_sessions (id, learner_id, device_id, mode, started_at)
+       VALUES (?, ?, 'session-device-a', 'reflex', ?)`,
     )
-      .bind(sessionId, timestamp("09:00"))
+      .bind(sessionId, FIXED_OWNER_LEARNER_ID, timestamp("09:00"))
       .run();
 
     const directEventId = "session-device-direct-mismatch";
@@ -912,17 +961,18 @@ describe("D1 learning foundation", () => {
       env.DB.batch([
         env.DB.prepare(
           `INSERT INTO server_changes
-            (change_id, entity_type, entity_id, operation, changed_at)
-           VALUES (?, 'attempt', ?, 'upsert', ?)`,
-        ).bind(directChangeId, directEventId, timestamp("10:01")),
+            (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+           VALUES (?, ?, 'attempt', ?, 'upsert', ?)`,
+        ).bind(directChangeId, FIXED_OWNER_LEARNER_ID, directEventId, timestamp("10:01")),
         env.DB.prepare(
           `INSERT INTO attempts
-            (event_id, device_id, device_seq, occurred_at, received_at, card_id,
+            (event_id, learner_id, device_id, device_seq, occurred_at, received_at, card_id,
              study_session_id, mode, activity_type, server_seq)
-           VALUES (?, 'session-device-b', 1, ?, ?, ?, ?, 'reflex', 'hanzi_to_meaning',
+           VALUES (?, ?, 'session-device-b', 1, ?, ?, ?, ?, 'reflex', 'hanzi_to_meaning',
              (SELECT seq FROM server_changes WHERE change_id = ?))`,
         ).bind(
           directEventId,
+          FIXED_OWNER_LEARNER_ID,
           timestamp("10:00"),
           timestamp("10:01"),
           fixture.cardId,
@@ -963,7 +1013,7 @@ describe("D1 learning foundation", () => {
       env.DB.prepare("UPDATE study_sessions SET device_id = 'session-device-b' WHERE id = ?")
         .bind(sessionId)
         .run(),
-    ).rejects.toThrow("linked study session device is immutable");
+    ).rejects.toThrow("study session ownership is immutable");
     expect(
       await env.DB.prepare("SELECT device_id FROM study_sessions WHERE id = ?")
         .bind(sessionId)
@@ -975,11 +1025,12 @@ describe("D1 learning foundation", () => {
     const fixture = await seedScheduledCard("atomic");
     const input = scheduledInput(fixture, "atomic-failure", "2026-08-29T10:00:00Z", 1);
     const projectionDirtyBefore = await scalar(
-      "SELECT dirty FROM projection_state WHERE singleton = 1",
+      "SELECT dirty FROM projection_state WHERE learner_id = ?",
+      FIXED_OWNER_LEARNER_ID,
     );
 
     await expect(
-      ingestAttempt(env.DB, input, {
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, input, {
         now: () => timestamp("13:00"),
         forceFailureAfterWrites: true,
       }),
@@ -990,9 +1041,12 @@ describe("D1 learning foundation", () => {
     expect(await changeCountFor(input.eventId)).toBe(0);
     expect((await stateFor(fixture.cardId)).version).toBe(0);
     expect((await scalar("SELECT COUNT(*) FROM atomic_write_guards")) ?? -1).toBe(0);
-    expect(await scalar("SELECT dirty FROM projection_state WHERE singleton = 1")).toBe(
-      projectionDirtyBefore,
-    );
+    expect(
+      await scalar(
+        "SELECT dirty FROM projection_state WHERE learner_id = ?",
+        FIXED_OWNER_LEARNER_ID,
+      ),
+    ).toBe(projectionDirtyBefore);
   });
 
   test("version conflict rolls back, retries, and resolves both concurrent events by replay", async () => {
@@ -1006,12 +1060,14 @@ describe("D1 learning foundation", () => {
     });
     let hasInterleaved = false;
 
-    const result = await ingestAttempt(env.DB, outer, {
+    const result = await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, outer, {
       now: () => timestamp("13:00"),
       beforeScheduledWrite: async () => {
         if (hasInterleaved) return;
         hasInterleaved = true;
-        await ingestAttempt(env.DB, interleaved, { now: () => timestamp("12:00") });
+        await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, interleaved, {
+          now: () => timestamp("12:00"),
+        });
       },
     });
 
@@ -1043,7 +1099,7 @@ describe("D1 learning foundation", () => {
     await expect(readingInsert("constraints-reading-2").run()).rejects.toThrow();
 
     const input = scheduledInput(fixture, "constraint-event", "2026-08-29T10:00:00Z", 1);
-    await ingestAttempt(env.DB, input, { now: () => timestamp("13:00") });
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, input, { now: () => timestamp("13:00") });
     await expect(
       env.DB.prepare("UPDATE attempts SET correct = 0 WHERE event_id = ?")
         .bind(input.eventId)
@@ -1061,7 +1117,9 @@ describe("D1 learning foundation", () => {
       occurredAt: "2026-08-29T11:00:00Z",
     };
     await expect(
-      ingestAttempt(env.DB, reusedSequence, { now: () => timestamp("14:00") }),
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, reusedSequence, {
+        now: () => timestamp("14:00"),
+      }),
     ).rejects.toThrow("already belongs to another event");
     expect((await stateFor(fixture.cardId)).version).toBe(1);
   });
@@ -1220,11 +1278,6 @@ async function seedScheduledCard(
            content_revision, created_at)
          VALUES (?, 'lexeme', ?, 'hanzi_to_meaning', 1, ?, ?)`,
     ).bind(cardId, lexemeId, revision, createdAt),
-    env.DB.prepare(
-      `INSERT INTO card_state
-          (card_id, due_at, rebuilt_at)
-         VALUES (?, ?, ?)`,
-    ).bind(cardId, createdAt, createdAt),
   ]);
   return { cardId, lexemeId, revision, config };
 }
