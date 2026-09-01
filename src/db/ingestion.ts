@@ -870,7 +870,9 @@ async function validateReflexAttempt(
     throw new InvalidInputError("reflex attempt activity does not match its card");
   }
 
-  const metadata = parseReflexAttemptMetadata(input.metadata);
+  const metadata = parseReflexAttemptMetadata(input.metadata, {
+    legacyResponseMs: input.responseMs,
+  });
   if (
     metadata.timingInterrupted ? input.responseMs !== undefined : input.responseMs === undefined
   ) {

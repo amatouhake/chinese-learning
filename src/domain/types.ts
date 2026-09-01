@@ -202,6 +202,8 @@ export interface ReflexAnswerRecord {
   responseMs: number | null;
   timingInterrupted: boolean;
   round: number;
+  label?: string;
+  detail?: string | null;
 }
 
 export type LearnerPracticeId =
@@ -244,6 +246,10 @@ interface PracticeSessionSummaryBase {
   requestedItems: number;
   attentionItems: PracticeAttentionItem[];
   trend: PracticeSessionTrend | null;
+  evidenceCoverage?: {
+    status: "partial";
+    recordedItems: number;
+  };
 }
 
 export interface VocabularyReviewSessionSummary extends PracticeSessionSummaryBase {
@@ -531,6 +537,7 @@ export interface ProgressTroubleItem {
   cardId: string;
   mode: PracticeMode;
   activityType: ActivityType;
+  choiceCount?: QuizChoiceCount;
   label: string;
   detail: string | null;
   recentAttempts: number;
@@ -620,12 +627,17 @@ export interface ProgressSnapshot {
   };
   reflex: {
     recentResponses: number;
-    correctness: ProgressCorrectness;
-    latency: {
-      averageResponseMs: number | null;
-      slowResponses: number;
-      slowThresholdMs: number;
-    };
+    byChoiceCount: Array<{
+      choiceCount: QuizChoiceCount;
+      recentResponses: number;
+      correctness: ProgressCorrectness;
+      latency: {
+        averageResponseMs: number | null;
+        slowResponses: number | null;
+        slowThresholdMs: number | null;
+      };
+      lastPracticedAt: number | null;
+    }>;
     lastPracticedAt: number | null;
     troublesomeItems: ProgressTroubleItem[];
   };

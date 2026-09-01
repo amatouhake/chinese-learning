@@ -16,6 +16,7 @@ import type {
   SyncPullResponse,
 } from "../domain/types";
 import type { PronunciationFocus } from "../domain/pronunciation";
+import { parseReflexAttemptMetadata } from "../domain/reflex";
 import { parseAttemptInput } from "../domain/validation";
 import {
   STUDY_STORAGE_LOCK,
@@ -625,7 +626,12 @@ export class OfflineLearningStore {
     sessionId: string,
   ): Promise<{ session: ReflexSessionView; answers: ReflexAnswerRecord[] } | null> {
     return this.getCachedSession<CachedReflexSession>("reflex", sessionId).then((value) =>
-      value ? { session: value.session, answers: value.answers } : null,
+      value
+        ? {
+            session: value.session,
+            answers: (value.answers ?? []).map(normalizeReflexAnswer),
+          }
+        : null,
     );
   }
 
@@ -960,6 +966,7 @@ async function replaceReflexPack(
   cards: ReflexCard[],
 ): Promise<void> {
   const store = transaction.objectStore(PRONUNCIATION_CARD_STORE);
+  await enrichLegacyReflexAnswers(transaction, session.id);
   await deleteSessionCards(store, session.id);
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
@@ -1116,18 +1123,25 @@ async function advanceCachedSessionProgress(
     return;
   }
   if (cached.mode === "reflex") {
-    const round = attempt.metadata?.round;
-    const timingInterrupted = attempt.metadata?.timingInterrupted;
+    let metadata;
+    try {
+      metadata = parseReflexAttemptMetadata(attempt.metadata, {
+        legacyResponseMs: attempt.responseMs,
+      });
+    } catch {
+      transaction.abort();
+      throw new Error("cached reflex attempt is missing its objective result");
+    }
     if (
       attempt.correct === undefined ||
-      typeof timingInterrupted !== "boolean" ||
-      (timingInterrupted ? attempt.responseMs !== undefined : attempt.responseMs === undefined) ||
-      typeof round !== "number" ||
-      !Number.isSafeInteger(round)
+      (metadata.timingInterrupted
+        ? attempt.responseMs !== undefined
+        : attempt.responseMs === undefined)
     ) {
       transaction.abort();
       throw new Error("cached reflex attempt is missing its objective result");
     }
+    const display = reflexAnswerDisplay(attempt.activityType, metadata);
     store.put({
       ...cached,
       session: {
@@ -1135,14 +1149,15 @@ async function advanceCachedSessionProgress(
         completedItems: Math.min(cached.session.maxItems, cached.session.completedItems + 1),
       },
       answers: [
-        ...cached.answers,
+        ...(cached.answers ?? []).map(normalizeReflexAnswer),
         {
           eventId: attempt.eventId,
           cardId: attempt.cardId,
           correct: attempt.correct,
           responseMs: attempt.responseMs ?? null,
-          timingInterrupted,
-          round,
+          timingInterrupted: metadata.timingInterrupted,
+          round: metadata.round,
+          ...display,
         },
       ],
     } satisfies CachedReflexSession);
@@ -1156,6 +1171,55 @@ async function advanceCachedSessionProgress(
     },
     attempts: [...(cached.attempts ?? []), attempt],
   });
+}
+
+async function enrichLegacyReflexAnswers(
+  transaction: IDBTransaction,
+  sessionId: string,
+): Promise<void> {
+  const sessionStore = transaction.objectStore(SESSION_STORE);
+  const key = sessionKey("reflex", sessionId);
+  const cached = (await request(sessionStore.get(key))) as CachedReflexSession | undefined;
+  if (!cached || cached.answers.every(({ label }) => label !== undefined)) return;
+  const cards = (await request(
+    transaction.objectStore(PRONUNCIATION_CARD_STORE).index("sessionId").getAll(sessionId),
+  )) as CachedReflexCard[];
+  const cardsById = new Map(cards.map(({ card }) => [card.cardId, card]));
+  sessionStore.put({
+    ...cached,
+    answers: cached.answers.map((answer) => {
+      const normalized = normalizeReflexAnswer(answer);
+      if (normalized.label !== undefined) return normalized;
+      const card = cardsById.get(answer.cardId);
+      return card ? { ...normalized, ...reflexCardDisplay(card) } : normalized;
+    }),
+  } satisfies CachedReflexSession);
+}
+
+function normalizeReflexAnswer(answer: ReflexAnswerRecord): ReflexAnswerRecord {
+  return {
+    ...answer,
+    timingInterrupted: answer.timingInterrupted ?? false,
+  };
+}
+
+function reflexAnswerDisplay(
+  activityType: AttemptInput["activityType"],
+  metadata: ReturnType<typeof parseReflexAttemptMetadata>,
+): { label: string; detail: string | null } {
+  const answer = metadata.options.find(({ id }) => id === metadata.answerChoiceId)?.label;
+  if (activityType === "meaning_to_hanzi" || activityType === "pinyin_to_hanzi") {
+    return { label: answer ?? metadata.prompt, detail: metadata.promptHint ?? metadata.prompt };
+  }
+  return { label: metadata.prompt, detail: metadata.promptHint ?? answer ?? null };
+}
+
+function reflexCardDisplay(card: ReflexCard): { label: string; detail: string | null } {
+  const answer = card.choices.find(({ id }) => id === card.answerChoiceId)?.label;
+  if (card.activityType === "meaning_to_hanzi" || card.activityType === "pinyin_to_hanzi") {
+    return { label: answer ?? card.prompt, detail: card.promptHint ?? card.prompt };
+  }
+  return { label: card.prompt, detail: card.promptHint ?? answer ?? null };
 }
 
 function deleteSessionCards(store: IDBObjectStore, sessionId: string): Promise<void> {

@@ -47,8 +47,18 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.locator(".reflex-card")).toBeVisible();
     await answerReflex(page, 7, true);
     const queued = await readOutbox(page);
-    const queuedReflex = queued.filter(({ mode }) => mode === "reflex");
+    const initiallyQueuedReflex = queued.filter(({ mode }) => mode === "reflex");
+    expect(initiallyQueuedReflex).toHaveLength(3);
+    await downgradeQueuedReflexAttempt(
+      page,
+      initiallyQueuedReflex[0]!.eventId,
+      sessionId as string,
+    );
+    const queuedReflex = (await readOutbox(page)).filter(({ mode }) => mode === "reflex");
     expect(queuedReflex).toHaveLength(3);
+    expect(queuedReflex[0]?.metadata).not.toHaveProperty("timingInterrupted");
+    expect(queuedReflex[0]?.metadata).not.toHaveProperty("choiceCount");
+    expect(queuedReflex[0]?.responseMs).toBeGreaterThanOrEqual(0);
     expect(queuedReflex.every(({ fsrsReview }) => fsrsReview === undefined)).toBe(true);
 
     await context.setOffline(false);
@@ -70,6 +80,12 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
       timeout: 20_000,
     });
+    await expect.poll(() => cachedReflexCardCount(page, sessionId as string)).toBe(0);
+    const completedAttentionLabels = await page
+      .locator(".result-attention strong")
+      .allTextContents();
+    expect(completedAttentionLabels.length).toBeGreaterThan(0);
+    expect(completedAttentionLabels.every((label) => !label.startsWith("card:"))).toBe(true);
     expect((await readMeta(page)).activeReflexSessionId).toBeNull();
     expect((await readMeta(page)).presentedResult).toEqual({ mode: "reflex", sessionId });
 
@@ -88,6 +104,14 @@ test.describe("Reflex automaticity dogfood", () => {
     expect(await readCardStates(page)).toEqual(stateBeforeReflex);
 
     await page.reload();
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible();
+    await page.getByRole("link", { name: "記録で詳しく見る" }).click();
+    await expect(page.getByRole("heading", { name: "最近の練習" })).toBeVisible();
+    await page.locator(".session-history-list button").first().click();
+    await expect(page.locator(".result-attention strong").first()).toHaveText(
+      completedAttentionLabels[0]!,
+    );
+    await page.goto("/#reflex");
     await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible();
     await page.getByRole("button", { name: "同じ設定でもう一度" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
@@ -445,6 +469,61 @@ function readReflexSession(
   return readStoreValue(page, "sessions", `reflex\u001f${sessionId}`) as Promise<{
     answers: ReflexAnswerRecord[];
   } | null>;
+}
+
+function cachedReflexCardCount(page: Page, sessionId: string): Promise<number> {
+  return readAll(page, "pronunciationCards").then(
+    (cards) => cards.filter((card) => card.sessionId === sessionId).length,
+  );
+}
+
+function downgradeQueuedReflexAttempt(
+  page: Page,
+  eventId: string,
+  sessionId: string,
+): Promise<void> {
+  return page.evaluate(
+    async ({ dbName, eventId, sessionKey }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName, 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const transaction = db.transaction(["outbox", "sessions"], "readwrite");
+      const outbox = transaction.objectStore("outbox");
+      const sessions = transaction.objectStore("sessions");
+      const attempt = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const get = outbox.get(eventId);
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      });
+      const metadata = { ...(attempt.metadata as Record<string, unknown>) };
+      delete metadata.choiceCount;
+      delete metadata.timingInterrupted;
+      outbox.put({ ...attempt, metadata });
+
+      const session = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const get = sessions.get(sessionKey);
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      });
+      const answers = (session.answers as Array<Record<string, unknown>>).map((answer) => {
+        if (answer.eventId !== eventId) return answer;
+        const legacy = { ...answer };
+        delete legacy.timingInterrupted;
+        delete legacy.label;
+        delete legacy.detail;
+        return legacy;
+      });
+      sessions.put({ ...session, answers });
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    },
+    { dbName: DB_NAME, eventId, sessionKey: `reflex\u001f${sessionId}` },
+  );
 }
 
 function readStoreValue(page: Page, storeName: string, key: string): Promise<unknown> {

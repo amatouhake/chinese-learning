@@ -126,7 +126,9 @@ test.describe("local progress dashboard dogfood", () => {
     });
     await page.setViewportSize({ width: 320, height: 844 });
     await page.goto("/#progress");
-    await expect(page.locator(".session-history-list button")).toHaveCount(3);
+    await expect(page.locator(".session-history-list button")).toHaveCount(5);
+    await expect(page.getByText("漢字 → 意味 · 10/12 · 9択", { exact: true })).toBeVisible();
+    await expect(page.getByText("混合 · 10枚", { exact: true })).toBeVisible();
     await page.locator(".session-history-list button").first().click();
     await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible();
     await expect(page.getByLabel("最近の同じ設定")).toBeVisible();
@@ -138,6 +140,20 @@ test.describe("local progress dashboard dogfood", () => {
         }),
       )
       .toEqual({ overflowY: "visible", maxHeight: "none" });
+    await page.getByRole("button", { name: "最近の記録へ戻る" }).click();
+    await page.locator(".session-history-list button").filter({ hasText: "発音" }).click();
+    await expect(page.getByText("フォーカス: 声調", { exact: true })).toBeVisible();
+    await expect(page.getByText("7 / 9", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("自己評価の内訳")).toContainText("明瞭");
+    await expect(page.getByText(/内訳はこの端末に残る 12 \/ 15件分/)).toBeVisible();
+    await page.getByRole("button", { name: "最近の記録へ戻る" }).click();
+    await page.getByRole("button", { name: /読解 5文$/ }).click();
+    await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
+    await expect(page.getByLabel("理解度の内訳")).toContainText("理解した");
+    await page.getByRole("button", { name: "最近の記録へ戻る" }).click();
+    await page.getByRole("button", { name: /読解・文法 8問$/ }).click();
+    await expect(page.getByText("5 / 8", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("理解度の内訳")).toContainText("手がかり");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
@@ -173,7 +189,7 @@ const historyFixture = {
         averageResponseMs: 1_600,
         timedResponses: 11,
         timingInterrupted: 1,
-        slowResponses: 1,
+        slowResponses: 0,
       },
       attentionItems: [
         { cardId: "card:fixture", label: "觉得", detail: "juéde", reasons: ["誤答"] },
@@ -218,6 +234,46 @@ const historyFixture = {
       evidence: {
         comprehension: { responses: 5, distribution: { 1: 0, 2: 1, 3: 3, 4: 1 } },
         grammarTopics: [],
+      },
+      attentionItems: [],
+      trend: null,
+    },
+    {
+      summaryVersion: 1,
+      sessionId: "pronunciation-history",
+      learnerId: "learner:fixture",
+      mode: "pronunciation",
+      practice: "pronunciation",
+      startedAt: Date.parse("2026-08-30T22:00:00Z"),
+      endedAt: Date.parse("2026-08-30T22:06:00Z"),
+      completedItems: 15,
+      requestedItems: 15,
+      evidenceCoverage: { status: "partial", recordedItems: 12 },
+      configuration: { focus: "tones", requestedItems: 15 },
+      evidence: {
+        activities: { tone_identification: 9, pronunciation_production: 3 },
+        correctness: { responses: 9, correct: 7, rate: 7 / 9 },
+        selfRatings: { responses: 3, distribution: { 1: 0, 2: 1, 3: 1, 4: 1 } },
+        skipped: 0,
+      },
+      attentionItems: [],
+      trend: null,
+    },
+    {
+      summaryVersion: 1,
+      sessionId: "grammar-history",
+      learnerId: "learner:fixture",
+      mode: "grammar",
+      practice: "grammar",
+      startedAt: Date.parse("2026-08-30T21:00:00Z"),
+      endedAt: Date.parse("2026-08-30T21:06:00Z"),
+      completedItems: 8,
+      requestedItems: 8,
+      configuration: { requestedItems: 8, focusTopicId: "grammar:把" },
+      evidence: {
+        correctness: { responses: 8, correct: 5, rate: 5 / 8 },
+        confidence: { responses: 8, distribution: { 1: 1, 2: 2, 3: 3, 4: 2 } },
+        grammarTopics: [{ id: "grammar:把", title: "把構文" }],
       },
       attentionItems: [],
       trend: null,
@@ -328,8 +384,22 @@ const snapshot: ProgressSnapshot = {
   },
   reflex: {
     recentResponses: 24,
-    correctness: { responses: 24, correct: 12, rate: 0.5 },
-    latency: { averageResponseMs: 2_180, slowResponses: 5, slowThresholdMs: 2_500 },
+    byChoiceCount: [
+      {
+        choiceCount: 4,
+        recentResponses: 14,
+        correctness: { responses: 14, correct: 8, rate: 0.571 },
+        latency: { averageResponseMs: 1_780, slowResponses: 2, slowThresholdMs: 2_500 },
+        lastPracticedAt: Date.parse("2026-08-31T11:28:30Z"),
+      },
+      {
+        choiceCount: 9,
+        recentResponses: 10,
+        correctness: { responses: 10, correct: 4, rate: 0.4 },
+        latency: { averageResponseMs: 2_740, slowResponses: null, slowThresholdMs: null },
+        lastPracticedAt: Date.parse("2026-08-30T11:28:30Z"),
+      },
+    ],
     lastPracticedAt: Date.parse("2026-08-31T11:28:30Z"),
     troublesomeItems: [],
   },

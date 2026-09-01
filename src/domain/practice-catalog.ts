@@ -48,7 +48,12 @@ export const PRACTICE_CATALOG = {
     doesNotMeasure: ["自由再生", "長期保持", "9択であっても真の自由想起"],
     affectsFsrs: false,
     configuration: ["出題方向または混合", "4択/9択", "問題数", "選定方針"],
-    resultMetrics: ["正解数", "有効な平均反応時間", "誤答/遅い単語", "同条件の最近の推移"],
+    resultMetrics: [
+      "正解数",
+      "有効な平均反応時間",
+      "誤答（4択では校正済み基準の遅い単語も）",
+      "同条件の最近の推移",
+    ],
     useWhen: "復習で触れた単語の認識や取り出しを滑らかにしたいとき。",
     setupDescription: "覚えた単語を選択肢から見分け、取り出す速さを整えます。",
   },

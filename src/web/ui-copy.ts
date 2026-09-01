@@ -1,4 +1,5 @@
 import type { ActivityType, PracticeMode, StudyDirection } from "../domain/types";
+import type { PronunciationFocus } from "../domain/pronunciation";
 
 export type Surface = "progress" | "study" | "reflex" | "pronunciation" | "reading";
 
@@ -21,6 +22,14 @@ export const STUDY_DIRECTION_LABELS: Record<StudyDirection, string> = {
   mixed: "混合",
   hanzi_to_meaning: "漢字 → 日本語",
   meaning_to_hanzi: "日本語 → 漢字",
+};
+
+export const PRONUNCIATION_FOCUS_LABELS: Record<PronunciationFocus, string> = {
+  mixed: "おまかせ",
+  pinyin: "ピンイン",
+  tones: "声調",
+  listening: "聞き取り",
+  speaking: "発話",
 };
 
 export function activityTypeLabel(activity: ActivityType): string {
@@ -52,6 +61,10 @@ export function activityTypeLabel(activity: ActivityType): string {
 
 export function studyDirectionLabel(direction: StudyDirection): string {
   return STUDY_DIRECTION_LABELS[direction];
+}
+
+export function pronunciationFocusLabel(focus: PronunciationFocus): string {
+  return PRONUNCIATION_FOCUS_LABELS[focus];
 }
 
 export function surfaceLabel(surface: Surface): string {

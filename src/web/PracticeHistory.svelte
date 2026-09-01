@@ -7,7 +7,12 @@
   import { postJson } from "./api";
   import { cachePracticeHistory, readPracticeHistoryCache } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
-  import { learnerError } from "./ui-copy";
+  import {
+    activityTypeLabel,
+    learnerError,
+    pronunciationFocusLabel,
+    studyDirectionLabel,
+  } from "./ui-copy";
 
   let history: PracticeSessionHistory = readPracticeHistoryCache();
   let selected: PracticeSessionSummary | null = null;
@@ -37,9 +42,18 @@
   }
 
   function sessionLine(summary: PracticeSessionSummary): string {
-    if (summary.practice === "vocabulary_review") return `${summary.completedItems}枚`;
+    if (summary.practice === "vocabulary_review") {
+      return `${studyDirectionLabel(summary.configuration.direction)} · ${summary.completedItems}枚`;
+    }
     if (summary.practice === "vocabulary_quiz") {
-      return `${summary.evidence.correctness.correct}/${summary.evidence.correctness.responses} · ${summary.configuration.choiceCount}択`;
+      const activity =
+        summary.configuration.activityType === "mixed"
+          ? "混合"
+          : activityTypeLabel(summary.configuration.activityType);
+      return `${activity} · ${summary.evidence.correctness.correct}/${summary.evidence.correctness.responses} · ${summary.configuration.choiceCount}択`;
+    }
+    if (summary.practice === "pronunciation") {
+      return `${pronunciationFocusLabel(summary.configuration.focus)} · ${summary.completedItems}問`;
     }
     if (summary.practice === "reading") return `${summary.completedItems}文`;
     return `${summary.completedItems}問`;

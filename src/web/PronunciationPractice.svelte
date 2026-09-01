@@ -22,7 +22,7 @@
     prepareSound,
   } from "./sound";
   import { synchronizeLearning } from "./sync";
-  import { learnerError } from "./ui-copy";
+  import { learnerError, pronunciationFocusLabel } from "./ui-copy";
   import { localPronunciationSummary } from "./local-session-summary";
   import { cachePracticeSummary } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
@@ -30,11 +30,23 @@
   type Phase =
     "loading" | "choose" | "prompt" | "revealed" | "advancing" | "empty" | "completed" | "error";
   const focuses: Array<{ id: PronunciationFocus; label: string; hint: string }> = [
-    { id: "mixed", label: "おまかせ", hint: "ピンイン・声調・聞き取り・発話" },
-    { id: "pinyin", label: "ピンイン", hint: "正確な読みを見分ける" },
-    { id: "tones", label: "声調", hint: "単音節と二音節の声調" },
-    { id: "listening", label: "聞き取り", hint: "音声から漢字や意味を選ぶ" },
-    { id: "speaking", label: "発話", hint: "声に出して比べ、自己評価する" },
+    {
+      id: "mixed",
+      label: pronunciationFocusLabel("mixed"),
+      hint: "ピンイン・声調・聞き取り・発話",
+    },
+    { id: "pinyin", label: pronunciationFocusLabel("pinyin"), hint: "正確な読みを見分ける" },
+    { id: "tones", label: pronunciationFocusLabel("tones"), hint: "単音節と二音節の声調" },
+    {
+      id: "listening",
+      label: pronunciationFocusLabel("listening"),
+      hint: "音声から漢字や意味を選ぶ",
+    },
+    {
+      id: "speaking",
+      label: pronunciationFocusLabel("speaking"),
+      hint: "声に出して比べ、自己評価する",
+    },
   ];
   const selfRatings = [
     { value: 1, label: "もう一度", hint: "声調・音節を外した" },

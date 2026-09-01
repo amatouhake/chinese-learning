@@ -1,7 +1,7 @@
 <script lang="ts">
   import { PRACTICE_CATALOG } from "../domain/practice-catalog";
   import type { PracticeSessionSummary } from "../domain/types";
-  import { activityTypeLabel, studyDirectionLabel } from "./ui-copy";
+  import { activityTypeLabel, pronunciationFocusLabel, studyDirectionLabel } from "./ui-copy";
 
   let { summary }: { summary: PracticeSessionSummary } = $props();
 
@@ -19,12 +19,18 @@
       ? "混合"
       : activityTypeLabel(summary.configuration.activityType);
   }
+
+  function completionUnit(): string {
+    if (summary.practice === "vocabulary_review") return "枚";
+    if (summary.practice === "reading") return "文";
+    return "問";
+  }
 </script>
 
 <article class="practice-result" data-practice={summary.practice}>
   <header class="result-heading">
     <div>
-      <h2>{summary.completedItems}{summary.practice === "vocabulary_review" ? "枚" : "問"}完了</h2>
+      <h2>{summary.completedItems}{completionUnit()}完了</h2>
       <p>{PRACTICE_CATALOG[summary.practice].learnerName}</p>
     </div>
     <time datetime={new Date(summary.endedAt).toISOString()}>
@@ -36,6 +42,12 @@
       }).format(summary.endedAt)}
     </time>
   </header>
+
+  {#if summary.evidenceCoverage?.status === "partial"}
+    <p class="result-note" role="status">
+      完了数は保存されています。内訳はこの端末に残る {summary.evidenceCoverage.recordedItems} / {summary.completedItems}件分で、同期後に全体へ更新されます。
+    </p>
+  {/if}
 
   {#if summary.practice === "vocabulary_review"}
     <dl class="result-metrics rating-metrics">
@@ -90,49 +102,93 @@
       </div>
       {#if summary.evidence.correctness}
         <div>
-          <dt>客観問題</dt>
+          <dt>正解</dt>
           <dd>{summary.evidence.correctness.correct} / {summary.evidence.correctness.responses}</dd>
         </div>
       {/if}
-      {#if summary.evidence.selfRatings}
-        <div>
-          <dt>自己評価</dt>
-          <dd>{summary.evidence.selfRatings.responses}問</dd>
-        </div>
-      {/if}
     </dl>
-    <p class="result-configuration">フォーカス: {summary.configuration.focus}</p>
+    {#if summary.evidence.selfRatings}
+      <section class="result-evidence" aria-label="自己評価の内訳">
+        <h3>自己評価</h3>
+        <dl class="result-metrics rating-metrics">
+          <div>
+            <dt>もう一度</dt>
+            <dd>{summary.evidence.selfRatings.distribution[1]}</dd>
+          </div>
+          <div>
+            <dt>だいたい</dt>
+            <dd>{summary.evidence.selfRatings.distribution[2]}</dd>
+          </div>
+          <div>
+            <dt>できた</dt>
+            <dd>{summary.evidence.selfRatings.distribution[3]}</dd>
+          </div>
+          <div>
+            <dt>明瞭</dt>
+            <dd>{summary.evidence.selfRatings.distribution[4]}</dd>
+          </div>
+        </dl>
+      </section>
+    {/if}
+    <p class="result-configuration">
+      フォーカス: {pronunciationFocusLabel(summary.configuration.focus)}
+    </p>
   {:else if summary.practice === "reading"}
-    <dl class="result-metrics">
-      <div>
-        <dt>例文</dt>
-        <dd>{summary.completedItems}文</dd>
-      </div>
-      <div>
-        <dt>理解度記録</dt>
-        <dd>{summary.evidence.comprehension.responses}件</dd>
-      </div>
-      <div>
-        <dt>文法</dt>
-        <dd>{summary.evidence.grammarTopics.length}項目</dd>
-      </div>
-    </dl>
+    <section class="result-evidence" aria-label="理解度の内訳">
+      <h3>理解度</h3>
+      <dl class="result-metrics rating-metrics">
+        <div>
+          <dt>読み直す</dt>
+          <dd>{summary.evidence.comprehension.distribution[1]}</dd>
+        </div>
+        <div>
+          <dt>手がかり</dt>
+          <dd>{summary.evidence.comprehension.distribution[2]}</dd>
+        </div>
+        <div>
+          <dt>だいたい</dt>
+          <dd>{summary.evidence.comprehension.distribution[3]}</dd>
+        </div>
+        <div>
+          <dt>理解した</dt>
+          <dd>{summary.evidence.comprehension.distribution[4]}</dd>
+        </div>
+      </dl>
+    </section>
+    {#if summary.evidence.grammarTopics.length > 0}
+      <p class="result-configuration">
+        文法: {summary.evidence.grammarTopics.map(({ title }) => title).join(" · ")}
+      </p>
+    {/if}
     <p class="result-note">段階読みには客観正答がないため、正答率は表示しません。</p>
   {:else}
     <dl class="result-metrics">
       <div>
-        <dt>完了</dt>
-        <dd>{summary.completedItems}項目</dd>
-      </div>
-      <div>
         <dt>正解</dt>
         <dd>{summary.evidence.correctness.correct} / {summary.evidence.correctness.responses}</dd>
       </div>
-      <div>
-        <dt>理解度記録</dt>
-        <dd>{summary.evidence.confidence.responses}件</dd>
-      </div>
     </dl>
+    <section class="result-evidence" aria-label="理解度の内訳">
+      <h3>理解度</h3>
+      <dl class="result-metrics rating-metrics">
+        <div>
+          <dt>忘れた</dt>
+          <dd>{summary.evidence.confidence.distribution[1]}</dd>
+        </div>
+        <div>
+          <dt>手がかり</dt>
+          <dd>{summary.evidence.confidence.distribution[2]}</dd>
+        </div>
+        <div>
+          <dt>だいたい</dt>
+          <dd>{summary.evidence.confidence.distribution[3]}</dd>
+        </div>
+        <div>
+          <dt>理解した</dt>
+          <dd>{summary.evidence.confidence.distribution[4]}</dd>
+        </div>
+      </dl>
+    </section>
     {#if summary.evidence.grammarTopics.length > 0}
       <p class="result-configuration">
         {summary.evidence.grammarTopics.map(({ title }) => title).join(" · ")}

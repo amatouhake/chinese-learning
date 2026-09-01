@@ -1272,12 +1272,14 @@ kbd {
   color: var(--paper-muted-ink);
 }
 
+.result-evidence,
 .result-attention,
 .result-trend {
   display: grid;
   gap: 0.55rem;
 }
 
+.result-evidence h3,
 .result-attention h3,
 .result-trend h3 {
   margin: 0;

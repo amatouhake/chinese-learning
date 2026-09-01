@@ -165,6 +165,9 @@ describe("Reflex automaticity foundation", () => {
     expect(nineCards).toHaveLength(4);
     expect(nineCards.every(({ activityType }) => activityType === "hanzi_to_meaning")).toBe(true);
     expect(nineCards.every(({ choices }) => choices.length === 9)).toBe(true);
+    expect(nineCards.every(({ history }) => history.attempts === 0 && history.slow === 0)).toBe(
+      true,
+    );
     expect(
       nineCards.every(
         ({ choices }) => new Set(choices.map(({ label }) => label.trim())).size === choices.length,
@@ -227,6 +230,7 @@ describe("Reflex automaticity foundation", () => {
         timedResponses: 3,
         timingInterrupted: 1,
         averageResponseMs: 3_200,
+        slowResponses: 0,
       },
     });
     expect(
@@ -234,6 +238,66 @@ describe("Reflex automaticity foundation", () => {
         "SELECT response_ms FROM attempts WHERE event_id = 'quiz-nine-event:1'",
       ).first<number | null>("response_ms"),
     ).toBeNull();
+
+    await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: "legacy-queued-quiz-session",
+      deviceId: "legacy-queued-quiz-device",
+      maxItems: 4,
+      choiceCount: 4,
+    });
+    const legacyPull = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: 0,
+      contentRevision: null,
+      deviceId: "legacy-queued-quiz-device",
+      reflexSessionId: "legacy-queued-quiz-session",
+    });
+    const legacyTarget = legacyPull.reflexPack?.cards[0];
+    if (!legacyTarget) throw new Error("missing legacy queued Quiz target");
+    for (let round = 1; round <= 4; round += 1) {
+      const presented = presentReflexQuestion(
+        legacyTarget,
+        "legacy-queued-quiz-session",
+        round,
+        round - 1,
+      );
+      const queued = reflexAttempt(legacyTarget, presented.choices, legacyTarget.answerChoiceId, {
+        eventId: `legacy-queued-quiz-event:${round}`,
+        deviceId: "legacy-queued-quiz-device",
+        deviceSeq: round,
+        round,
+        sessionId: "legacy-queued-quiz-session",
+      });
+      if (round === 1) {
+        delete queued.metadata?.choiceCount;
+        delete queued.metadata?.timingInterrupted;
+      }
+      await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, queued);
+    }
+    await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: legacyPull.nextCursor,
+      contentRevision: legacyPull.currentContentRevision,
+      deviceId: "legacy-queued-quiz-device",
+      reflexSessionId: "legacy-queued-quiz-session",
+    });
+    expect(
+      await env.DB.prepare(
+        `SELECT response_ms, metadata_json FROM attempts
+         WHERE event_id = 'legacy-queued-quiz-event:1'`,
+      ).first<{ response_ms: number; metadata_json: string }>(),
+    ).toMatchObject({ response_ms: 3_200 });
+    expect(
+      JSON.parse(
+        (await env.DB.prepare(
+          `SELECT metadata_json FROM attempts
+             WHERE event_id = 'legacy-queued-quiz-event:1'`,
+        ).first<string>("metadata_json")) ?? "{}",
+      ),
+    ).not.toHaveProperty("timingInterrupted");
+    expect(
+      await env.DB.prepare(
+        "SELECT ended_at FROM study_sessions WHERE id = 'legacy-queued-quiz-session'",
+      ).first<number | null>("ended_at"),
+    ).not.toBeNull();
 
     await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
       sessionId: "quiz-nine-session-2",

@@ -84,6 +84,7 @@ function isSummary(value: unknown): value is PracticeSessionSummary {
     !Array.isArray(value.attentionItems) ||
     !value.attentionItems.every(isAttentionItem) ||
     !isTrend(value.trend) ||
+    !isEvidenceCoverage(value.evidenceCoverage, value.completedItems) ||
     !isRecord(value.configuration) ||
     !isRecord(value.evidence)
   ) {
@@ -144,6 +145,17 @@ function isSummary(value: unknown): value is PracticeSessionSummary {
     default:
       return false;
   }
+}
+
+function isEvidenceCoverage(value: unknown, completedItems: number): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) &&
+      value.status === "partial" &&
+      isInteger(value.recordedItems) &&
+      value.recordedItems >= 0 &&
+      value.recordedItems < completedItems)
+  );
 }
 
 function isAttentionItem(value: unknown): boolean {

@@ -257,15 +257,22 @@
               <p>単語・クイズ</p>
               <h4>{snapshot.reflex.recentResponses}回答</h4>
             </div>
-            <strong>平均 {formatLatency(snapshot.reflex.latency.averageResponseMs)}</strong>
           </div>
-          <div class="dual-metric">
-            <span><strong>{formatPercent(snapshot.reflex.correctness)}</strong> 正答率</span>
-            <span
-              ><strong>{snapshot.reflex.latency.slowResponses}</strong>
-              {snapshot.reflex.latency.slowThresholdMs / 1_000}秒以上</span
-            >
-          </div>
+          <ul class="activity-summary-list">
+            {#each snapshot.reflex.byChoiceCount as quiz (quiz.choiceCount)}
+              <li>
+                <span>{quiz.choiceCount}択 · {quiz.recentResponses}回答</span>
+                <strong>
+                  {formatPercent(quiz.correctness)} · 平均 {formatLatency(
+                    quiz.latency.averageResponseMs,
+                  )}
+                  {#if quiz.latency.slowThresholdMs !== null && quiz.latency.slowResponses !== null}
+                    · {quiz.latency.slowThresholdMs / 1_000}秒以上 {quiz.latency.slowResponses}
+                  {/if}
+                </strong>
+              </li>
+            {/each}
+          </ul>
           <p class="mode-detail">選択問題の記録です。復習の予定には影響しません。</p>
         </article>
       </div>
@@ -294,6 +301,7 @@
               <div class="trouble-heading">
                 <span class="mode-chip mode-{item.mode}">{modeLabel(item.mode)}</span>
                 <span class="activity-chip">{activityLabel(item.activityType)}</span>
+                {#if item.choiceCount}<span class="activity-chip">{item.choiceCount}択</span>{/if}
               </div>
               <div class="trouble-copy">
                 <div>

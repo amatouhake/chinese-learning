@@ -242,12 +242,17 @@ function summarizeQuiz(
       timingInterrupted,
       slowResponses: count(
         timed,
-        ({ response_ms }) => response_ms !== null && response_ms >= REFLEX_SLOW_RESPONSE_MS,
+        ({ response_ms }) =>
+          choiceCount === 4 && response_ms !== null && response_ms >= REFLEX_SLOW_RESPONSE_MS,
       ),
     },
     attentionItems: attentionItems(attempts, (attempt) => {
       if (attempt.correct === 0) return "誤答";
-      if (attempt.response_ms !== null && attempt.response_ms >= REFLEX_SLOW_RESPONSE_MS)
+      if (
+        choiceCount === 4 &&
+        attempt.response_ms !== null &&
+        attempt.response_ms >= REFLEX_SLOW_RESPONSE_MS
+      )
         return "ゆっくり";
       return null;
     }),

@@ -20,6 +20,10 @@ traditional score. Vocabulary Quiz is ordinary practice over introduced material
 FSRS. Four choices reduce friction and suit fast repetition. Nine choices increase discrimination
 among alternatives, but remain a recognition/selection task; neither configuration is “true
 recall.” Quiz trends therefore compare only the same activity, choice count, and requested set size.
+Adaptive candidate history is likewise scoped by choice count; missing choice-count metadata from the
+released four-choice Reflex interaction is interpreted as 4択 evidence. Nine-choice latency remains
+valid same-configuration evidence, but it is not classified with the old 2.5-second four-choice
+“slow” threshold. Incorrect answers remain weak evidence for both configurations.
 
 ## Historical configuration
 
@@ -43,6 +47,10 @@ hidden before the answer, the attempt and correctness remain valid, `response_ms
 attempt metadata records `timingInterrupted: true`. Interrupted attempts do not contribute to
 average latency, slow-item evidence, or weak/slow selection priority. Other activities do not gain
 automaticity meaning merely because they happen to record elapsed UI time.
+
+When an upgraded browser knows a legacy session's completed count but lacks its earlier per-answer
+cache, the local summary preserves the total and marks the available distribution as partial.
+Canonical synchronization replaces that projection with the complete attempt-derived summary.
 
 ## History and Progress
 

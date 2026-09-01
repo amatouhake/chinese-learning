@@ -121,6 +121,32 @@ describe("Reflex automaticity selection", () => {
         })),
       }),
     ).toThrow("presentation order");
+
+    const legacy = { ...metadata } as Record<string, unknown>;
+    delete legacy.choiceCount;
+    delete legacy.timingInterrupted;
+    expect(parseReflexAttemptMetadata(legacy, { legacyResponseMs: 1_200 })).toMatchObject({
+      choiceCount: 4,
+      timingInterrupted: false,
+    });
+    expect(() => parseReflexAttemptMetadata(legacy)).toThrow("timingInterrupted must be boolean");
+    expect(() =>
+      parseReflexAttemptMetadata({ ...legacy, choiceCount: 4 }, { legacyResponseMs: 1_200 }),
+    ).toThrow("timingInterrupted must be boolean");
+  });
+
+  test("does not apply the 4-choice slow repeat bonus to 9-choice answers", () => {
+    const fourChoice = card("four", "hanzi_to_meaning", 0);
+    const nineChoice = {
+      ...card("nine", "hanzi_to_meaning", 0),
+      choices: Array.from({ length: 9 }, (_, index) => ({
+        id: index === 0 ? "nine" : `nine:${index}`,
+        label: `choice ${index}`,
+      })),
+    };
+    const answers = [answer("four", 1, true, 3_000), answer("nine", 2, true, 3_000)];
+
+    expect(selectNextReflexCard([fourChoice, nineChoice], answers, 3)?.cardId).toBe("four");
   });
 });
 

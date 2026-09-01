@@ -37,6 +37,7 @@ export function localReviewSummary(
       session.endedAt,
       session.reviewedCards,
       session.maxCards,
+      reviews.length,
     ),
     mode: "study",
     practice: "vocabulary_review",
@@ -86,8 +87,9 @@ export function localQuizSummary(
       "vocabulary_quiz",
       session.startedAt,
       session.endedAt,
-      answers.length,
+      session.completedItems,
       session.maxItems,
+      answers.length,
     ),
     mode: "reflex",
     practice: "vocabulary_quiz",
@@ -102,17 +104,23 @@ export function localQuizSummary(
       averageResponseMs: average(timed),
       timedResponses: timed.length,
       timingInterrupted: answers.filter(({ timingInterrupted }) => timingInterrupted).length,
-      slowResponses: timed.filter((value) => value >= REFLEX_SLOW_RESPONSE_MS).length,
+      slowResponses:
+        session.choiceCount === 4
+          ? timed.filter((value) => value >= REFLEX_SLOW_RESPONSE_MS).length
+          : 0,
     },
     attentionItems: answers
       .filter(
         ({ correct, responseMs }) =>
-          !correct || (responseMs !== null && responseMs >= REFLEX_SLOW_RESPONSE_MS),
+          !correct ||
+          (session.choiceCount === 4 &&
+            responseMs !== null &&
+            responseMs >= REFLEX_SLOW_RESPONSE_MS),
       )
       .map((answer) => ({
         cardId: answer.cardId,
-        label: labelByCard.get(answer.cardId)?.label ?? answer.cardId,
-        detail: labelByCard.get(answer.cardId)?.detail ?? null,
+        label: answer.label ?? labelByCard.get(answer.cardId)?.label ?? answer.cardId,
+        detail: answer.detail ?? labelByCard.get(answer.cardId)?.detail ?? null,
         reasons: [!answer.correct ? "誤答" : "ゆっくり"],
       }))
       .filter(
@@ -142,8 +150,9 @@ export function localPronunciationSummary(
       "pronunciation",
       session.startedAt,
       session.endedAt,
-      attempts.length,
+      session.completedItems,
       session.maxItems,
+      attempts.length,
     ),
     mode: "pronunciation",
     practice: "pronunciation",
@@ -171,8 +180,9 @@ export function localGuidedSummary(
         "reading",
         session.startedAt,
         session.endedAt,
-        attempts.length,
+        session.completedItems,
         session.maxItems,
+        attempts.length,
       ),
       mode: "reading",
       practice: "reading",
@@ -191,8 +201,9 @@ export function localGuidedSummary(
       "grammar",
       session.startedAt,
       session.endedAt,
-      attempts.length,
+      session.completedItems,
       session.maxItems,
+      attempts.length,
     ),
     mode: "grammar",
     practice: "grammar",
@@ -216,6 +227,7 @@ function base(
   endedAt: number | null,
   completedItems: number,
   requestedItems: number,
+  recordedItems = completedItems,
 ) {
   const cachedEnd = readPracticeHistoryCache().sessions.find(
     (item) => item.sessionId === sessionId,
@@ -232,6 +244,9 @@ function base(
     requestedItems,
     attentionItems: [],
     trend: null,
+    ...(recordedItems < completedItems
+      ? { evidenceCoverage: { status: "partial" as const, recordedItems } }
+      : {}),
   };
 }
 

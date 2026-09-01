@@ -174,7 +174,10 @@ export function presentReflexQuestion(
   };
 }
 
-export function parseReflexAttemptMetadata(value: unknown): ReflexAttemptMetadata {
+export function parseReflexAttemptMetadata(
+  value: unknown,
+  compatibility: { legacyResponseMs?: number } = {},
+): ReflexAttemptMetadata {
   const body = requiredRecord(value, "reflex attempt metadata");
   if (body.interaction !== REFLEX_INTERACTION) {
     throw new InvalidInputError("reflex attempts require the canonical interaction identity");
@@ -202,6 +205,11 @@ export function parseReflexAttemptMetadata(value: unknown): ReflexAttemptMetadat
   if (new Set(options.map(({ id }) => id)).size !== options.length) {
     throw new InvalidInputError("reflex option identities must be unique");
   }
+  const legacyUninterruptedTiming =
+    body.choiceCount === undefined &&
+    body.timingInterrupted === undefined &&
+    compatibility.legacyResponseMs !== undefined &&
+    choiceCount === 4;
   return {
     interaction: REFLEX_INTERACTION,
     presentationId: boundedText(body.presentationId, "presentationId", 500),
@@ -211,7 +219,9 @@ export function parseReflexAttemptMetadata(value: unknown): ReflexAttemptMetadat
     answerChoiceId: boundedText(body.answerChoiceId, "answerChoiceId", 500),
     selectedChoiceId: boundedText(body.selectedChoiceId, "selectedChoiceId", 500),
     choiceCount,
-    timingInterrupted: booleanField(body.timingInterrupted, "timingInterrupted"),
+    timingInterrupted: legacyUninterruptedTiming
+      ? false
+      : booleanField(body.timingInterrupted, "timingInterrupted"),
     options,
   };
 }
@@ -222,7 +232,9 @@ function sessionPriority(card: ReflexCard, answers: readonly ReflexAnswerRecord[
   const unseenBonus = own.length === 0 ? 3 : 0;
   const currentTrouble = latest
     ? latest.correct
-      ? latest.responseMs !== null && latest.responseMs >= REFLEX_SLOW_RESPONSE_MS
+      ? card.choices.length === 4 &&
+        latest.responseMs !== null &&
+        latest.responseMs >= REFLEX_SLOW_RESPONSE_MS
         ? 4
         : -2
       : 8

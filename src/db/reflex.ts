@@ -331,10 +331,12 @@ async function buildCandidateCards(
          ) AS media_attribution,
          COUNT(a.event_id) AS attempts,
          COALESCE(SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END), 0) AS incorrect,
-         COALESCE(SUM(CASE WHEN a.response_ms >= ? THEN 1 ELSE 0 END), 0) AS slow,
+         COALESCE(SUM(CASE
+           WHEN ? = 4 AND a.response_ms >= ? THEN 1 ELSE 0
+         END), 0) AS slow,
          AVG(a.response_ms) AS average_response_ms,
          MAX(CASE
-           WHEN a.correct = 0 OR a.response_ms >= ? THEN a.occurred_at
+           WHEN a.correct = 0 OR (? = 4 AND a.response_ms >= ?) THEN a.occurred_at
            ELSE NULL
          END) AS last_trouble_at
        FROM cards c
@@ -342,6 +344,7 @@ async function buildCandidateCards(
        JOIN lexemes l ON l.id = COALESCE(c.lexeme_id, r.lexeme_id)
        LEFT JOIN attempts a ON a.learner_id = ? AND a.card_id = c.id AND a.mode = 'reflex'
          AND json_extract(a.metadata_json, '$.interaction') = 'reflex-multiple-choice'
+         AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = ?
        WHERE c.activity_type IN (
            'hanzi_to_meaning', 'meaning_to_hanzi', 'hanzi_to_pinyin', 'pinyin_to_hanzi'
          )
@@ -367,7 +370,15 @@ async function buildCandidateCards(
          r.sense_scope, l.meanings_json, l.pos_json, l.frequency_rank
        ORDER BY c.activity_type, c.id`,
     )
-    .bind(REFLEX_SLOW_RESPONSE_MS, REFLEX_SLOW_RESPONSE_MS, learnerId, learnerId)
+    .bind(
+      choiceCount,
+      REFLEX_SLOW_RESPONSE_MS,
+      choiceCount,
+      REFLEX_SLOW_RESPONSE_MS,
+      learnerId,
+      choiceCount,
+      learnerId,
+    )
     .all<ReflexCandidateRow>();
 
   const models = result.results.map(toCandidateModel);
