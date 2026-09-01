@@ -30,9 +30,11 @@ context so reload and offline use reproduce the same session.
 
 `attempts` and `fsrs_reviews` remain the raw authority. `aggregate_json` is a closure snapshot for
 operational inspection and may be recomputed; learner-facing `PracticeSessionSummary` values are a
-read model derived from session context plus immutable attempts and mode-specific evidence. A local
-IndexedDB history cache may preserve that derived read model for offline reopening, but it is not a
-second event history and is replaced by canonical learner-scoped reads after synchronization.
+read model derived from session context plus immutable attempts and mode-specific evidence. A
+bounded localStorage history projection may preserve that derived read model for offline reopening,
+while IndexedDB retains prepared sessions and attempts used to rebuild newly completed results.
+Neither is a second event history; canonical learner-scoped reads replace matching local projections
+after synchronization.
 
 ## Timing
 
