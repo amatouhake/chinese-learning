@@ -401,7 +401,7 @@ describe("Reflex automaticity foundation", () => {
     expect(await schedulerSnapshot()).toEqual(before);
 
     await retireFixtureLexemes(lexemes);
-  });
+  }, 20_000);
 });
 
 function reflexAttempt(

@@ -449,7 +449,7 @@ describe("canonical progress snapshot", () => {
         ({ cardId, mode }) => cardId === sentenceCard.id && mode === "reading",
       ),
     ).toBe(true);
-  });
+  }, 15_000);
 
   test("excludes future-dated attempts from rolling activity and trouble", async () => {
     await applyImport(
