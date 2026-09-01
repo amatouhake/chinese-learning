@@ -28,9 +28,11 @@ import type {
   CanonicalFsrsReview,
   FsrsCardProjection,
   IngestResult,
+  LearnerId,
   MaterializedCardState,
   SchedulerConfig,
 } from "../domain/types";
+import { registerLearnerDevice } from "./learners";
 
 const MAX_CONCURRENCY_RETRIES = 3;
 
@@ -121,6 +123,7 @@ interface AttemptIdentityRow {
 
 export async function ingestAttempt(
   db: D1Database,
+  learnerId: LearnerId,
   input: AttemptInput,
   options: IngestOptions = {},
 ): Promise<IngestResult> {
@@ -130,12 +133,19 @@ export async function ingestAttempt(
   if (!Number.isSafeInteger(receivedAt) || receivedAt < 0) {
     throw new Error("server received time must be a non-negative integer");
   }
+  await registerLearnerDevice(db, learnerId, input.deviceId);
 
   for (let attemptNumber = 0; attemptNumber < MAX_CONCURRENCY_RETRIES; attemptNumber += 1) {
-    const existing = await findAttempt(db, input.eventId);
-    if (existing) return duplicateResult(db, existing, input, occurredAt);
-    await assertDeviceSequenceAvailable(db, input);
-    await assertStudySessionOwnedByDevice(db, input.studySessionId, input.deviceId, input.mode);
+    const existing = await findAttempt(db, learnerId, input.eventId);
+    if (existing) return duplicateResult(db, learnerId, existing, input, occurredAt);
+    await assertDeviceSequenceAvailable(db, learnerId, input);
+    await assertStudySessionOwnedByDevice(
+      db,
+      learnerId,
+      input.studySessionId,
+      input.deviceId,
+      input.mode,
+    );
 
     const card = await db
       .prepare(
@@ -151,7 +161,7 @@ export async function ingestAttempt(
       throw new InvalidInputError("attempt activity does not match its card");
     }
     await validatePronunciationAttempt(db, input, card);
-    await validateReflexAttempt(db, input, card);
+    await validateReflexAttempt(db, learnerId, input, card);
     await validateReadingGrammarAttempt(db, input, card);
 
     if (!input.fsrsReview) {
@@ -159,6 +169,7 @@ export async function ingestAttempt(
         if (input.mode === "grammar" && card.grammar_topic_id !== null) {
           await insertGrammarAttempt(
             db,
+            learnerId,
             input,
             card.grammar_topic_id,
             occurredAt,
@@ -167,9 +178,9 @@ export async function ingestAttempt(
           );
         } else {
           await options.beforeUnscheduledWrite?.();
-          await insertUnscheduledAttempt(db, input, occurredAt, receivedAt, options);
+          await insertUnscheduledAttempt(db, learnerId, input, occurredAt, receivedAt, options);
         }
-        const inserted = await findAttempt(db, input.eventId);
+        const inserted = await findAttempt(db, learnerId, input.eventId);
         if (!inserted) throw new Error("inserted attempt could not be reloaded");
         return {
           disposition: "inserted",
@@ -179,9 +190,9 @@ export async function ingestAttempt(
           cardState: null,
         };
       } catch (error) {
-        const duplicate = await findAttempt(db, input.eventId);
-        if (duplicate) return duplicateResult(db, duplicate, input, occurredAt);
-        await assertDeviceSequenceAvailable(db, input);
+        const duplicate = await findAttempt(db, learnerId, input.eventId);
+        if (duplicate) return duplicateResult(db, learnerId, duplicate, input, occurredAt);
+        await assertDeviceSequenceAvailable(db, learnerId, input);
         throw mapReflexSequenceConstraint(input, error);
       }
     }
@@ -190,10 +201,10 @@ export async function ingestAttempt(
       throw new InvalidInputError("FSRS review requires a scheduler-eligible card");
     }
 
-    const currentState = await getCardState(db, input.cardId);
+    const currentState = await getCardState(db, learnerId, input.cardId);
     if (!currentState) throw new Error(`missing materialized state for card: ${input.cardId}`);
 
-    const { reviews, configs } = await loadCanonicalHistory(db, input.cardId);
+    const { reviews, configs } = await loadCanonicalHistory(db, learnerId, input.cardId);
     const selectedConfig = await loadSchedulerConfig(db, input.fsrsReview.schedulerConfigId);
     configs.set(selectedConfig.id, selectedConfig);
 
@@ -212,6 +223,7 @@ export async function ingestAttempt(
       await options.beforeScheduledWrite?.();
       await insertScheduledAttempt(
         db,
+        learnerId,
         input,
         incomingReview,
         receivedAt,
@@ -221,8 +233,8 @@ export async function ingestAttempt(
       );
 
       const [inserted, state] = await Promise.all([
-        findAttempt(db, input.eventId),
-        getCardState(db, input.cardId),
+        findAttempt(db, learnerId, input.eventId),
+        getCardState(db, learnerId, input.cardId),
       ]);
       if (!inserted || !state) throw new Error("scheduled ingestion could not be reloaded");
       return {
@@ -233,12 +245,12 @@ export async function ingestAttempt(
         cardState: mapCardState(state),
       };
     } catch (error) {
-      const duplicate = await findAttempt(db, input.eventId);
-      if (duplicate) return duplicateResult(db, duplicate, input, occurredAt);
-      await assertDeviceSequenceAvailable(db, input);
+      const duplicate = await findAttempt(db, learnerId, input.eventId);
+      if (duplicate) return duplicateResult(db, learnerId, duplicate, input, occurredAt);
+      await assertDeviceSequenceAvailable(db, learnerId, input);
       if (options.forceFailureAfterWrites) throw error;
 
-      const latestState = await getCardState(db, input.cardId);
+      const latestState = await getCardState(db, learnerId, input.cardId);
       if (latestState && latestState.version !== currentState.version) {
         continue;
       }
@@ -251,6 +263,7 @@ export async function ingestAttempt(
 
 async function insertUnscheduledAttempt(
   db: D1Database,
+  learnerId: LearnerId,
   input: AttemptInput,
   occurredAt: number,
   receivedAt: number,
@@ -261,11 +274,11 @@ async function insertUnscheduledAttempt(
     db
       .prepare(
         `INSERT INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'attempt', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'attempt', ?, 'upsert', ?)`,
       )
-      .bind(changeId, input.eventId, receivedAt),
-    attemptInsert(db, input, occurredAt, receivedAt, changeId),
+      .bind(changeId, learnerId, input.eventId, receivedAt),
+    attemptInsert(db, learnerId, input, occurredAt, receivedAt, changeId),
     db
       .prepare(
         `UPDATE projection_state SET
@@ -274,9 +287,9 @@ async function insertUnscheduledAttempt(
             WHEN last_attempt_at IS NULL OR last_attempt_at < ? THEN ?
             ELSE last_attempt_at
           END
-         WHERE singleton = 1`,
+         WHERE learner_id = ?`,
       )
-      .bind(occurredAt, occurredAt),
+      .bind(occurredAt, occurredAt, learnerId),
   ];
 
   if (options.forceFailureAfterWrites) {
@@ -287,6 +300,7 @@ async function insertUnscheduledAttempt(
 
 async function insertGrammarAttempt(
   db: D1Database,
+  learnerId: LearnerId,
   input: AttemptInput,
   grammarTopicId: string,
   occurredAt: number,
@@ -311,26 +325,26 @@ async function insertGrammarAttempt(
     db
       .prepare(
         `INSERT INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'attempt', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'attempt', ?, 'upsert', ?)`,
       )
-      .bind(attemptChangeId, input.eventId, receivedAt),
+      .bind(attemptChangeId, learnerId, input.eventId, receivedAt),
     db
       .prepare(
         `INSERT INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'grammar_topic_state', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'grammar_topic_state', ?, 'upsert', ?)`,
       )
-      .bind(stateChangeId, grammarTopicId, receivedAt),
-    attemptInsert(db, input, occurredAt, receivedAt, attemptChangeId),
+      .bind(stateChangeId, learnerId, grammarTopicId, receivedAt),
+    attemptInsert(db, learnerId, input, occurredAt, receivedAt, attemptChangeId),
     db
       .prepare(
         `INSERT INTO grammar_topic_state
-          (grammar_topic_id, status, introduced_at, last_studied_at,
+          (learner_id, grammar_topic_id, status, introduced_at, last_studied_at,
            self_confidence, version, server_seq, metadata_json)
-         VALUES (?, ?, ?, ?, ?, 1,
+         VALUES (?, ?, ?, ?, ?, ?, 1,
            (SELECT seq FROM server_changes WHERE change_id = ?), ?)
-         ON CONFLICT(grammar_topic_id) DO UPDATE SET
+         ON CONFLICT(learner_id, grammar_topic_id) DO UPDATE SET
            introduced_at = MIN(grammar_topic_state.introduced_at, excluded.introduced_at),
            last_studied_at = MAX(grammar_topic_state.last_studied_at, excluded.last_studied_at),
            status = CASE
@@ -352,6 +366,7 @@ async function insertGrammarAttempt(
            server_seq = excluded.server_seq`,
       )
       .bind(
+        learnerId,
         grammarTopicId,
         status,
         occurredAt,
@@ -368,9 +383,9 @@ async function insertGrammarAttempt(
             WHEN last_attempt_at IS NULL OR last_attempt_at < ? THEN ?
             ELSE last_attempt_at
           END
-         WHERE singleton = 1`,
+         WHERE learner_id = ?`,
       )
-      .bind(occurredAt, occurredAt),
+      .bind(occurredAt, occurredAt, learnerId),
   ];
   if (options.forceFailureAfterWrites) {
     statements.push(forcedFailureStatement(db, input.eventId));
@@ -380,6 +395,7 @@ async function insertGrammarAttempt(
 
 async function insertScheduledAttempt(
   db: D1Database,
+  learnerId: LearnerId,
   input: AttemptInput,
   review: CanonicalFsrsReview,
   receivedAt: number,
@@ -397,18 +413,18 @@ async function insertScheduledAttempt(
     db
       .prepare(
         `INSERT INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'attempt', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'attempt', ?, 'upsert', ?)`,
       )
-      .bind(attemptChangeId, input.eventId, receivedAt),
+      .bind(attemptChangeId, learnerId, input.eventId, receivedAt),
     db
       .prepare(
         `INSERT INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'card_state', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'card_state', ?, 'upsert', ?)`,
       )
-      .bind(stateChangeId, input.cardId, receivedAt),
-    attemptInsert(db, input, review.occurredAt, receivedAt, attemptChangeId),
+      .bind(stateChangeId, learnerId, input.cardId, receivedAt),
+    attemptInsert(db, learnerId, input, review.occurredAt, receivedAt, attemptChangeId),
     db
       .prepare(
         `INSERT INTO fsrs_reviews
@@ -433,7 +449,7 @@ async function insertScheduledAttempt(
           last_review_at = ?, version = version + 1,
           server_seq = (SELECT seq FROM server_changes WHERE change_id = ?),
           rebuilt_at = ?
-         WHERE card_id = ? AND version = ?`,
+         WHERE learner_id = ? AND card_id = ? AND version = ?`,
       )
       .bind(
         projection.dueAt,
@@ -448,6 +464,7 @@ async function insertScheduledAttempt(
         projection.lastReviewAt,
         stateChangeId,
         receivedAt,
+        learnerId,
         input.cardId,
         currentState.version,
       ),
@@ -463,9 +480,9 @@ async function insertScheduledAttempt(
             WHEN last_attempt_at IS NULL OR last_attempt_at < ? THEN ?
             ELSE last_attempt_at
           END
-         WHERE singleton = 1`,
+         WHERE learner_id = ?`,
       )
-      .bind(review.occurredAt, review.occurredAt),
+      .bind(review.occurredAt, review.occurredAt, learnerId),
   ];
 
   if (options.forceFailureAfterWrites) {
@@ -476,6 +493,7 @@ async function insertScheduledAttempt(
 
 function attemptInsert(
   db: D1Database,
+  learnerId: LearnerId,
   input: AttemptInput,
   occurredAt: number,
   receivedAt: number,
@@ -484,14 +502,15 @@ function attemptInsert(
   return db
     .prepare(
       `INSERT INTO attempts
-        (event_id, device_id, device_seq, occurred_at, received_at, card_id,
+        (event_id, learner_id, device_id, device_seq, occurred_at, received_at, card_id,
          study_session_id, mode, activity_type, correct, score, self_rating,
          response_ms, expected_card_state_version, metadata_json, server_seq)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
          (SELECT seq FROM server_changes WHERE change_id = ?))`,
     )
     .bind(
       input.eventId,
+      learnerId,
       input.deviceId,
       input.deviceSeq,
       occurredAt,
@@ -516,7 +535,11 @@ function forcedFailureStatement(db: D1Database, eventId: string): D1PreparedStat
     .bind(`forced-failure:${eventId}`);
 }
 
-async function findAttempt(db: D1Database, eventId: string): Promise<ExistingAttemptRow | null> {
+async function findAttempt(
+  db: D1Database,
+  learnerId: LearnerId,
+  eventId: string,
+): Promise<ExistingAttemptRow | null> {
   return db
     .prepare(
       `SELECT
@@ -527,20 +550,22 @@ async function findAttempt(db: D1Database, eventId: string): Promise<ExistingAtt
         r.scheduler_config_id
        FROM attempts a
        LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
-       WHERE a.event_id = ?`,
+       WHERE a.learner_id = ? AND a.event_id = ?`,
     )
-    .bind(eventId)
+    .bind(learnerId, eventId)
     .first<ExistingAttemptRow>();
 }
 
 async function duplicateResult(
   db: D1Database,
+  learnerId: LearnerId,
   existing: ExistingAttemptRow,
   input: AttemptInput,
   occurredAt: number,
 ): Promise<IngestResult> {
   assertDuplicatePayload(existing, input, occurredAt);
-  const state = existing.review_rating === null ? null : await getCardState(db, existing.card_id);
+  const state =
+    existing.review_rating === null ? null : await getCardState(db, learnerId, existing.card_id);
   return {
     disposition: "duplicate",
     eventId: existing.event_id,
@@ -577,19 +602,24 @@ function assertDuplicatePayload(
   }
 }
 
-async function getCardState(db: D1Database, cardId: string): Promise<CardStateRow | null> {
+async function getCardState(
+  db: D1Database,
+  learnerId: LearnerId,
+  cardId: string,
+): Promise<CardStateRow | null> {
   return db
     .prepare(
       `SELECT card_id, due_at, stability, difficulty, elapsed_days, scheduled_days,
         learning_steps, reps, lapses, state, last_review_at, version, server_seq, rebuilt_at
-       FROM card_state WHERE card_id = ?`,
+       FROM card_state WHERE learner_id = ? AND card_id = ?`,
     )
-    .bind(cardId)
+    .bind(learnerId, cardId)
     .first<CardStateRow>();
 }
 
 async function loadCanonicalHistory(
   db: D1Database,
+  learnerId: LearnerId,
   cardId: string,
 ): Promise<{ reviews: CanonicalFsrsReview[]; configs: Map<string, SchedulerConfig> }> {
   const result = await db
@@ -602,9 +632,9 @@ async function loadCanonicalHistory(
        FROM fsrs_reviews r
        JOIN attempts a ON a.event_id = r.attempt_id
        JOIN scheduler_configs c ON c.id = r.scheduler_config_id
-       WHERE r.card_id = ?`,
+       WHERE a.learner_id = ? AND r.card_id = ?`,
     )
-    .bind(cardId)
+    .bind(learnerId, cardId)
     .all<HistoryRow>();
 
   const reviews: CanonicalFsrsReview[] = [];
@@ -810,6 +840,7 @@ async function validatePronunciationAttempt(
 
 async function validateReflexAttempt(
   db: D1Database,
+  learnerId: LearnerId,
   input: AttemptInput,
   card: CardRow,
 ): Promise<void> {
@@ -840,7 +871,12 @@ async function validateReflexAttempt(
   }
 
   const metadata = parseReflexAttemptMetadata(input.metadata);
-  const preparedItem = await getPreparedReflexItem(db, input.studySessionId, input.cardId);
+  const preparedItem = await getPreparedReflexItem(
+    db,
+    learnerId,
+    input.studySessionId,
+    input.cardId,
+  );
   if (!preparedItem) {
     throw new InvalidInputError("reflex card was not part of the prepared session");
   }
@@ -967,10 +1003,16 @@ async function validateReadingGrammarAttempt(
   }
 }
 
-async function assertDeviceSequenceAvailable(db: D1Database, input: AttemptInput): Promise<void> {
+async function assertDeviceSequenceAvailable(
+  db: D1Database,
+  learnerId: LearnerId,
+  input: AttemptInput,
+): Promise<void> {
   const owner = await db
-    .prepare("SELECT event_id FROM attempts WHERE device_id = ? AND device_seq = ?")
-    .bind(input.deviceId, input.deviceSeq)
+    .prepare(
+      "SELECT event_id FROM attempts WHERE learner_id = ? AND device_id = ? AND device_seq = ?",
+    )
+    .bind(learnerId, input.deviceId, input.deviceSeq)
     .first<AttemptIdentityRow>();
   if (owner && owner.event_id !== input.eventId) {
     throw new ConflictError(
@@ -994,14 +1036,15 @@ function mapReflexSequenceConstraint(input: AttemptInput, error: unknown): unkno
 
 async function assertStudySessionOwnedByDevice(
   db: D1Database,
+  learnerId: LearnerId,
   studySessionId: string | undefined,
   deviceId: string,
   mode: AttemptInput["mode"],
 ): Promise<void> {
   if (studySessionId === undefined) return;
   const session = await db
-    .prepare("SELECT id, device_id, mode FROM study_sessions WHERE id = ?")
-    .bind(studySessionId)
+    .prepare("SELECT id, device_id, mode FROM study_sessions WHERE learner_id = ? AND id = ?")
+    .bind(learnerId, studySessionId)
     .first<{ id: string; device_id: string; mode: AttemptInput["mode"] }>();
   if (!session) throw new ReferenceNotFoundError("study session", studySessionId);
   if (session.device_id !== deviceId) {

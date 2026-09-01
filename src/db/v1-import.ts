@@ -324,8 +324,9 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
          content_revision = excluded.content_revision,
          retired_at = NULL;`);
       statements.push(`INSERT OR IGNORE INTO card_state
-        (card_id, due_at, rebuilt_at)
-       SELECT ${sqlText(cardId)}, ${createdAt}, ${createdAt}
+        (learner_id, card_id, due_at, rebuilt_at)
+       SELECT learners.id, ${sqlText(cardId)}, ${createdAt}, ${createdAt}
+       FROM learners
        WHERE ${importAllowed};`);
     }
   }
@@ -340,7 +341,7 @@ export async function buildV1ImportStatements(input: V1ImportInput): Promise<str
     ),
   );
 
-  statements.push(`UPDATE learner_settings
+  statements.push(`UPDATE content_state
     SET current_content_revision = ${revision}, updated_at = ${createdAt}
     WHERE singleton = 1
       AND ${importAllowed};`);

@@ -3,7 +3,7 @@ import { getOfflineReflexPack } from "./reflex";
 import { getOfflineStudyPack } from "./study";
 import { getOfflineGrammarPack, getOfflineReadingPack } from "./reading-grammar";
 import type { SyncPullInput } from "../domain/sync-validation";
-import type { SyncLearnerChange, SyncPullResponse } from "../domain/types";
+import type { LearnerId, SyncLearnerChange, SyncPullResponse } from "../domain/types";
 
 const PULL_LIMIT = 100;
 
@@ -47,8 +47,11 @@ interface ChangeRow {
 
 export async function pullSyncChanges(
   db: D1Database,
+  learnerId: LearnerId,
   input: SyncPullInput,
 ): Promise<SyncPullResponse> {
+  const highWater =
+    (await db.prepare("SELECT MAX(seq) AS seq FROM server_changes").first<number>("seq")) ?? 0;
   const [changeResult, settings] = await Promise.all([
     db
       .prepare(
@@ -85,22 +88,31 @@ export async function pullSyncChanges(
            gs.server_seq AS grammar_server_seq
          FROM server_changes sc
          LEFT JOIN attempts a
-           ON sc.entity_type = 'attempt' AND a.event_id = sc.entity_id
+           ON sc.entity_type = 'attempt'
+          AND a.learner_id = sc.learner_id
+          AND a.event_id = sc.entity_id
          LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
          LEFT JOIN card_state cs
-           ON sc.entity_type = 'card_state' AND cs.card_id = sc.entity_id
+           ON sc.entity_type = 'card_state'
+          AND cs.learner_id = sc.learner_id
+          AND cs.card_id = sc.entity_id
          LEFT JOIN study_sessions ss
-           ON sc.entity_type = 'study_session' AND ss.id = sc.entity_id
+           ON sc.entity_type = 'study_session'
+          AND ss.learner_id = sc.learner_id
+          AND ss.id = sc.entity_id
          LEFT JOIN grammar_topic_state gs
-           ON sc.entity_type = 'grammar_topic_state' AND gs.grammar_topic_id = sc.entity_id
-         WHERE sc.seq > ?
+           ON sc.entity_type = 'grammar_topic_state'
+          AND gs.learner_id = sc.learner_id
+          AND gs.grammar_topic_id = sc.entity_id
+         WHERE sc.seq > ? AND sc.seq <= ?
+           AND (sc.learner_id IS NULL OR sc.learner_id = ?)
          ORDER BY sc.seq
          LIMIT ?`,
       )
-      .bind(input.cursor, PULL_LIMIT + 1)
+      .bind(input.cursor, highWater, learnerId, PULL_LIMIT + 1)
       .all<ChangeRow>(),
     db
-      .prepare("SELECT current_content_revision FROM learner_settings WHERE singleton = 1")
+      .prepare("SELECT current_content_revision FROM content_state WHERE singleton = 1")
       .first<{ current_content_revision: number | null }>(),
   ]);
 
@@ -126,24 +138,25 @@ export async function pullSyncChanges(
   const currentContentRevision = settings?.current_content_revision ?? null;
   const [studyPack, reflexPack, pronunciationPack, readingPack, grammarPack] = await Promise.all([
     input.studySessionId
-      ? getOfflineStudyPack(db, input.studySessionId, input.deviceId)
+      ? getOfflineStudyPack(db, learnerId, input.studySessionId, input.deviceId)
       : Promise.resolve(null),
     input.reflexSessionId
-      ? getOfflineReflexPack(db, input.reflexSessionId, input.deviceId)
+      ? getOfflineReflexPack(db, learnerId, input.reflexSessionId, input.deviceId)
       : Promise.resolve(null),
     input.pronunciationSessionId
-      ? getOfflinePronunciationPack(db, input.pronunciationSessionId, input.deviceId)
+      ? getOfflinePronunciationPack(db, learnerId, input.pronunciationSessionId, input.deviceId)
       : Promise.resolve(null),
     input.readingSessionId
-      ? getOfflineReadingPack(db, input.readingSessionId, input.deviceId)
+      ? getOfflineReadingPack(db, learnerId, input.readingSessionId, input.deviceId)
       : Promise.resolve(null),
     input.grammarSessionId
-      ? getOfflineGrammarPack(db, input.grammarSessionId, input.deviceId)
+      ? getOfflineGrammarPack(db, learnerId, input.grammarSessionId, input.deviceId)
       : Promise.resolve(null),
   ]);
 
   return {
-    nextCursor: rows.at(-1)?.seq ?? input.cursor,
+    nextCursor:
+      changeResult.results.length > PULL_LIMIT ? (rows.at(-1)?.seq ?? input.cursor) : highWater,
     hasMore: changeResult.results.length > PULL_LIMIT,
     currentContentRevision,
     contentChanged: input.contentRevision !== currentContentRevision,

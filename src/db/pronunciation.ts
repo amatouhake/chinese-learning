@@ -12,15 +12,18 @@ import {
 } from "../domain/pronunciation";
 import type { CreatePronunciationSessionInput } from "../domain/pronunciation-validation";
 import type {
+  LearnerId,
   OfflinePronunciationPack,
   PronunciationCard,
   PronunciationChoice,
   PronunciationNextResult,
   PronunciationSessionView,
 } from "../domain/types";
+import { registerLearnerDevice } from "./learners";
 
 interface PronunciationSessionRow {
   id: string;
+  learner_id: string;
   device_id: string;
   started_at: number;
   ended_at: number | null;
@@ -67,10 +70,12 @@ export interface CreatePronunciationSessionResult {
 
 export async function createPronunciationSession(
   db: D1Database,
+  learnerId: LearnerId,
   input: CreatePronunciationSessionInput,
   options: PronunciationServiceOptions = {},
 ): Promise<CreatePronunciationSessionResult> {
-  const existing = await loadSession(db, input.sessionId);
+  await registerLearnerDevice(db, learnerId, input.deviceId);
+  const existing = await loadSession(db, learnerId, input.sessionId);
   if (existing) return existingSessionResult(db, existing, input);
 
   const now = serverTime(options);
@@ -85,49 +90,51 @@ export async function createPronunciationSession(
       db
         .prepare(
           `INSERT INTO server_changes
-            (change_id, entity_type, entity_id, operation, changed_at)
-           VALUES (?, 'study_session', ?, 'upsert', ?)`,
+            (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+           VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
         )
-        .bind(changeId, input.sessionId, now),
+        .bind(changeId, learnerId, input.sessionId, now),
       db
         .prepare(
           `INSERT INTO study_sessions
-            (id, device_id, mode, started_at, context_json, server_seq)
-           VALUES (?, ?, 'pronunciation', ?, ?,
+            (id, learner_id, device_id, mode, started_at, context_json, server_seq)
+           VALUES (?, ?, ?, 'pronunciation', ?, ?,
              (SELECT seq FROM server_changes WHERE change_id = ?))`,
         )
-        .bind(input.sessionId, input.deviceId, now, contextJson, changeId),
+        .bind(input.sessionId, learnerId, input.deviceId, now, contextJson, changeId),
     ]);
   } catch (error) {
-    const raced = await loadSession(db, input.sessionId);
+    const raced = await loadSession(db, learnerId, input.sessionId);
     if (raced) return existingSessionResult(db, raced, input);
     throw error;
   }
 
-  const created = await loadSession(db, input.sessionId);
+  const created = await loadSession(db, learnerId, input.sessionId);
   if (!created) throw new Error("created pronunciation session could not be reloaded");
   return { disposition: "created", session: await mapSession(db, created) };
 }
 
 export async function getNextPronunciationCard(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: PronunciationServiceOptions = {},
 ): Promise<PronunciationNextResult> {
-  const session = await loadOwnedSession(db, sessionId, deviceId);
+  const session = await loadOwnedSession(db, learnerId, sessionId, deviceId);
   const sessionView = await mapSession(db, session);
   if (session.ended_at !== null || sessionView.completedItems >= sessionView.maxItems) {
     if (session.ended_at === null) await completeSession(db, session, sessionView, options);
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, sessionId)) ?? session),
+      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
       card: null,
     };
   }
 
   const selected = await selectForFocus(
     db,
+    learnerId,
     sessionId,
     sessionView.focus,
     sessionView.completedItems,
@@ -136,7 +143,7 @@ export async function getNextPronunciationCard(
     await completeSession(db, session, sessionView, options);
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, sessionId)) ?? session),
+      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
       card: null,
     };
   }
@@ -150,16 +157,17 @@ export async function getNextPronunciationCard(
 
 export async function getOfflinePronunciationPack(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
   options: PronunciationServiceOptions = {},
 ): Promise<OfflinePronunciationPack> {
-  const session = await loadOwnedSession(db, sessionId, deviceId);
+  const session = await loadOwnedSession(db, learnerId, sessionId, deviceId);
   let sessionView = await mapSession(db, session);
   if (session.ended_at !== null || sessionView.completedItems >= sessionView.maxItems) {
     if (session.ended_at === null) {
       await completeSession(db, session, sessionView, options);
-      sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+      sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
     }
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
@@ -175,6 +183,7 @@ export async function getOfflinePronunciationPack(
   for (let index = 0; index < remaining; index += 1) {
     const selected = await selectForFocus(
       db,
+      learnerId,
       sessionId,
       sessionView.focus,
       sessionView.completedItems + index,
@@ -189,7 +198,7 @@ export async function getOfflinePronunciationPack(
 
   if (rows.length === 0) {
     await completeSession(db, session, sessionView, options);
-    sessionView = await mapSession(db, (await loadSession(db, sessionId)) ?? session);
+    sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
       session: sessionView,
@@ -205,6 +214,7 @@ export async function getOfflinePronunciationPack(
 
 async function selectForFocus(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   focus: PronunciationFocus,
   completedItems: number,
@@ -219,6 +229,7 @@ async function selectForFocus(
     for (const activity of rotated) {
       const card = await selectCard(
         db,
+        learnerId,
         sessionId,
         activity,
         excludeUsedLexemes,
@@ -233,6 +244,7 @@ async function selectForFocus(
 
 async function selectCard(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   activity: PronunciationActivityType,
   excludeUsedLexemes: boolean,
@@ -293,7 +305,7 @@ async function selectCard(
          )
          AND NOT EXISTS (
            SELECT 1 FROM attempts a
-           WHERE a.study_session_id = ? AND a.card_id = c.id
+           WHERE a.learner_id = ? AND a.study_session_id = ? AND a.card_id = c.id
          )
          ${cardExclusion}
          ${lexemeExclusion}
@@ -303,14 +315,17 @@ async function selectCard(
              FROM attempts a2
              JOIN cards c2 ON c2.id = a2.card_id
              JOIN lexeme_readings r2 ON r2.id = c2.lexeme_reading_id
-             WHERE a2.study_session_id = ? AND r2.lexeme_id = r.lexeme_id
+             WHERE a2.learner_id = ? AND a2.study_session_id = ?
+               AND r2.lexeme_id = r.lexeme_id
            )
          )
        ORDER BY
          (SELECT COUNT(*) FROM attempts practice
-          WHERE practice.card_id = c.id AND practice.mode = 'pronunciation'),
+          WHERE practice.learner_id = ? AND practice.card_id = c.id
+            AND practice.mode = 'pronunciation'),
          (SELECT MAX(practice.occurred_at) FROM attempts practice
-          WHERE practice.card_id = c.id AND practice.mode = 'pronunciation'),
+          WHERE practice.learner_id = ? AND practice.card_id = c.id
+            AND practice.mode = 'pronunciation'),
          (SELECT COUNT(*) FROM lexeme_readings sibling
           WHERE sibling.lexeme_id = r.lexeme_id AND sibling.retired_at IS NULL),
          COALESCE(hsk_level, 2147483647),
@@ -322,11 +337,15 @@ async function selectCard(
     )
     .bind(
       activity,
+      learnerId,
       sessionId,
       ...excludedCardIds,
       ...excludedLexemeIds,
       Number(excludeUsedLexemes),
+      learnerId,
       sessionId,
+      learnerId,
+      learnerId,
     )
     .first<PronunciationCardRow>();
 }
@@ -434,13 +453,14 @@ async function buildChoices(
 
 async function loadOwnedSession(
   db: D1Database,
+  learnerId: LearnerId,
   sessionId: string,
   deviceId: string,
 ): Promise<PronunciationSessionRow> {
   if (!sessionId.trim() || !deviceId.trim()) {
     throw new InvalidInputError("session and device IDs must be non-empty");
   }
-  const session = await loadSession(db, sessionId);
+  const session = await loadSession(db, learnerId, sessionId);
   if (!session) throw new ReferenceNotFoundError("pronunciation session", sessionId);
   if (session.device_id !== deviceId) {
     throw new ConflictError(`pronunciation session ${sessionId} belongs to another device`);
@@ -448,13 +468,17 @@ async function loadOwnedSession(
   return session;
 }
 
-async function loadSession(db: D1Database, id: string): Promise<PronunciationSessionRow | null> {
+async function loadSession(
+  db: D1Database,
+  learnerId: LearnerId,
+  id: string,
+): Promise<PronunciationSessionRow | null> {
   return db
     .prepare(
-      `SELECT id, device_id, started_at, ended_at, context_json
-       FROM study_sessions WHERE id = ? AND mode = 'pronunciation'`,
+      `SELECT id, learner_id, device_id, started_at, ended_at, context_json
+       FROM study_sessions WHERE learner_id = ? AND id = ? AND mode = 'pronunciation'`,
     )
-    .bind(id)
+    .bind(learnerId, id)
     .first<PronunciationSessionRow>();
 }
 
@@ -477,9 +501,9 @@ async function mapSession(
   const completed = await db
     .prepare(
       `SELECT COUNT(*) AS count FROM attempts
-       WHERE study_session_id = ? AND mode = 'pronunciation'`,
+       WHERE learner_id = ? AND study_session_id = ? AND mode = 'pronunciation'`,
     )
-    .bind(row.id)
+    .bind(row.learner_id, row.id)
     .first<{ count: number }>();
   return {
     id: row.id,
@@ -504,18 +528,24 @@ async function completeSession(
     db
       .prepare(
         `INSERT OR IGNORE INTO server_changes
-          (change_id, entity_type, entity_id, operation, changed_at)
-         VALUES (?, 'study_session', ?, 'upsert', ?)`,
+          (change_id, learner_id, entity_type, entity_id, operation, changed_at)
+         VALUES (?, ?, 'study_session', ?, 'upsert', ?)`,
       )
-      .bind(changeId, row.id, now),
+      .bind(changeId, row.learner_id, row.id, now),
     db
       .prepare(
         `UPDATE study_sessions SET
           ended_at = ?, aggregate_json = ?,
           server_seq = (SELECT seq FROM server_changes WHERE change_id = ?)
-         WHERE id = ? AND ended_at IS NULL`,
+         WHERE learner_id = ? AND id = ? AND ended_at IS NULL`,
       )
-      .bind(now, JSON.stringify({ completedItems: view.completedItems }), changeId, row.id),
+      .bind(
+        now,
+        JSON.stringify({ completedItems: view.completedItems }),
+        changeId,
+        row.learner_id,
+        row.id,
+      ),
   ]);
 }
 
