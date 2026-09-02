@@ -1,9 +1,10 @@
 import {
-  classifyWordAudioMapping,
   deriveTonePair,
   normalizeNumericPinyin,
+  normalizeSourcePinyin,
+  normalizedPinyinTokens,
+  sameNormalizedPinyin,
   singleTone,
-  type WordAudioMappingStatus,
 } from "../domain/pronunciation";
 import { uniqueReadings, type V1SourceLexeme } from "./v1-import";
 
@@ -11,15 +12,169 @@ const IMPORT_SOURCE = "chinese-learning pronunciation foundation";
 const AUDIO_SOURCE = "audio-cmn";
 const AUDIO_LICENSE = "CC-BY-SA";
 const AUDIO_ATTRIBUTION = "Yue Tan; audio-cmn curation by Hugo Lopez and contributors";
-const AUDIO_MAPPING_BASIS = "exact_hanzi_filename_single_active_reading";
+export const AUDIO_MAPPING_BASIS_SINGLE_READING =
+  "exact_hanzi_filename_single_active_reading" as const;
+export const AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION =
+  "exact_source_pronunciation_active_reading" as const;
+export const AUDIO_MAPPING_BASES = [
+  AUDIO_MAPPING_BASIS_SINGLE_READING,
+  AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
+] as const;
 const IMPORT_FORMAT = "pronunciation-foundation-v1";
 
-export interface PronunciationAudioItem {
+export type PronunciationMappingBasis = (typeof AUDIO_MAPPING_BASES)[number];
+
+export type PronunciationResolutionReason =
+  | "no_matching_canonical_reading"
+  | "multiple_canonical_rows_match"
+  | "missing_source_pronunciation_metadata"
+  | "conflicting_source_evidence"
+  | "unsupported_normalization_case";
+
+export interface PronunciationSourceEvidence {
+  sourceText: string;
+  sourcePronunciation: string;
+  normalizedSourcePinyin: string[];
+  metadataSourceId: string;
+  metadataSourceDigest: string;
+  metadataSourceRecordPath: string;
+}
+
+export interface PronunciationMetadataRecord {
+  sourceText: string;
+  sourcePronunciation: string;
+  normalizedSourcePinyin: string[];
+  sourcePath: string;
+  sourceSection?: string;
+}
+
+export interface PronunciationMetadataSource {
+  id: string;
+  artifactSha256: string;
+  snapshotSha256?: string;
+  sourceName?: string;
+  metadataUrl?: string;
+  archiveUrl?: string;
+  sourceReadmeUrl?: string;
+  selectionRevision?: string;
+  records: PronunciationMetadataRecord[];
+}
+
+export interface PronunciationAudioFile {
+  sourcePath: string;
+  contentSha256: string;
+  byteLength: number;
+}
+
+interface PronunciationAudioFileItem extends PronunciationAudioFile {
   simplified: string;
-  status: WordAudioMappingStatus;
-  sourcePath?: string;
-  contentSha256?: string;
-  byteLength?: number;
+}
+
+export interface PronunciationReliableAudioItem extends PronunciationAudioFileItem {
+  status: "reliable";
+  targetReadingId: string;
+  mappingBasis: PronunciationMappingBasis;
+  sourceEvidence?: PronunciationSourceEvidence;
+}
+
+export interface PronunciationUnresolvedAudioItem extends PronunciationAudioFileItem {
+  status: "ambiguous";
+  resolutionReason?: PronunciationResolutionReason;
+  sourceEvidence?: PronunciationSourceEvidence;
+}
+
+export interface PronunciationMissingAudioItem {
+  simplified: string;
+  status: "missing";
+}
+
+export type PronunciationAudioItem =
+  PronunciationReliableAudioItem | PronunciationUnresolvedAudioItem | PronunciationMissingAudioItem;
+
+export function resolvePronunciationAudioItem(
+  lexeme: V1SourceLexeme,
+  audioFile: PronunciationAudioFile | null,
+  metadataSource?: PronunciationMetadataSource,
+): PronunciationAudioItem {
+  if (!audioFile) return { simplified: lexeme.simplified, status: "missing" };
+
+  const readings = uniqueReadings(lexeme, lexemeId(lexeme.simplified));
+  if (readings.length === 1) {
+    return {
+      simplified: lexeme.simplified,
+      ...audioFile,
+      status: "reliable",
+      targetReadingId: readings[0]!.id,
+      mappingBasis: AUDIO_MAPPING_BASIS_SINGLE_READING,
+    };
+  }
+
+  const sourceRecord = metadataSource?.records.find(
+    ({ sourceText }) => sourceText === lexeme.simplified,
+  );
+  if (!sourceRecord) {
+    return {
+      simplified: lexeme.simplified,
+      ...audioFile,
+      status: "ambiguous",
+      resolutionReason: "missing_source_pronunciation_metadata",
+    };
+  }
+
+  let normalizedSourcePinyin: string[];
+  try {
+    normalizedSourcePinyin = normalizedPinyinTokens(
+      normalizeSourcePinyin(sourceRecord.sourcePronunciation),
+    );
+  } catch {
+    return {
+      simplified: lexeme.simplified,
+      ...audioFile,
+      status: "ambiguous",
+      resolutionReason: sourceRecord.sourcePronunciation.trim()
+        ? "unsupported_normalization_case"
+        : "missing_source_pronunciation_metadata",
+    };
+  }
+  if (!sameStringArray(normalizedSourcePinyin, sourceRecord.normalizedSourcePinyin)) {
+    return {
+      simplified: lexeme.simplified,
+      ...audioFile,
+      status: "ambiguous",
+      resolutionReason: "conflicting_source_evidence",
+    };
+  }
+
+  const sourceEvidence: PronunciationSourceEvidence = {
+    sourceText: sourceRecord.sourceText,
+    sourcePronunciation: sourceRecord.sourcePronunciation,
+    normalizedSourcePinyin,
+    metadataSourceId: metadataSource?.id ?? "",
+    metadataSourceDigest: metadataSource?.artifactSha256 ?? "",
+    metadataSourceRecordPath: sourceRecord.sourcePath,
+  };
+  const sourceSyllables = normalizeSourcePinyin(sourceRecord.sourcePronunciation);
+  const matches = readings.filter(({ form }) =>
+    sameNormalizedPinyin(sourceSyllables, normalizeNumericPinyin(form.transcriptions.numeric)),
+  );
+  if (matches.length === 1) {
+    return {
+      simplified: lexeme.simplified,
+      ...audioFile,
+      status: "reliable",
+      targetReadingId: matches[0]!.id,
+      mappingBasis: AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
+      sourceEvidence,
+    };
+  }
+  return {
+    simplified: lexeme.simplified,
+    ...audioFile,
+    status: "ambiguous",
+    resolutionReason:
+      matches.length === 0 ? "no_matching_canonical_reading" : "multiple_canonical_rows_match",
+    sourceEvidence,
+  };
 }
 
 export interface PronunciationImportInput {
@@ -27,6 +182,7 @@ export interface PronunciationImportInput {
   vocabularyVersion: string;
   audioVersion: string;
   audioItems: PronunciationAudioItem[];
+  metadataSource?: PronunciationMetadataSource;
   createdAt?: number;
 }
 
@@ -44,6 +200,14 @@ export interface PronunciationCoverage {
   completeToneReadings: number;
   singleToneReadings: number;
   tonePairReadings: number;
+  sourceAudioPresent: number;
+  existingReliable: number;
+  recoveredExact: number;
+  totalReliable: number;
+  stillAmbiguous: number;
+  missing: number;
+  pronunciationCards: number;
+  audioCards: number;
   audioReliable: number;
   audioAmbiguous: number;
   audioMissing: number;
@@ -61,11 +225,12 @@ export async function derivePronunciationImportIdentity(
 ): Promise<PronunciationImportIdentity> {
   validateInput(input);
   const contentDigest = await sha256(canonicalJson(canonicalContent(input)));
+  const metadataIdentity = metadataSourceIdentity(input.metadataSource);
   return {
     contentDigest,
     sourceVersion:
       `complete-hsk-vocabulary@${input.vocabularyVersion};` +
-      `audio-cmn@${input.audioVersion};content-sha256:${contentDigest}`,
+      `audio-cmn@${input.audioVersion};${metadataIdentity};content-sha256:${contentDigest}`,
     changeId: `pronunciation-import:sha256:${contentDigest}`,
   };
 }
@@ -79,7 +244,8 @@ export function pronunciationCoverage(input: PronunciationImportInput): Pronunci
   let completeToneReadings = 0;
   let singleToneReadings = 0;
   let tonePairReadings = 0;
-  let cards = 0;
+  let pronunciationCards = 0;
+  let audioCards = 0;
 
   for (const lexeme of input.lexemes) {
     const lexemeReadings = uniqueReadings(lexeme, lexemeId(lexeme.simplified));
@@ -95,9 +261,24 @@ export function pronunciationCoverage(input: PronunciationImportInput): Pronunci
       if (complete) completeToneReadings += 1;
       if (singleTone(syllables) !== null) singleToneReadings += 1;
       if (deriveTonePair(syllables) !== null) tonePairReadings += 1;
-      cards += pronunciationActivities(syllables, audio?.status === "reliable").length;
+      const hasExactAudio = audio?.status === "reliable" && audio.targetReadingId === reading.id;
+      const activities = pronunciationActivities(syllables, hasExactAudio);
+      pronunciationCards += activities.length;
+      if (hasExactAudio) audioCards += 2;
     }
   }
+
+  const existingReliable = input.audioItems.filter(
+    (item) =>
+      item.status === "reliable" && item.mappingBasis === AUDIO_MAPPING_BASIS_SINGLE_READING,
+  ).length;
+  const recoveredExact = input.audioItems.filter(
+    (item) =>
+      item.status === "reliable" && item.mappingBasis === AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
+  ).length;
+  const totalReliable = existingReliable + recoveredExact;
+  const stillAmbiguous = input.audioItems.filter(({ status }) => status === "ambiguous").length;
+  const missing = input.audioItems.filter(({ status }) => status === "missing").length;
 
   return {
     lexemes: input.lexemes.length,
@@ -107,10 +288,18 @@ export function pronunciationCoverage(input: PronunciationImportInput): Pronunci
     completeToneReadings,
     singleToneReadings,
     tonePairReadings,
-    audioReliable: input.audioItems.filter(({ status }) => status === "reliable").length,
-    audioAmbiguous: input.audioItems.filter(({ status }) => status === "ambiguous").length,
-    audioMissing: input.audioItems.filter(({ status }) => status === "missing").length,
-    cards,
+    sourceAudioPresent: totalReliable + stillAmbiguous,
+    existingReliable,
+    recoveredExact,
+    totalReliable,
+    stillAmbiguous,
+    missing,
+    pronunciationCards,
+    audioCards,
+    audioReliable: totalReliable,
+    audioAmbiguous: stillAmbiguous,
+    audioMissing: missing,
+    cards: pronunciationCards,
   };
 }
 
@@ -136,7 +325,7 @@ export async function buildPronunciationImportStatements(
        ${sqlText(identity.sourceVersion)},
        ${sqlText(
          `${coverage.readings} exact readings, ${coverage.cards} ordinary-practice cards, ` +
-           `${coverage.audioReliable} reliable word recordings; content sha256 ${identity.contentDigest}`,
+           `${coverage.totalReliable} reliable word recordings; content sha256 ${identity.contentDigest}`,
        )},
        ${createdAt}
      );`,
@@ -163,7 +352,8 @@ export async function buildPronunciationImportStatements(
 
     for (const reading of readings) {
       const syllables = normalizeNumericPinyin(reading.form.transcriptions.numeric);
-      const reliableAudio = audio?.status === "reliable" ? audio : null;
+      const reliableAudio =
+        audio?.status === "reliable" && audio.targetReadingId === reading.id ? audio : null;
       const activities = pronunciationActivities(syllables, reliableAudio !== null);
       const currentCardIds = activities.map((activity) =>
         sqlText(`card:${reading.id}:${activity}`),
@@ -222,18 +412,36 @@ export async function buildPronunciationImportStatements(
            ${revision},
            ${createdAt}
          WHERE ${importAllowed};`);
+        const evidence = reliableAudio.sourceEvidence;
         statements.push(`INSERT INTO lexeme_reading_media
-          (lexeme_reading_id, media_asset_id, role, mapping_basis, content_revision)
+          (lexeme_reading_id, media_asset_id, role, mapping_basis,
+           source_text, source_pronunciation, normalized_source_pinyin,
+           metadata_source_id, metadata_source_digest, metadata_source_record_path,
+           content_revision)
          SELECT
            ${sqlText(reading.id)},
            ${sqlText(media.id)},
            'word_pronunciation',
-           ${sqlText(AUDIO_MAPPING_BASIS)},
+           ${sqlText(reliableAudio.mappingBasis)},
+           ${sqlNullableText(evidence?.sourceText)},
+           ${sqlNullableText(evidence?.sourcePronunciation)},
+           ${sqlNullableText(
+             evidence === undefined ? undefined : JSON.stringify(evidence.normalizedSourcePinyin),
+           )},
+           ${sqlNullableText(evidence?.metadataSourceId)},
+           ${sqlNullableText(evidence?.metadataSourceDigest)},
+           ${sqlNullableText(evidence?.metadataSourceRecordPath)},
            ${revision}
          WHERE ${importAllowed}
          ON CONFLICT(lexeme_reading_id, role) DO UPDATE SET
            media_asset_id = excluded.media_asset_id,
            mapping_basis = excluded.mapping_basis,
+           source_text = excluded.source_text,
+           source_pronunciation = excluded.source_pronunciation,
+           normalized_source_pinyin = excluded.normalized_source_pinyin,
+           metadata_source_id = excluded.metadata_source_id,
+           metadata_source_digest = excluded.metadata_source_digest,
+           metadata_source_record_path = excluded.metadata_source_record_path,
            content_revision = excluded.content_revision;`);
       } else {
         statements.push(`DELETE FROM lexeme_reading_media
@@ -264,7 +472,7 @@ export async function buildPronunciationImportStatements(
 export function mediaIdentity(
   audioVersion: string,
   simplified: string,
-  audio: PronunciationAudioItem,
+  audio: PronunciationAudioFile,
 ): { id: string; deliveryKey: string; url: string } {
   const digest = requiredAudioField(audio.contentSha256, "contentSha256");
   const hanziHex = bytesToHex(new TextEncoder().encode(simplified));
@@ -291,6 +499,7 @@ function validateInput(input: PronunciationImportInput): void {
   if (!Number.isSafeInteger(input.createdAt ?? 0) || (input.createdAt ?? 0) < 0) {
     throw new Error("createdAt must be a non-negative integer");
   }
+  validateMetadataSource(input.metadataSource);
   const lexemeNames = new Set<string>();
   for (const lexeme of input.lexemes) {
     if (!lexeme.simplified.trim() || lexeme.forms.length === 0) {
@@ -308,21 +517,42 @@ function validateInput(input: PronunciationImportInput): void {
       throw new Error(`invalid or duplicate audio mapping item: ${item.simplified}`);
     }
     itemNames.add(item.simplified);
-    const readingCount = uniqueReadings(
-      input.lexemes.find(({ simplified }) => simplified === item.simplified)!,
-      lexemeId(item.simplified),
-    ).length;
-    const hasFile = item.sourcePath !== undefined;
-    if (item.status !== classifyWordAudioMapping(hasFile, readingCount)) {
+    const lexeme = input.lexemes.find(({ simplified }) => simplified === item.simplified)!;
+    const readings = uniqueReadings(lexeme, lexemeId(item.simplified));
+    if (item.status === "missing") continue;
+    if (!item.sourcePath || !/^[0-9a-f]{64}$/u.test(item.contentSha256)) {
+      throw new Error(`audio file evidence is invalid: ${item.simplified}`);
+    }
+    if (!Number.isSafeInteger(item.byteLength) || item.byteLength <= 0) {
+      throw new Error(`audio byte length is invalid: ${item.simplified}`);
+    }
+    if (readings.length === 1 && item.status !== "reliable") {
       throw new Error(`audio mapping status does not match source evidence: ${item.simplified}`);
     }
-    if (hasFile) {
-      if (!/^[0-9a-f]{64}$/u.test(item.contentSha256 ?? "")) {
-        throw new Error(`audio content digest is invalid: ${item.simplified}`);
+    if (item.status === "reliable") {
+      if (!readings.some(({ id }) => id === item.targetReadingId)) {
+        throw new Error(`audio target reading is not active for ${item.simplified}`);
       }
-      if (!Number.isSafeInteger(item.byteLength) || (item.byteLength ?? 0) <= 0) {
-        throw new Error(`audio byte length is invalid: ${item.simplified}`);
+      if (item.mappingBasis === AUDIO_MAPPING_BASIS_SINGLE_READING) {
+        if (
+          readings.length !== 1 ||
+          item.targetReadingId !== readings[0]!.id ||
+          item.sourceEvidence
+        ) {
+          throw new Error(`single-reading audio basis is invalid: ${item.simplified}`);
+        }
+      } else if (item.mappingBasis === AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION) {
+        if (readings.length < 2) {
+          throw new Error(
+            `source-pronunciation audio basis needs multiple readings: ${item.simplified}`,
+          );
+        }
+        validateSourceEvidence(item.sourceEvidence, input.metadataSource, item.simplified);
+      } else {
+        throw new Error(`audio mapping basis is invalid: ${item.simplified}`);
       }
+    } else if (item.sourceEvidence) {
+      validateSourceEvidence(item.sourceEvidence, input.metadataSource, item.simplified);
     }
   }
   if (itemNames.size !== lexemeNames.size) {
@@ -336,7 +566,8 @@ function canonicalContent(input: PronunciationImportInput): unknown {
     pronunciationPolicy: {
       neutralTone: 5,
       tonePair: "exactly-two-complete-source-syllables",
-      audioMappingBasis: AUDIO_MAPPING_BASIS,
+      audioMappingBasis: [...AUDIO_MAPPING_BASES],
+      exactReadingResolution: "one-active-lexeme-reading-matches-source-pronunciation",
     },
     audioSource: {
       name: AUDIO_SOURCE,
@@ -347,6 +578,14 @@ function canonicalContent(input: PronunciationImportInput): unknown {
     },
     vocabularyVersion: input.vocabularyVersion,
     audioVersion: input.audioVersion,
+    metadataSource: input.metadataSource
+      ? {
+          ...input.metadataSource,
+          records: [...input.metadataSource.records].sort((left, right) =>
+            compareStrings(left.sourceText, right.sourceText),
+          ),
+        }
+      : null,
     lexemes: input.lexemes.map((lexeme) => ({
       simplified: lexeme.simplified,
       hskLevel: lexeme.hskLevel,
@@ -359,7 +598,7 @@ function canonicalContent(input: PronunciationImportInput): unknown {
       })),
     })),
     audioItems: [...input.audioItems].sort((left, right) =>
-      left.simplified.localeCompare(right.simplified),
+      compareStrings(left.simplified, right.simplified),
     ),
   };
 }
@@ -376,6 +615,105 @@ function requiredAudioField(value: string | undefined, field: string): string {
 function requiredAudioNumber(value: number | undefined): number {
   if (value === undefined) throw new Error("reliable audio is missing byteLength");
   return value;
+}
+
+function sqlNullableText(value: string | undefined): string {
+  return value === undefined ? "NULL" : sqlText(value);
+}
+
+function validateMetadataSource(source: PronunciationMetadataSource | undefined): void {
+  if (!source) return;
+  if (!source.id.trim() || !/^[0-9a-f]{64}$/u.test(source.artifactSha256)) {
+    throw new Error("pronunciation metadata source identity is invalid");
+  }
+  if (source.snapshotSha256 !== undefined && !/^[0-9a-f]{64}$/u.test(source.snapshotSha256)) {
+    throw new Error("pronunciation metadata snapshot digest is invalid");
+  }
+  const texts = new Set<string>();
+  for (const record of source.records) {
+    if (
+      !record.sourceText.trim() ||
+      !record.sourcePath.trim() ||
+      !record.sourcePronunciation.trim() ||
+      record.normalizedSourcePinyin.length === 0 ||
+      record.normalizedSourcePinyin.some((token) => !/^[a-zv]+[1-5]$/u.test(token))
+    ) {
+      throw new Error(`pronunciation metadata record is invalid: ${record.sourceText}`);
+    }
+    if (texts.has(record.sourceText)) {
+      throw new Error(`duplicate pronunciation metadata record: ${record.sourceText}`);
+    }
+    let normalizedSourcePinyin: string[];
+    try {
+      normalizedSourcePinyin = normalizedPinyinTokens(
+        normalizeSourcePinyin(record.sourcePronunciation),
+      );
+    } catch {
+      throw new Error(`pronunciation metadata pinyin is unsupported: ${record.sourceText}`);
+    }
+    if (!sameStringArray(record.normalizedSourcePinyin, normalizedSourcePinyin)) {
+      throw new Error(`pronunciation metadata pinyin evidence conflicts: ${record.sourceText}`);
+    }
+    texts.add(record.sourceText);
+  }
+}
+
+function validateSourceEvidence(
+  evidence: PronunciationSourceEvidence | undefined,
+  metadataSource: PronunciationMetadataSource | undefined,
+  simplified: string,
+): void {
+  if (!evidence || !metadataSource) {
+    throw new Error(`exact source pronunciation evidence is missing: ${simplified}`);
+  }
+  if (
+    evidence.sourceText !== simplified ||
+    evidence.metadataSourceId !== metadataSource.id ||
+    evidence.metadataSourceDigest !== metadataSource.artifactSha256 ||
+    !evidence.sourcePronunciation.trim() ||
+    !evidence.metadataSourceRecordPath.trim() ||
+    evidence.normalizedSourcePinyin.length === 0 ||
+    evidence.normalizedSourcePinyin.some((token) => !/^[a-zv]+[1-5]$/u.test(token))
+  ) {
+    throw new Error(`exact source pronunciation evidence is invalid: ${simplified}`);
+  }
+  const record = metadataSource.records.find(({ sourceText }) => sourceText === simplified);
+  if (
+    !record ||
+    record.sourcePath !== evidence.metadataSourceRecordPath ||
+    record.sourcePronunciation !== evidence.sourcePronunciation ||
+    !sameStringArray(record.normalizedSourcePinyin, evidence.normalizedSourcePinyin)
+  ) {
+    throw new Error(`exact source pronunciation evidence does not match metadata: ${simplified}`);
+  }
+  let normalizedSourcePinyin: string[];
+  try {
+    normalizedSourcePinyin = normalizedPinyinTokens(
+      normalizeSourcePinyin(evidence.sourcePronunciation),
+    );
+  } catch {
+    throw new Error(`exact source pronunciation pinyin is unsupported: ${simplified}`);
+  }
+  if (!sameStringArray(evidence.normalizedSourcePinyin, normalizedSourcePinyin)) {
+    throw new Error(`exact source pronunciation pinyin evidence conflicts: ${simplified}`);
+  }
+}
+
+function metadataSourceIdentity(source: PronunciationMetadataSource | undefined): string {
+  if (!source) return "metadata-source@none";
+  return (
+    `metadata-source@${source.id};` +
+    `metadata-artifact-sha256:${source.artifactSha256};` +
+    `metadata-snapshot-sha256:${source.snapshotSha256 ?? "unspecified"}`
+  );
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 async function sha256(value: string): Promise<string> {

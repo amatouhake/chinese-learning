@@ -393,6 +393,10 @@
     return activity === "hanzi_to_meaning" || activity === "pinyin_to_hanzi";
   }
 
+  function shouldShowCardAudio(activity: ReflexCard["activityType"]): boolean {
+    return phase === "feedback" || shouldAutoplayOnPrompt(activity);
+  }
+
   function shouldHoldOnlineAdvance(): boolean {
     return (
       phase === "prompt" ||
@@ -544,7 +548,7 @@
       <div class="reflex-prompt">
         <div class="prompt-line">
           <h3>{question.card.prompt}</h3>
-          {#if question.card.media}
+          {#if question.card.media && shouldShowCardAudio(question.card.activityType)}
             <button
               class="word-audio reflex-audio"
               aria-label="発音を聞き直す"

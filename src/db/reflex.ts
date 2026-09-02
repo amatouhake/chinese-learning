@@ -204,6 +204,8 @@ async function buildCandidateCards(
   now: number,
   choiceCount: QuizChoiceCount,
 ): Promise<ReflexCard[]> {
+  // Exact reading cards may use their own media; lexeme-level cards still
+  // require a single active reading before selecting the preferred media.
   const result = await db
     .prepare(
       `SELECT
@@ -244,10 +246,13 @@ async function buildCandidateCards(
                LIMIT 1
              )
            )
-             AND 1 = (
-               SELECT COUNT(*) FROM lexeme_readings active_reading
-               WHERE active_reading.lexeme_id = l.id
-                 AND active_reading.retired_at IS NULL
+             AND (
+               r.id IS NOT NULL
+               OR 1 = (
+                 SELECT COUNT(*) FROM lexeme_readings active_reading
+                 WHERE active_reading.lexeme_id = l.id
+                   AND active_reading.retired_at IS NULL
+               )
              )
            LIMIT 1
          ) AS media_id,
@@ -270,10 +275,13 @@ async function buildCandidateCards(
                LIMIT 1
              )
            )
-             AND 1 = (
-               SELECT COUNT(*) FROM lexeme_readings active_reading
-               WHERE active_reading.lexeme_id = l.id
-                 AND active_reading.retired_at IS NULL
+             AND (
+               r.id IS NOT NULL
+               OR 1 = (
+                 SELECT COUNT(*) FROM lexeme_readings active_reading
+                 WHERE active_reading.lexeme_id = l.id
+                   AND active_reading.retired_at IS NULL
+               )
              )
            LIMIT 1
          ) AS media_delivery_key,
@@ -296,10 +304,13 @@ async function buildCandidateCards(
                LIMIT 1
              )
            )
-             AND 1 = (
-               SELECT COUNT(*) FROM lexeme_readings active_reading
-               WHERE active_reading.lexeme_id = l.id
-                 AND active_reading.retired_at IS NULL
+             AND (
+               r.id IS NOT NULL
+               OR 1 = (
+                 SELECT COUNT(*) FROM lexeme_readings active_reading
+                 WHERE active_reading.lexeme_id = l.id
+                   AND active_reading.retired_at IS NULL
+               )
              )
            LIMIT 1
          ) AS media_license,
@@ -322,10 +333,13 @@ async function buildCandidateCards(
                LIMIT 1
              )
            )
-             AND 1 = (
-               SELECT COUNT(*) FROM lexeme_readings active_reading
-               WHERE active_reading.lexeme_id = l.id
-                 AND active_reading.retired_at IS NULL
+             AND (
+               r.id IS NOT NULL
+               OR 1 = (
+                 SELECT COUNT(*) FROM lexeme_readings active_reading
+                 WHERE active_reading.lexeme_id = l.id
+                   AND active_reading.retired_at IS NULL
+               )
              )
            LIMIT 1
          ) AS media_attribution,

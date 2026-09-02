@@ -1,16 +1,23 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildPronunciationImportSql,
   mediaIdentity,
   pronunciationCoverage,
+  resolvePronunciationAudioItem,
   type PronunciationAudioItem,
+  type PronunciationMetadataRecord,
+  type PronunciationMetadataSource,
   type PronunciationImportInput,
 } from "../src/db/pronunciation-import";
 import { uniqueReadings, type V1SourceLexeme } from "../src/db/v1-import";
-import { classifyWordAudioMapping } from "../src/domain/pronunciation";
 import { assertCleanImportedPaths, parseSourceLexemes } from "./import-v1";
+
+const DEFAULT_METADATA_SNAPSHOT = fileURLToPath(
+  new URL("../data/pronunciation/shtooka-cmn-caen-tan.json", import.meta.url),
+);
 
 const SUPPORTED_OPTIONS = new Set([
   "--vocabulary-root",
@@ -18,6 +25,7 @@ const SUPPORTED_OPTIONS = new Set([
   "--output",
   "--media-root",
   "--report",
+  "--metadata-snapshot",
   "--levels",
   "--limit",
 ]);
@@ -41,12 +49,59 @@ async function main(): Promise<void> {
     audioVersion: input.audioVersion,
     ...coverage,
     staged,
-    ambiguous: input.audioItems
-      .filter(({ status }) => status === "ambiguous")
-      .map(({ simplified }) => simplified),
-    missing: input.audioItems
-      .filter(({ status }) => status === "missing")
-      .map(({ simplified }) => simplified),
+    metadataSource: input.metadataSource
+      ? {
+          id: input.metadataSource.id,
+          sourceName: input.metadataSource.sourceName,
+          metadataUrl: input.metadataSource.metadataUrl,
+          artifactSha256: input.metadataSource.artifactSha256,
+          snapshotSha256: input.metadataSource.snapshotSha256,
+          recordCount: input.metadataSource.records.length,
+        }
+      : null,
+    newlyRecovered: input.audioItems
+      .filter(
+        (item): item is Extract<PronunciationAudioItem, { status: "reliable" }> =>
+          item.status === "reliable" &&
+          item.mappingBasis === "exact_source_pronunciation_active_reading",
+      )
+      .map((item) => {
+        const lexeme = input.lexemes.find(({ simplified }) => simplified === item.simplified)!;
+        const reading = uniqueReadings(
+          lexeme,
+          `lexeme:complete-hsk:${encodeURIComponent(item.simplified).replaceAll("'", "%27")}`,
+        ).find(({ id }) => id === item.targetReadingId);
+        if (!reading || !item.sourceEvidence) {
+          throw new Error(`recovered audio lacks exact reading evidence: ${item.simplified}`);
+        }
+        return {
+          hanzi: item.simplified,
+          targetReadingId: item.targetReadingId,
+          canonicalPinyin: reading.form.transcriptions.pinyin,
+          canonicalNumericPinyin: reading.form.transcriptions.numeric,
+          sourcePronunciation: item.sourceEvidence.sourcePronunciation,
+          normalizedSourcePinyin: item.sourceEvidence.normalizedSourcePinyin,
+          mappingBasis: item.mappingBasis,
+          sourcePath: item.sourcePath,
+          metadataSourceRecordPath: item.sourceEvidence.metadataSourceRecordPath,
+        };
+      }),
+    unresolvedAmbiguous: input.audioItems
+      .filter(
+        (item): item is Extract<PronunciationAudioItem, { status: "ambiguous" }> =>
+          item.status === "ambiguous",
+      )
+      .map((item) => ({
+        hanzi: item.simplified,
+        reason: item.resolutionReason ?? "missing_source_pronunciation_metadata",
+        sourcePath: item.sourcePath,
+        sourcePronunciation: item.sourceEvidence?.sourcePronunciation,
+        normalizedSourcePinyin: item.sourceEvidence?.normalizedSourcePinyin,
+        metadataSourceRecordPath: item.sourceEvidence?.metadataSourceRecordPath,
+      })),
+    missingAudio: input.audioItems
+      .filter((item) => item.status === "missing")
+      .map(({ simplified }) => ({ hanzi: simplified, reason: "missing_source_audio" })),
     sourceFirstFormProperNames: input.lexemes
       .filter(
         (lexeme) =>
@@ -69,6 +124,7 @@ async function main(): Promise<void> {
 export interface PronunciationCliOptions {
   vocabularyRoot: string;
   audioRoot: string;
+  metadataSnapshot: string;
   output: string;
   mediaRoot: string;
   report: string;
@@ -77,7 +133,10 @@ export interface PronunciationCliOptions {
 }
 
 export async function loadPronunciationImportInput(
-  options: Pick<PronunciationCliOptions, "vocabularyRoot" | "audioRoot" | "levels" | "limit">,
+  options: Pick<
+    PronunciationCliOptions,
+    "vocabularyRoot" | "audioRoot" | "levels" | "limit" | "metadataSnapshot"
+  >,
 ): Promise<PronunciationImportInput> {
   const vocabularyVersion = gitHead(options.vocabularyRoot);
   const audioVersion = gitHead(options.audioRoot);
@@ -90,8 +149,14 @@ export async function loadPronunciationImportInput(
     lexemes.push(...parseSourceLexemes(await Bun.file(path).json(), level));
   }
   const selectedLexemes = options.limit === undefined ? lexemes : lexemes.slice(0, options.limit);
-  const audioItems = await inspectAudioItems(options.audioRoot, audioVersion, selectedLexemes);
-  return { lexemes: selectedLexemes, vocabularyVersion, audioVersion, audioItems };
+  const metadataSource = await loadPronunciationMetadataSnapshot(options.metadataSnapshot);
+  const audioItems = await inspectAudioItems(
+    options.audioRoot,
+    audioVersion,
+    selectedLexemes,
+    metadataSource,
+  );
+  return { lexemes: selectedLexemes, vocabularyVersion, audioVersion, audioItems, metadataSource };
 }
 
 export async function stageReliableAudio(
@@ -117,6 +182,7 @@ async function inspectAudioItems(
   audioRoot: string,
   audioVersion: string,
   lexemes: V1SourceLexeme[],
+  metadataSource: PronunciationMetadataSource,
 ): Promise<PronunciationAudioItem[]> {
   const treeBlobs = gitTreeBlobs(audioRoot, audioVersion, "64k/hsk");
   const items: PronunciationAudioItem[] = [];
@@ -133,13 +199,8 @@ async function inspectAudioItems(
         `audio path tracked at ${audioVersion} is missing from worktree: ${sourcePath}`,
       );
     }
-    const readingCount = uniqueReadings(
-      lexeme,
-      `lexeme:complete-hsk:${encodeURIComponent(lexeme.simplified).replaceAll("'", "%27")}`,
-    ).length;
-    const status = classifyWordAudioMapping(fileExists, readingCount);
     if (!fileExists) {
-      items.push({ simplified: lexeme.simplified, status });
+      items.push(resolvePronunciationAudioItem(lexeme, null, metadataSource));
       continue;
     }
 
@@ -151,15 +212,77 @@ async function inspectAudioItems(
         `refusing to attribute modified audio bytes to ${audioVersion}: ${sourcePath}`,
       );
     }
-    items.push({
-      simplified: lexeme.simplified,
-      status,
-      sourcePath,
-      contentSha256: await digestHex("SHA-256", bytes),
-      byteLength: bytes.byteLength,
-    });
+    items.push(
+      resolvePronunciationAudioItem(
+        lexeme,
+        {
+          sourcePath,
+          contentSha256: await digestHex("SHA-256", bytes),
+          byteLength: bytes.byteLength,
+        },
+        metadataSource,
+      ),
+    );
   }
   return items;
+}
+
+export async function loadPronunciationMetadataSnapshot(
+  snapshotPath: string,
+): Promise<PronunciationMetadataSource> {
+  const bytes = new Uint8Array(await Bun.file(snapshotPath).arrayBuffer());
+  if (bytes.byteLength === 0)
+    throw new Error(`pronunciation metadata snapshot is empty: ${snapshotPath}`);
+  const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !isRecord(value.source) ||
+    !Array.isArray(value.records)
+  ) {
+    throw new Error(`invalid pronunciation metadata snapshot: ${snapshotPath}`);
+  }
+  const source = value.source;
+  const records = value.records;
+  if (
+    typeof source.id !== "string" ||
+    typeof source.name !== "string" ||
+    typeof source.metadataUrl !== "string" ||
+    typeof source.archiveUrl !== "string" ||
+    typeof source.sourceReadmeUrl !== "string" ||
+    typeof source.artifactSha256 !== "string" ||
+    !records.every(isMetadataRecord)
+  ) {
+    throw new Error(`invalid pronunciation metadata snapshot fields: ${snapshotPath}`);
+  }
+  return {
+    id: source.id,
+    sourceName: source.name,
+    metadataUrl: source.metadataUrl,
+    archiveUrl: source.archiveUrl,
+    sourceReadmeUrl: source.sourceReadmeUrl,
+    artifactSha256: source.artifactSha256,
+    snapshotSha256: await digestHex("SHA-256", bytes),
+    selectionRevision:
+      typeof source.selectionRevision === "string" ? source.selectionRevision : undefined,
+    records,
+  };
+}
+
+function isMetadataRecord(value: unknown): value is PronunciationMetadataRecord {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.sourceText === "string" &&
+    typeof value.sourcePronunciation === "string" &&
+    typeof value.sourcePath === "string" &&
+    Array.isArray(value.normalizedSourcePinyin) &&
+    value.normalizedSourcePinyin.every((token) => typeof token === "string") &&
+    (value.sourceSection === undefined || typeof value.sourceSection === "string")
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function gitTreeBlobs(directory: string, revision: string, treePath: string): Map<string, string> {
@@ -230,6 +353,7 @@ function parseArguments(arguments_: string[]): PronunciationCliOptions {
   return {
     vocabularyRoot,
     audioRoot,
+    metadataSnapshot: values.get("--metadata-snapshot") ?? DEFAULT_METADATA_SNAPSHOT,
     output: values.get("--output") ?? ".generated/pronunciation-import.sql",
     mediaRoot: values.get("--media-root") ?? ".generated/public/media",
     report: values.get("--report") ?? ".generated/pronunciation-report.json",
@@ -251,6 +375,8 @@ function usageError(reason?: string): Error {
     (reason === undefined ? "" : `${reason}\n`) +
       "Usage: bun run import:pronunciation -- --vocabulary-root <checkout> " +
       "--audio-root <checkout> [--output .generated/pronunciation-import.sql] " +
-      "[--media-root .generated/public/media] [--report path] [--levels 1,2,3] [--limit N]",
+      "[--media-root .generated/public/media] [--report path] " +
+      "[--metadata-snapshot data/pronunciation/shtooka-cmn-caen-tan.json] " +
+      "[--levels 1,2,3] [--limit N]",
   );
 }

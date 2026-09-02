@@ -240,6 +240,8 @@ async function selectStudyCard(
     avoidedLexemeIds.length === 0
       ? ""
       : `AND l.id NOT IN (${avoidedLexemeIds.map(() => "?").join(", ")})`;
+  // Vocabulary Study cards are lexeme-level and carry no exact reading ID.
+  // Keep the single-active-reading guard so they cannot borrow a sibling's audio.
   return db
     .prepare(
       `SELECT

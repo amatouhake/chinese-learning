@@ -294,14 +294,7 @@ async function selectCard(
          AND r.retired_at IS NULL
          AND (
            c.activity_type NOT IN ('audio_to_hanzi', 'audio_to_meaning')
-           OR (
-             m.id IS NOT NULL
-             AND 1 = (
-               SELECT COUNT(*) FROM lexeme_readings audio_sibling
-               WHERE audio_sibling.lexeme_id = r.lexeme_id
-                 AND audio_sibling.retired_at IS NULL
-             )
-           )
+           OR m.id IS NOT NULL
          )
          AND NOT EXISTS (
            SELECT 1 FROM attempts a
@@ -326,8 +319,15 @@ async function selectCard(
          (SELECT MAX(practice.occurred_at) FROM attempts practice
           WHERE practice.learner_id = ? AND practice.card_id = c.id
             AND practice.mode = 'pronunciation'),
-         (SELECT COUNT(*) FROM lexeme_readings sibling
-          WHERE sibling.lexeme_id = r.lexeme_id AND sibling.retired_at IS NULL),
+         CASE
+           -- Audio cards already carry an exact reading/media join. The old
+           -- single-reading preference is still useful for other activities,
+           -- but must not defer recovered exact-reading audio indefinitely.
+           WHEN c.activity_type IN ('audio_to_hanzi', 'audio_to_meaning')
+             AND m.id IS NOT NULL THEN 0
+           ELSE (SELECT COUNT(*) FROM lexeme_readings sibling
+             WHERE sibling.lexeme_id = r.lexeme_id AND sibling.retired_at IS NULL)
+         END,
          COALESCE(hsk_level, 2147483647),
          COALESCE(l.frequency_rank, 2147483647),
          l.simplified,
