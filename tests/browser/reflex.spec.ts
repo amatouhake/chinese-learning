@@ -183,6 +183,50 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("button", { name: "文法コース" })).toBeVisible();
   });
 
+  test("遅れて閉じた最終同期後もクイズ結果の操作を復元する", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await introduceVocabulary(page, 8);
+    await openVocabularyQuiz(page);
+
+    let delayedFinalAttempt = false;
+    await page.route("**/api/attempts", async (route) => {
+      const attempt = route.request().postDataJSON() as AttemptInput;
+      if (!delayedFinalAttempt && attempt.mode === "reflex" && attempt.metadata?.round === 12) {
+        delayedFinalAttempt = true;
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+      }
+      await route.continue();
+    });
+
+    await page.getByRole("button", { name: "この設定で始める" }).click();
+    await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
+    const sessionId = (await readMeta(page)).activeReflexSessionId;
+    expect(typeof sessionId).toBe("string");
+
+    for (let round = 1; round <= 12; round += 1) {
+      await answerReflex(page, round, true, 0, round === 12);
+    }
+    expect(delayedFinalAttempt).toBe(true);
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(
+      page.getByText("現在の記録を同期してから、次の練習を始められます。"),
+    ).toBeVisible();
+    expect((await readMeta(page)).activeReflexSessionId).toBe(sessionId);
+
+    await expect
+      .poll(() => readMeta(page).then((meta) => meta.activeReflexSessionId), {
+        timeout: 20_000,
+      })
+      .toBeNull();
+    await expect(page.getByRole("button", { name: "同じ設定でもう一度" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "設定を変える" })).toBeVisible();
+    await expect(page.getByText("現在の記録を同期してから、次の練習を始められます。")).toHaveCount(
+      0,
+    );
+  });
+
   test("touch Quiz choices do not retain hover styling on the next question", async ({
     browser,
   }) => {

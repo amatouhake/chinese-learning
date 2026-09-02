@@ -63,6 +63,11 @@ interface PersistedMeta {
   contentRevision: number | null;
 }
 
+type LegacyMetaFields = {
+  lastCompletedStudySessionId?: string | null;
+  dismissedStudySessionId?: string | null;
+};
+
 export interface PracticeResultPointer {
   mode: PracticeMode;
   sessionId: string;
@@ -667,18 +672,19 @@ export class OfflineLearningStore {
   private async ensureState(createId: () => string): Promise<void> {
     const existing = await this.readMeta();
     if (existing) {
+      const legacy = existing as Partial<PersistedMeta> & LegacyMetaFields;
+      const hasLegacyFields =
+        Object.prototype.hasOwnProperty.call(existing, "lastCompletedStudySessionId") ||
+        Object.prototype.hasOwnProperty.call(existing, "dismissedStudySessionId");
       if (
         existing.activeReflexSessionId === undefined ||
         existing.activeReadingSessionId === undefined ||
         existing.activeGrammarSessionId === undefined ||
         existing.activeGrammarTopicId === undefined ||
         existing.presentedResult === undefined ||
-        existing.dismissedResultSessionIds === undefined
+        existing.dismissedResultSessionIds === undefined ||
+        hasLegacyFields
       ) {
-        const legacy = existing as PersistedMeta & {
-          lastCompletedStudySessionId?: string | null;
-          dismissedStudySessionId?: string | null;
-        };
         const legacyDismissed = legacy.dismissedStudySessionId
           ? [legacy.dismissedStudySessionId]
           : [];
@@ -687,17 +693,24 @@ export class OfflineLearningStore {
           legacy.lastCompletedStudySessionId !== legacy.dismissedStudySessionId
             ? { mode: "study" as const, sessionId: legacy.lastCompletedStudySessionId }
             : null;
-        const transaction = this.db.transaction(META_STORE, "readwrite");
-        transaction.objectStore(META_STORE).put({
+        const migrated = {
           ...existing,
           revision: existing.revision + 1,
           activeReflexSessionId: existing.activeReflexSessionId ?? null,
           activeReadingSessionId: existing.activeReadingSessionId ?? null,
           activeGrammarSessionId: existing.activeGrammarSessionId ?? null,
           activeGrammarTopicId: existing.activeGrammarTopicId ?? null,
-          presentedResult: existing.presentedResult ?? legacyPresented,
-          dismissedResultSessionIds: existing.dismissedResultSessionIds ?? legacyDismissed,
-        } satisfies PersistedMeta);
+          presentedResult:
+            existing.presentedResult === undefined ? legacyPresented : existing.presentedResult,
+          dismissedResultSessionIds:
+            existing.dismissedResultSessionIds === undefined
+              ? legacyDismissed
+              : existing.dismissedResultSessionIds,
+        } as PersistedMeta & LegacyMetaFields;
+        delete migrated.lastCompletedStudySessionId;
+        delete migrated.dismissedStudySessionId;
+        const transaction = this.db.transaction(META_STORE, "readwrite");
+        transaction.objectStore(META_STORE).put(migrated satisfies PersistedMeta);
         await transactionDone(transaction);
       }
       await this.reconcileLegacyStateUnderLock();
@@ -1515,11 +1528,7 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
 
 async function requiredMeta(store: IDBObjectStore): Promise<PersistedMeta> {
   const value = (await request(store.get(STATE_KEY))) as
-    | (Partial<PersistedMeta> & {
-        lastCompletedStudySessionId?: string | null;
-        dismissedStudySessionId?: string | null;
-      })
-    | undefined;
+    (Partial<PersistedMeta> & LegacyMetaFields) | undefined;
   if (!value) throw new Error("IndexedDB study identity disappeared; refusing to replace it");
   const legacyDismissed = value.dismissedStudySessionId ? [value.dismissedStudySessionId] : [];
   const legacyPresented =
@@ -1533,7 +1542,7 @@ async function requiredMeta(store: IDBObjectStore): Promise<PersistedMeta> {
     activeReadingSessionId: value.activeReadingSessionId ?? null,
     activeGrammarSessionId: value.activeGrammarSessionId ?? null,
     activeGrammarTopicId: value.activeGrammarTopicId ?? null,
-    presentedResult: value.presentedResult ?? legacyPresented,
+    presentedResult: value.presentedResult === undefined ? legacyPresented : value.presentedResult,
     dismissedResultSessionIds: value.dismissedResultSessionIds ?? legacyDismissed,
   } as PersistedMeta;
 }

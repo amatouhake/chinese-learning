@@ -302,6 +302,7 @@
       syncMessage =
         result.pending === 0 ? "この端末に保存済み · 同期済み" : `${result.pending}件を同期待ち`;
     }
+    await reconcileCompletedReflexSession();
   }
 
   function syncInBackground(): void {
@@ -393,7 +394,24 @@
   }
 
   function shouldHoldOnlineAdvance(): boolean {
-    return phase === "prompt" || phase === "feedback" || String(phase) === "advancing";
+    return (
+      phase === "prompt" ||
+      phase === "feedback" ||
+      phase === "completed" ||
+      String(phase) === "advancing"
+    );
+  }
+
+  async function reconcileCompletedReflexSession(): Promise<void> {
+    if (!store || phase !== "completed" || !browserState?.activeReflexSessionId) return;
+    const sessionId = browserState.activeReflexSessionId;
+    const cached = await store.getReflexSession(sessionId);
+    if (!cached || cached.session.endedAt === null) return;
+    // A delayed final-answer sync can close the canonical session after the
+    // local completion timer has rendered the result. Re-run the normal
+    // completion path so the active pointer is cleared while the result stays
+    // presented and its actions become available.
+    await loadNextQuestion();
   }
 
   function updatePreferences(next: Partial<QuizPreferences>): void {
