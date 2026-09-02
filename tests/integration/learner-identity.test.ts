@@ -4,6 +4,10 @@ import { describe, expect, test } from "vitest";
 import { ingestAttempt } from "../../src/db/ingestion";
 import { createLearner } from "../../src/db/learners";
 import { getProgressSnapshot } from "../../src/db/progress";
+import {
+  getPracticeSessionSummary,
+  getRecentPracticeSessions,
+} from "../../src/db/practice-sessions";
 import { createStudySession, getNextStudyCard } from "../../src/db/study";
 import { pullSyncChanges } from "../../src/db/sync";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
@@ -153,12 +157,46 @@ describe("learner identity foundation", () => {
         now: () => NOW,
       }),
     ).toMatchObject({ status: "completed" });
+    expect(
+      await getNextStudyCard(env.DB, LEARNER_B, "session:b:phone", "device:b:phone", {
+        now: () => NOW,
+      }),
+    ).toMatchObject({ status: "completed" });
+
+    const [historyA, historyB] = await Promise.all([
+      getRecentPracticeSessions(env.DB, LEARNER_A, { now: () => NOW }),
+      getRecentPracticeSessions(env.DB, LEARNER_B, { now: () => NOW }),
+    ]);
+    expect(historyA.sessions.map(({ sessionId }) => sessionId)).toEqual(["session:a:phone"]);
+    expect(historyB.sessions.map(({ sessionId }) => sessionId)).toEqual(["session:b:phone"]);
+    expect(historyA.sessions[0]).toMatchObject({
+      learnerId: LEARNER_A,
+      practice: "vocabulary_review",
+      configuration: { direction: "mixed", requestedItems: 1, actualItems: 1 },
+      evidence: { ratings: { distribution: { 3: 1 } } },
+    });
+    expect(historyB.sessions[0]).toMatchObject({
+      learnerId: LEARNER_B,
+      evidence: { ratings: { distribution: { 1: 1 } } },
+      attentionItems: [{ label: "学", reasons: ["忘れた"] }],
+    });
+    await expect(getPracticeSessionSummary(env.DB, LEARNER_B, "session:a:phone")).rejects.toThrow(
+      "completed practice session",
+    );
     const learnerBAfterHiddenChange = await pullSyncChanges(env.DB, LEARNER_B, {
       ...syncInput("device:b:phone"),
       cursor: phoneB.nextCursor,
       contentRevision: phoneB.currentContentRevision,
     });
-    expect(learnerBAfterHiddenChange.learnerChanges).toEqual([]);
+    expect(learnerBAfterHiddenChange.learnerChanges).toMatchObject([
+      { entityType: "study_session", sessionId: "session:b:phone", mode: "study" },
+    ]);
+    expect(
+      learnerBAfterHiddenChange.learnerChanges.some(
+        (change) =>
+          change.entityType === "study_session" && change.sessionId.startsWith("session:a:"),
+      ),
+    ).toBe(false);
     expect(learnerBAfterHiddenChange.contentChanges).toEqual([]);
     expect(learnerBAfterHiddenChange.nextCursor).toBeGreaterThan(phoneB.nextCursor);
 

@@ -209,16 +209,18 @@ sans for what the interface is asking the learner to do.
 The shell uses a sticky dark header and a centered learning rail. The full application
 is capped at `78rem`; active learning surfaces are capped at `54rem` so a phone and a
 desktop both keep a clear focal stage. Desktop navigation occupies one header row. At
-phone widths it becomes a compact brand row with a designed five-mode menu (`単語`, `瞬発`,
-`発音`, `読解`, `進捗`) and an icon-only sound control; the active surface header keeps only
+phone widths it becomes a compact brand row with a designed four-surface menu (`単語`, `発音`,
+`読解`, `記録`) and an icon-only sound control. `単語` has a quiet second-level switch between
+`復習` and `クイズ`; `記録` separates `最近の練習` from `長期の進捗`. The active surface header keeps only
 useful progress or sync context.
 
-Active Study and Reflex cards use a warm-paper stage with a stable internal rhythm:
+Active Review and Quiz cards use a warm-paper stage with a stable internal rhythm:
 metadata, prompt, answer rail, and progression. Phone choices are two columns with
 comfortable targets; desktop expands them to four columns. The Study rating rail follows
 the same 2-by-2 to 4-across rule. Active cards are sized against the viewport so the
 prompt, feedback, and next action normally remain visible at 320px and 390px widths.
-Long-form Progress and reference content may extend naturally.
+Result detail, Session History, long-term Progress, and reference content extend by ordinary page
+scrolling and never introduce an inner vertical scroll trap.
 
 The spacing rhythm is compact on the shell (`0.2rem` hairlines, `0.55rem` control gaps,
 `1rem` sections) and generous inside a prompt (`1.5rem` stage padding). Every active
@@ -286,7 +288,7 @@ frames. Avoid pills except for compact queue/status badges.
 ### Navigation
 
 - **Style:** A compact dark rail with inline SVG line icons on desktop. Narrow phones use
-  a custom touch-sized five-mode menu whose current label remains visible and whose selected
+  a custom touch-sized four-surface menu whose current label remains visible and whose selected
   item is marked in the Night Proof Desk ink-raised surface; the active mode is never hidden
   behind an unlabeled icon.
 - **Behavior:** Navigation is available between sessions and remains quiet during a card.
@@ -297,14 +299,14 @@ frames. Avoid pills except for compact queue/status badges.
 
 ### Proof Feedback Rail
 
-The four answer targets are the feedback surface. In Reflex, the correct choice paints
+The answer targets are the feedback surface. In Vocabulary Quiz, the correct choice paints
 green, the selected wrong choice paints vermilion, the remaining disabled choices recede,
 and the feedback row names the answer and exposes Continue. This preserves spatial memory
 and makes correctness legible through text, color, and restrained sound together.
 
 ### Exact-Reading Audio
 
-Listen controls appear beside an ordinary Study or Reflex prompt only when a reliable
+Listen controls appear beside an ordinary Review or Quiz prompt only when a reliable
 exact-reading media mapping exists. Playback is optional and controlled by the persistent
 Sound toggle. Missing, ambiguous, uncached, or unplayable media produces a quiet status
 message or disappears from the ordinary card; it never borrows another reading.

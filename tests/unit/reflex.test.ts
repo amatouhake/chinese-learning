@@ -103,6 +103,8 @@ describe("Reflex automaticity selection", () => {
       promptHint: null,
       answerChoiceId: "card",
       selectedChoiceId: "card",
+      choiceCount: 4 as const,
+      timingInterrupted: false,
       options: ["card", "b", "c", "d"].map((id, index) => ({
         id,
         label: id,
@@ -119,6 +121,49 @@ describe("Reflex automaticity selection", () => {
         })),
       }),
     ).toThrow("presentation order");
+
+    const legacy = { ...metadata } as Record<string, unknown>;
+    delete legacy.choiceCount;
+    delete legacy.timingInterrupted;
+    expect(parseReflexAttemptMetadata(legacy, { legacyResponseMs: 1_200 })).toMatchObject({
+      choiceCount: 4,
+      timingInterrupted: false,
+    });
+    expect(() => parseReflexAttemptMetadata(legacy)).toThrow("timingInterrupted must be boolean");
+    expect(() =>
+      parseReflexAttemptMetadata({ ...legacy, choiceCount: 4 }, { legacyResponseMs: 1_200 }),
+    ).toThrow("timingInterrupted must be boolean");
+  });
+
+  test("does not apply the 4-choice slow repeat bonus to 9-choice answers", () => {
+    const fourChoice = card("four", "hanzi_to_meaning", 0);
+    const nineChoice = {
+      ...card("nine", "hanzi_to_meaning", 0),
+      choices: Array.from({ length: 9 }, (_, index) => ({
+        id: index === 0 ? "nine" : `nine:${index}`,
+        label: `choice ${index}`,
+      })),
+    };
+    const answers = [answer("four", 1, true, 3_000), answer("nine", 2, true, 3_000)];
+
+    expect(selectNextReflexCard([fourChoice, nineChoice], answers, 3)?.cardId).toBe("four");
+  });
+
+  test("keeps interrupted correct timing neutral for repeat priority", () => {
+    const target = card("target", "hanzi_to_meaning", 0);
+    const faster = card("faster", "meaning_to_hanzi", 1.9);
+    const cooldownA = card("cooldown-a", "hanzi_to_pinyin", 0);
+    const cooldownB = card("cooldown-b", "pinyin_to_hanzi", 0);
+    const answers: ReflexAnswerRecord[] = [
+      answer("target", 1, true, null, true),
+      answer("faster", 2, true, 600),
+      answer("cooldown-a", 3, true, 600),
+      answer("cooldown-b", 4, true, 600),
+    ];
+
+    expect(selectNextReflexCard([target, faster, cooldownA, cooldownB], answers, 5)?.cardId).toBe(
+      "target",
+    );
   });
 });
 
@@ -150,7 +195,15 @@ function answer(
   cardId: string,
   round: number,
   correct: boolean,
-  responseMs: number,
+  responseMs: number | null,
+  timingInterrupted = false,
 ): ReflexAnswerRecord {
-  return { eventId: `event:${round}`, cardId, correct, responseMs, round };
+  return {
+    eventId: `event:${round}`,
+    cardId,
+    correct,
+    responseMs,
+    timingInterrupted,
+    round,
+  };
 }

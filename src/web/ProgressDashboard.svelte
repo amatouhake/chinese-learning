@@ -94,10 +94,9 @@
 <section class="progress-dashboard" aria-labelledby="progress-heading">
   <header class="dashboard-heading">
     <div class="dashboard-title">
-      <span class="section-mark">05</span>
       <div>
-        <h2 id="progress-heading">進捗</h2>
-        <p>学習記録を、学び方を変えずにまとめています。</p>
+        <h2 id="progress-heading">長期の進捗</h2>
+        <p>復習状態や最近30日の積み上がりを、セッション記録とは分けてまとめます。</p>
       </div>
     </div>
     <button class="refresh-button" onclick={loadSnapshot} disabled={loading}>更新</button>
@@ -255,19 +254,26 @@
         <article class="dashboard-card mode-card-progress reflex-progress">
           <div class="mode-card-heading">
             <div>
-              <p>瞬発</p>
+              <p>単語・クイズ</p>
               <h4>{snapshot.reflex.recentResponses}回答</h4>
             </div>
-            <strong>平均 {formatLatency(snapshot.reflex.latency.averageResponseMs)}</strong>
           </div>
-          <div class="dual-metric">
-            <span><strong>{formatPercent(snapshot.reflex.correctness)}</strong> 正答率</span>
-            <span
-              ><strong>{snapshot.reflex.latency.slowResponses}</strong>
-              {snapshot.reflex.latency.slowThresholdMs / 1_000}秒以上</span
-            >
-          </div>
-          <p class="mode-detail">自動化の記録のみ。FSRSの予定には影響しません。</p>
+          <ul class="activity-summary-list">
+            {#each snapshot.reflex.byChoiceCount as quiz (quiz.choiceCount)}
+              <li>
+                <span>{quiz.choiceCount}択 · {quiz.recentResponses}回答</span>
+                <strong>
+                  {formatPercent(quiz.correctness)} · 平均 {formatLatency(
+                    quiz.latency.averageResponseMs,
+                  )}
+                  {#if quiz.latency.slowThresholdMs !== null && quiz.latency.slowResponses !== null}
+                    · {quiz.latency.slowThresholdMs / 1_000}秒以上 {quiz.latency.slowResponses}
+                  {/if}
+                </strong>
+              </li>
+            {/each}
+          </ul>
+          <p class="mode-detail">選択問題の記録です。復習の予定には影響しません。</p>
         </article>
       </div>
     </section>
@@ -285,7 +291,7 @@
         <article class="dashboard-card empty-dashboard-card">
           <h4>要確認の項目はまだありません</h4>
           <p>
-            「もう一度」「あやふや」、誤答、遅い瞬発回答、低い理解度や自己評価が、出題元とともに表示されます。
+            「もう一度」「あやふや」、誤答、遅いクイズ回答、低い理解度や自己評価が、出題元とともに表示されます。
           </p>
         </article>
       {:else}
@@ -295,6 +301,7 @@
               <div class="trouble-heading">
                 <span class="mode-chip mode-{item.mode}">{modeLabel(item.mode)}</span>
                 <span class="activity-chip">{activityLabel(item.activityType)}</span>
+                {#if item.choiceCount}<span class="activity-chip">{item.choiceCount}択</span>{/if}
               </div>
               <div class="trouble-copy">
                 <div>
@@ -314,7 +321,7 @@
     </section>
 
     <p class="snapshot-boundary-note">
-      集計は実際に練習した時刻を基準にしています。音声スキップは回答に数えず、読解は正誤を推定せず、文法は正答率と理解度を分け、瞬発はFSRSの外で記録します。
+      集計は実際に練習した時刻を基準にしています。音声スキップは回答に数えず、読解は正誤を推定せず、文法は正答率と理解度を分け、単語クイズは復習予定の外で記録します。
     </p>
   {/if}
 </section>

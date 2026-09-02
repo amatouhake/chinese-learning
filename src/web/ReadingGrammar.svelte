@@ -1,11 +1,21 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
 
-  import type { GrammarCard, GuidedSessionView, ReadingCard } from "../domain/types";
+  import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import type {
+    GrammarCard,
+    GrammarSessionSummary,
+    GuidedSessionView,
+    ReadingCard,
+    ReadingSessionSummary,
+  } from "../domain/types";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
   import { synchronizeLearning } from "./sync";
   import { learnerError } from "./ui-copy";
+  import { hasCompletedLocalResult, localGuidedSummary } from "./local-session-summary";
+  import { cachePracticeSummary } from "./practice-history-cache";
+  import PracticeResult from "./PracticeResult.svelte";
 
   type SurfaceMode = "reading" | "grammar";
   type ReadingPhase = "loading" | "prompt" | "advancing" | "empty" | "completed" | "error";
@@ -43,6 +53,7 @@
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
   let syncMessage = "5問の例文セットを準備しています…";
+  let completionSummary: ReadingSessionSummary | GrammarSessionSummary | null = null;
 
   onMount(() => void initializeMode());
 
@@ -55,14 +66,21 @@
     readingCard = null;
     grammarCard = null;
     errorMessage = "";
-    await initializeMode(requestedGrammarTopicId);
+    await initializeMode(requestedGrammarTopicId, false);
   }
 
-  async function initializeMode(requestedGrammarTopicId: string | null = null): Promise<void> {
+  async function initializeMode(
+    requestedGrammarTopicId: string | null = null,
+    restorePresentedMode = true,
+  ): Promise<void> {
     setLoading();
     try {
       store ??= await OfflineLearningStore.open(localStorage);
       browserState = await store.snapshot();
+      const presentedMode = browserState.presentedResult?.mode;
+      if (restorePresentedMode && (presentedMode === "reading" || presentedMode === "grammar")) {
+        mode = presentedMode;
+      }
       if (
         mode === "grammar" &&
         requestedGrammarTopicId &&
@@ -76,6 +94,7 @@
       }
       const activeId = activeSessionId();
       if (!activeId) {
+        if (await restoreCompletedResult()) return;
         if (browserOffline) {
           throw new Error(
             `再接続すると、新しい${mode === "reading" ? "読解" : "文法"}セットを準備できます。`,
@@ -159,11 +178,12 @@
     }
     setLoading(showLoading);
     if (mode === "reading") {
-      const [cachedSession, cachedCard] = await Promise.all([
-        store.getReadingSession(activeId),
+      const [record, cachedCard] = await Promise.all([
+        store.getGuidedSessionRecord("reading", activeId),
         store.getCachedReadingCard(activeId),
       ]);
-      if (!cachedSession) throw missingCacheError("reading");
+      if (!record) throw missingCacheError("reading");
+      const cachedSession = record.session;
       session = cachedSession;
       readingCard = cachedCard;
       revealStage = 0;
@@ -176,14 +196,19 @@
         browserState = await store.clearActiveReadingSession(activeId);
       }
       readingPhase = cachedSession.completedItems === 0 ? "empty" : "completed";
+      if (readingPhase === "completed") {
+        rememberGuidedCompletion(record.session, record.attempts);
+        browserState = await store.presentPracticeResult("reading", activeId);
+      }
       return;
     }
 
-    const [cachedSession, cachedCard] = await Promise.all([
-      store.getGrammarSession(activeId),
+    const [record, cachedCard] = await Promise.all([
+      store.getGuidedSessionRecord("grammar", activeId),
       store.getCachedGrammarCard(activeId),
     ]);
-    if (!cachedSession) throw missingCacheError("grammar");
+    if (!record) throw missingCacheError("grammar");
+    const cachedSession = record.session;
     session = cachedSession;
     grammarCard = cachedCard;
     exampleHelpRevealed = false;
@@ -197,6 +222,10 @@
       browserState = await store.clearActiveGrammarSession(activeId);
     }
     grammarPhase = cachedSession.completedItems === 0 ? "empty" : "completed";
+    if (grammarPhase === "completed") {
+      rememberGuidedCompletion(record.session, record.attempts);
+      browserState = await store.presentPracticeResult("grammar", activeId);
+    }
   }
 
   async function revealNext(): Promise<void> {
@@ -259,6 +288,9 @@
           sentenceId: readingCard.sentenceId,
           revealOrder: ["vocabulary", "pinyin", "meaning", "grammar"],
           grammarTopicIds: readingCard.grammarTopics.map(({ id }) => id),
+          grammarTopics: readingCard.grammarTopics.map(({ id, title }) => ({ id, title })),
+          itemLabel: readingCard.sentence.chinese,
+          itemDetail: readingCard.sentence.pinyin,
         },
       });
       browserState = staged.state;
@@ -312,6 +344,9 @@
           practiceVersionId: grammarCard.practiceVersionId,
           sentenceId: example.sentenceId,
           selectedChoiceId: selectedGrammarChoice,
+          topicTitle: grammarCard.topic.title,
+          itemLabel: grammarCard.topic.title,
+          itemDetail: completedPracticeSentence(grammarCard),
         },
       });
       browserState = staged.state;
@@ -414,6 +449,40 @@
     );
     return card.topic.practice.prompt.replace("___", answer?.label ?? "");
   }
+
+  function rememberGuidedCompletion(
+    completedSession: GuidedSessionView,
+    attempts: Parameters<typeof localGuidedSummary>[1],
+  ): void {
+    completionSummary = localGuidedSummary(completedSession, attempts);
+    cachePracticeSummary(completionSummary);
+  }
+
+  async function restoreCompletedResult(): Promise<boolean> {
+    if (!store || browserState?.presentedResult?.mode !== mode) return false;
+    const sessionId = browserState.presentedResult.sessionId;
+    if (browserState.dismissedResultSessionIds.includes(sessionId)) return false;
+    const record = await store.getGuidedSessionRecord(mode, sessionId);
+    if (!record || !hasCompletedLocalResult(record.session)) return false;
+    session = record.session;
+    readingCard = null;
+    grammarCard = null;
+    rememberGuidedCompletion(record.session, record.attempts);
+    if (mode === "reading") readingPhase = "completed";
+    else grammarPhase = "completed";
+    return true;
+  }
+
+  async function startAfterCompletion(): Promise<void> {
+    if (activeSessionId()) {
+      await initializeMode();
+      return;
+    }
+    if (store && session) {
+      browserState = await store.dismissPracticeResult(mode, session.id);
+    }
+    await createSession();
+  }
 </script>
 
 <svelte:window ononline={() => void handleOnline()} onoffline={handleOffline} />
@@ -446,7 +515,11 @@
   <section class="status-panel" aria-live="polite">
     <div class="pulse guided-pulse" aria-hidden="true"></div>
     <h2>例文セットを準備しています…</h2>
-    <p>次のレッスンを開いています。</p>
+    <p>
+      {mode === "reading"
+        ? PRACTICE_CATALOG.reading.setupDescription
+        : PRACTICE_CATALOG.grammar.setupDescription}
+    </p>
   </section>
 {:else if (mode === "reading" && readingPhase === "error") || (mode === "grammar" && grammarPhase === "error")}
   <section class="status-panel error-panel" role="alert">
@@ -461,24 +534,15 @@
     <h2>まだ教材がありません</h2>
     <p>このコースで使えるレッスンが準備されていません。</p>
   </section>
-{:else if (mode === "reading" && readingPhase === "completed") || (mode === "grammar" && grammarPhase === "completed")}
-  <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
-    </p>
-    <h2>{mode === "reading" ? "読解を完了" : "文法を完了"}</h2>
-    <p>
-      {session?.completedItems ?? 0}項目を確認しました。記録は{browserState?.pendingCount
-        ? "同期待ちです"
-        : "同期済みです"}。
-    </p>
-    <button
-      class="primary-button"
-      onclick={() => void (browserState?.pendingCount ? initializeMode() : createSession())}
-      >{browserState?.pendingCount
+{:else if ((mode === "reading" && readingPhase === "completed") || (mode === "grammar" && grammarPhase === "completed")) && completionSummary}
+  <section class="status-panel shared-result-panel">
+    <PracticeResult summary={completionSummary} />
+    <button class="primary-button" onclick={() => void startAfterCompletion()}
+      >{activeSessionId()
         ? "同期を再試行"
         : `別の${mode === "reading" ? "読解" : "文法"}を始める`}</button
     >
+    <a class="text-link" href="#progress">記録で詳しく見る</a>
   </section>
 {:else if mode === "reading" && readingCard}
   <section class="study-card reading-card" aria-live="polite">

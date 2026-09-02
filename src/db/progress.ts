@@ -42,6 +42,7 @@ interface VocabularyCountsRow {
 interface ModeSummaryRow {
   mode: PracticeMode;
   activity_type: ActivityType;
+  quiz_choice_count: number | null;
   attempts: number;
   distinct_items: number;
   correctness_responses: number;
@@ -84,6 +85,7 @@ interface TroubleRow {
   card_id: string;
   mode: PracticeMode;
   activity_type: ActivityType;
+  quiz_choice_count: number | null;
   label: string;
   detail: string | null;
   recent_attempts: number;
@@ -165,6 +167,10 @@ export async function getProgressSnapshot(
         `SELECT
            a.mode,
            a.activity_type,
+           CASE WHEN a.mode = 'reflex'
+             THEN COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4)
+             ELSE NULL
+           END AS quiz_choice_count,
            COUNT(*) AS attempts,
            COUNT(DISTINCT CASE
              WHEN a.mode = 'pronunciation'
@@ -191,7 +197,12 @@ export async function getProgressSnapshot(
                AND json_extract(a.metadata_json, '$.interaction') = 'skip-uncached-audio'
              THEN NULL ELSE a.response_ms
            END) AS average_response_ms,
-           SUM(CASE WHEN a.response_ms >= ? THEN 1 ELSE 0 END) AS slow_responses,
+           SUM(CASE
+             WHEN a.mode = 'reflex'
+               AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
+               AND a.response_ms >= ?
+             THEN 1 ELSE 0
+           END) AS slow_responses,
            SUM(CASE
              WHEN a.mode = 'pronunciation'
                AND json_extract(a.metadata_json, '$.interaction') = 'skip-uncached-audio'
@@ -205,8 +216,8 @@ export async function getProgressSnapshot(
              AS last_fsrs_review_at
          FROM attempts a LEFT JOIN fsrs_reviews r ON r.attempt_id = a.event_id
          WHERE a.learner_id = ? AND a.occurred_at >= ? AND a.occurred_at <= ?
-         GROUP BY a.mode, a.activity_type
-         ORDER BY a.mode, a.activity_type`,
+         GROUP BY a.mode, a.activity_type, quiz_choice_count
+         ORDER BY a.mode, a.activity_type, quiz_choice_count`,
       )
       .bind(REFLEX_SLOW_RESPONSE_MS, learnerId, recentCutoff, generatedAt),
     db
@@ -289,6 +300,10 @@ export async function getProgressSnapshot(
            c.id AS card_id,
            a.mode,
            a.activity_type,
+           CASE WHEN a.mode = 'reflex'
+             THEN COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4)
+             ELSE NULL
+           END AS quiz_choice_count,
            CASE c.subject_type
              WHEN 'lexeme' THEN lexeme.simplified
              WHEN 'lexeme_reading' THEN reading_lexeme.simplified
@@ -309,7 +324,9 @@ export async function getProgressSnapshot(
            COUNT(*) AS recent_attempts,
            SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END) AS errors,
            SUM(CASE
-             WHEN a.mode = 'reflex' AND a.response_ms >= ? THEN 1 ELSE 0
+             WHEN a.mode = 'reflex'
+               AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
+               AND a.response_ms >= ? THEN 1 ELSE 0
            END) AS slow_responses,
            SUM(CASE WHEN a.response_ms IS NOT NULL THEN 1 ELSE 0 END) AS response_time_responses,
            AVG(a.response_ms) AS average_response_ms,
@@ -326,7 +343,9 @@ export async function getProgressSnapshot(
            (SUM(CASE WHEN a.correct = 0 THEN 4 ELSE 0 END)
              + SUM(CASE WHEN a.self_rating IN (1, 2) THEN 3 ELSE 0 END)
              + SUM(CASE
-               WHEN a.mode = 'reflex' AND a.response_ms >= ? THEN 2 ELSE 0
+               WHEN a.mode = 'reflex'
+                 AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
+                 AND a.response_ms >= ? THEN 2 ELSE 0
              END)) AS priority
          FROM attempts a
          JOIN cards c ON c.id = a.card_id
@@ -341,11 +360,13 @@ export async function getProgressSnapshot(
              a.mode = 'pronunciation'
              AND json_extract(a.metadata_json, '$.interaction') = 'skip-uncached-audio'
            )
-         GROUP BY c.id, a.mode, a.activity_type, label, detail
+         GROUP BY c.id, a.mode, a.activity_type, quiz_choice_count, label, detail
          HAVING SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END) > 0
            OR SUM(CASE WHEN a.self_rating IN (1, 2) THEN 1 ELSE 0 END) > 0
            OR SUM(CASE
-             WHEN a.mode = 'reflex' AND a.response_ms >= ? THEN 1 ELSE 0
+             WHEN a.mode = 'reflex'
+               AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
+               AND a.response_ms >= ? THEN 1 ELSE 0
            END) > 0
          ), ranked AS (
            SELECT trouble.*,
@@ -386,7 +407,23 @@ export async function getProgressSnapshot(
   const pronunciationSummaries = summaries.filter(({ mode }) => mode === "pronunciation");
   const readingSummary = combineSummaries(summaries.filter(({ mode }) => mode === "reading"));
   const grammarSummary = combineSummaries(summaries.filter(({ mode }) => mode === "grammar"));
-  const reflexSummary = combineSummaries(summaries.filter(({ mode }) => mode === "reflex"));
+  const reflexSummaries = summaries.filter(({ mode }) => mode === "reflex");
+  const reflexByChoiceCount = ([4, 9] as const).map((choiceCount) => {
+    const summary = combineSummaries(
+      reflexSummaries.filter(({ quiz_choice_count }) => quiz_choice_count === choiceCount),
+    );
+    return {
+      choiceCount,
+      recentResponses: summary.attempts,
+      correctness: correctness(summary),
+      latency: {
+        averageResponseMs: roundNullable(summary.averageResponseMs, 0),
+        slowResponses: choiceCount === 4 ? summary.slowResponses : null,
+        slowThresholdMs: choiceCount === 4 ? REFLEX_SLOW_RESPONSE_MS : null,
+      },
+      lastPracticedAt: summary.lastPracticedAt,
+    };
+  });
 
   return {
     snapshotVersion: SNAPSHOT_VERSION,
@@ -457,14 +494,15 @@ export async function getProgressSnapshot(
       troublesomeTopics: troubleForMode(rankedTrouble, "grammar"),
     },
     reflex: {
-      recentResponses: reflexSummary.attempts,
-      correctness: correctness(reflexSummary),
-      latency: {
-        averageResponseMs: roundNullable(reflexSummary.averageResponseMs, 0),
-        slowResponses: reflexSummary.slowResponses,
-        slowThresholdMs: REFLEX_SLOW_RESPONSE_MS,
-      },
-      lastPracticedAt: reflexSummary.lastPracticedAt,
+      recentResponses: reflexByChoiceCount.reduce(
+        (total, summary) => total + summary.recentResponses,
+        0,
+      ),
+      byChoiceCount: reflexByChoiceCount,
+      lastPracticedAt: maximumNullable(
+        reflexByChoiceCount[0].lastPracticedAt,
+        reflexByChoiceCount[1].lastPracticedAt,
+      ),
       troublesomeItems: troubleForMode(rankedTrouble, "reflex"),
     },
     troublesomeItems,
@@ -661,6 +699,10 @@ function rankVocabularyTrouble(row: TroubleRow): RankedTroubleItem {
 
 function rankPracticeTrouble(row: TroubleRow): RankedTroubleItem {
   const reasons: string[] = [];
+  const choiceCount =
+    row.mode === "reflex" && (row.quiz_choice_count === 4 || row.quiz_choice_count === 9)
+      ? row.quiz_choice_count
+      : null;
   if (row.errors > 0)
     reasons.push(`${row.errors} incorrect response${plural(row.errors)} recently`);
   if (row.mode === "reflex" && row.slow_responses > 0) {
@@ -680,10 +722,11 @@ function rankPracticeTrouble(row: TroubleRow): RankedTroubleItem {
   return {
     priority: row.errors * 4 + row.slow_responses * 2 + row.low_self_ratings * 3,
     item: {
-      id: `${row.mode}:${row.card_id}`,
+      id: `${row.mode}:${row.card_id}${choiceCount === null ? "" : `:${choiceCount}`}`,
       cardId: row.card_id,
       mode: row.mode,
       activityType: row.activity_type,
+      ...(choiceCount === null ? {} : { choiceCount }),
       label: row.label,
       detail: row.detail,
       recentAttempts: row.recent_attempts,

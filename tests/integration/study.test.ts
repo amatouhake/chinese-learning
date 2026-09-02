@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
+import { getPracticeSessionSummary } from "../../src/db/practice-sessions";
 import { createStudySession, getNextStudyCard } from "../../src/db/study";
 import {
   buildV1ImportStatements,
@@ -11,7 +12,7 @@ import {
   type V1SourceLexeme,
 } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
-import type { AttemptInput, StudyNextResult } from "../../src/domain/types";
+import type { AttemptInput, PracticeSessionHistory, StudyNextResult } from "../../src/domain/types";
 
 describe("vocabulary study flow", () => {
   test("selects progressed due cards before deterministic new cards", async () => {
@@ -145,6 +146,26 @@ describe("vocabulary study flow", () => {
       card: null,
     });
     expect(completed.session.endedAt).not.toBeNull();
+    await expect(
+      getPracticeSessionSummary(env.DB, FIXED_OWNER_LEARNER_ID, "canonical-ui-session"),
+    ).resolves.toMatchObject({
+      practice: "vocabulary_review",
+      configuration: { direction: "mixed", requestedItems: 2, actualItems: 2 },
+      evidence: {
+        ratings: { distribution: { 3: 1, 4: 1 } },
+        directions: { hanzi_to_meaning: 1, meaning_to_hanzi: 1 },
+      },
+    });
+    const historyResponse = await localJson("/api/practice-sessions/recent", { limit: 10 });
+    expect(historyResponse.status).toBe(200);
+    expect(historyResponse.headers.get("Cache-Control")).toBe("no-store");
+    const history = (await historyResponse.json()) as PracticeSessionHistory;
+    expect(history.sessions).toContainEqual(
+      expect.objectContaining({
+        sessionId: "canonical-ui-session",
+        practice: "vocabulary_review",
+      }),
+    );
     await retireLexemes(["爱"]);
   });
 

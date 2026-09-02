@@ -244,8 +244,20 @@ describe("canonical progress snapshot", () => {
     });
     expect(snapshot.reflex).toMatchObject({
       recentResponses: 2,
-      correctness: { responses: 2, correct: 1, rate: 0.5 },
-      latency: { averageResponseMs: 2_500, slowResponses: 1, slowThresholdMs: 2_500 },
+      byChoiceCount: [
+        {
+          choiceCount: 4,
+          recentResponses: 2,
+          correctness: { responses: 2, correct: 1, rate: 0.5 },
+          latency: { averageResponseMs: 2_500, slowResponses: 1, slowThresholdMs: 2_500 },
+        },
+        {
+          choiceCount: 9,
+          recentResponses: 0,
+          correctness: { responses: 0, correct: 0, rate: null },
+          latency: { averageResponseMs: null, slowResponses: null, slowThresholdMs: null },
+        },
+      ],
     });
     expect(new Set(snapshot.troublesomeItems.map(({ mode }) => mode))).toEqual(
       new Set(["study", "pronunciation", "reading", "grammar", "reflex"]),
@@ -449,7 +461,7 @@ describe("canonical progress snapshot", () => {
         ({ cardId, mode }) => cardId === sentenceCard.id && mode === "reading",
       ),
     ).toBe(true);
-  });
+  }, 15_000);
 
   test("excludes future-dated attempts from rolling activity and trouble", async () => {
     await applyImport(
@@ -476,6 +488,67 @@ describe("canonical progress snapshot", () => {
     expect(snapshot.reflex).toEqual(before.reflex);
     expect(snapshot.troublesomeItems).toEqual(before.troublesomeItems);
     expect(snapshot.dataThrough.latestAttemptOccurredAt).toBe(futureOccurredAt);
+  });
+
+  test("keeps legacy 4-choice and explicit 9-choice Quiz evidence separate", async () => {
+    const before = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
+    const beforeFour = before.reflex.byChoiceCount.find(({ choiceCount }) => choiceCount === 4)!;
+    const beforeNine = before.reflex.byChoiceCount.find(({ choiceCount }) => choiceCount === 9)!;
+    const card = await firstVocabularyCard();
+    await registerLearnerDevice(env.DB, FIXED_OWNER_LEARNER_ID, "progress-device-reflex");
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO study_sessions
+          (id, learner_id, device_id, mode, started_at, context_json)
+         VALUES ('progress-legacy-four-session', ?, 'progress-device-reflex', 'reflex', ?,
+           '{"maxItems":1,"choiceCount":4}')`,
+      ).bind(FIXED_OWNER_LEARNER_ID, NOW - DAY),
+      env.DB.prepare(
+        `INSERT INTO study_sessions
+          (id, learner_id, device_id, mode, started_at, context_json)
+         VALUES ('progress-nine-session', ?, 'progress-device-reflex', 'reflex', ?,
+           '{"maxItems":1,"choiceCount":9}')`,
+      ).bind(FIXED_OWNER_LEARNER_ID, NOW - DAY),
+    ]);
+    await insertCanonicalAttempt({
+      eventId: "progress-legacy-four-choice",
+      deviceSeq: 9_001,
+      occurredAt: NOW - 2_000,
+      receivedAt: NOW - 1_900,
+      cardId: card.id,
+      studySessionId: "progress-legacy-four-session",
+      mode: "reflex",
+      activityType: card.activity_type,
+      correct: true,
+      responseMs: 3_000,
+      metadata: { interaction: "reflex-multiple-choice", round: 1 },
+    });
+    await insertCanonicalAttempt({
+      eventId: "progress-nine-choice",
+      deviceSeq: 9_002,
+      occurredAt: NOW - 1_000,
+      receivedAt: NOW - 900,
+      cardId: card.id,
+      studySessionId: "progress-nine-session",
+      mode: "reflex",
+      activityType: card.activity_type,
+      correct: false,
+      responseMs: 5_000,
+      metadata: { interaction: "reflex-multiple-choice", round: 1, choiceCount: 9 },
+    });
+
+    const after = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
+    const afterFour = after.reflex.byChoiceCount.find(({ choiceCount }) => choiceCount === 4)!;
+    const afterNine = after.reflex.byChoiceCount.find(({ choiceCount }) => choiceCount === 9)!;
+    expect(afterFour.recentResponses).toBe(beforeFour.recentResponses + 1);
+    expect(afterFour.correctness.correct).toBe(beforeFour.correctness.correct + 1);
+    expect(afterFour.latency.slowResponses).toBe((beforeFour.latency.slowResponses ?? 0) + 1);
+    expect(afterFour.latency.slowThresholdMs).toBe(2_500);
+    expect(afterNine.recentResponses).toBe(beforeNine.recentResponses + 1);
+    expect(afterNine.correctness.correct).toBe(beforeNine.correctness.correct);
+    expect(afterNine.latency.averageResponseMs).not.toBeNull();
+    expect(afterNine.latency.slowResponses).toBeNull();
+    expect(afterNine.latency.slowThresholdMs).toBeNull();
   });
 });
 

@@ -6,7 +6,12 @@
     PRONUNCIATION_AUDIO_SKIP_REASON,
     type PronunciationFocus,
   } from "../domain/pronunciation";
-  import type { PronunciationCard, PronunciationSessionView } from "../domain/types";
+  import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import type {
+    PronunciationCard,
+    PronunciationSessionSummary,
+    PronunciationSessionView,
+  } from "../domain/types";
   import { isPronunciationAudioCached } from "./audio-cache";
   import { ApiError, postJson } from "./api";
   import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
@@ -17,16 +22,31 @@
     prepareSound,
   } from "./sound";
   import { synchronizeLearning } from "./sync";
-  import { learnerError } from "./ui-copy";
+  import { learnerError, pronunciationFocusLabel } from "./ui-copy";
+  import { hasCompletedLocalResult, localPronunciationSummary } from "./local-session-summary";
+  import { cachePracticeSummary } from "./practice-history-cache";
+  import PracticeResult from "./PracticeResult.svelte";
 
   type Phase =
     "loading" | "choose" | "prompt" | "revealed" | "advancing" | "empty" | "completed" | "error";
   const focuses: Array<{ id: PronunciationFocus; label: string; hint: string }> = [
-    { id: "mixed", label: "おまかせ", hint: "ピンイン・声調・聞き取り・発話" },
-    { id: "pinyin", label: "ピンイン", hint: "正確な読みを見分ける" },
-    { id: "tones", label: "声調", hint: "単音節と二音節の声調" },
-    { id: "listening", label: "聞き取り", hint: "音声から漢字や意味を選ぶ" },
-    { id: "speaking", label: "発話", hint: "声に出して比べ、自己評価する" },
+    {
+      id: "mixed",
+      label: pronunciationFocusLabel("mixed"),
+      hint: "ピンイン・声調・聞き取り・発話",
+    },
+    { id: "pinyin", label: pronunciationFocusLabel("pinyin"), hint: "正確な読みを見分ける" },
+    { id: "tones", label: pronunciationFocusLabel("tones"), hint: "単音節と二音節の声調" },
+    {
+      id: "listening",
+      label: pronunciationFocusLabel("listening"),
+      hint: "音声から漢字や意味を選ぶ",
+    },
+    {
+      id: "speaking",
+      label: pronunciationFocusLabel("speaking"),
+      hint: "声に出して比べ、自己評価する",
+    },
   ];
   const selfRatings = [
     { value: 1, label: "もう一度", hint: "声調・音節を外した" },
@@ -51,6 +71,7 @@
   let syncMessage = "練習内容を選ぶと、端末用のセットを準備できます。";
   let answerInFlight = false;
   let autoplayedCardKey: string | null = null;
+  let completionSummary: PronunciationSessionSummary | null = null;
 
   onMount(() => void initializePronunciation());
 
@@ -61,6 +82,7 @@
       store ??= await OfflineLearningStore.open(localStorage);
       browserState = await store.snapshot();
       if (!browserState.activePronunciationSessionId) {
+        if (await restoreCompletedResult()) return;
         phase = "choose";
         return;
       }
@@ -137,17 +159,18 @@
     }
     phase = showLoading ? "loading" : "advancing";
     const sessionId = browserState.activePronunciationSessionId;
-    const [cachedSession, cachedCard] = await Promise.all([
-      store.getPronunciationSession(sessionId),
+    const [record, cachedCard] = await Promise.all([
+      store.getPronunciationSessionRecord(sessionId),
       store.getCachedPronunciationCard(sessionId),
     ]);
-    if (!cachedSession) {
+    if (!record) {
       throw new Error(
         isOffline
           ? "接続が切れる前に、この発音セットを保存できませんでした。"
           : "発音セットをまだ取得できていません。",
       );
     }
+    const cachedSession = record.session;
     session = cachedSession;
     card = cachedCard;
     answerSaved = false;
@@ -164,6 +187,36 @@
       browserState = await store.clearActivePronunciationSession(sessionId);
     }
     phase = session.completedItems === 0 ? "empty" : "completed";
+    if (phase === "completed") {
+      completionSummary = localPronunciationSummary(cachedSession, record.attempts);
+      cachePracticeSummary(completionSummary);
+      browserState = await store.presentPracticeResult("pronunciation", sessionId);
+    }
+  }
+
+  async function restoreCompletedResult(): Promise<boolean> {
+    if (!store || browserState?.presentedResult?.mode !== "pronunciation") return false;
+    const sessionId = browserState.presentedResult.sessionId;
+    if (browserState.dismissedResultSessionIds.includes(sessionId)) return false;
+    const record = await store.getPronunciationSessionRecord(sessionId);
+    if (!record || !hasCompletedLocalResult(record.session)) return false;
+    session = record.session;
+    card = null;
+    completionSummary = localPronunciationSummary(record.session, record.attempts);
+    cachePracticeSummary(completionSummary);
+    phase = "completed";
+    return true;
+  }
+
+  async function leaveCompletedResult(): Promise<void> {
+    if (browserState?.activePronunciationSessionId) {
+      await initializePronunciation();
+      return;
+    }
+    if (store && session) {
+      browserState = await store.dismissPracticeResult("pronunciation", session.id);
+    }
+    phase = "choose";
   }
 
   function revealRecall(): void {
@@ -236,7 +289,11 @@
         correct: result.correct,
         selfRating: result.selfRating,
         responseMs: Math.max(0, Math.round(performance.now() - promptStartedAt)),
-        metadata: result.metadata,
+        metadata: {
+          ...result.metadata,
+          itemLabel: card.lexeme.simplified,
+          itemDetail: card.reading.pinyin,
+        },
       });
       browserState = staged.state;
       answerSaved = true;
@@ -437,9 +494,8 @@
 {:else if phase === "choose"}
   <section class="mode-picker">
     <div class="mode-picker-heading">
-      <p class="status-kicker">10問の集中練習</p>
       <h2>発音の練習内容を選ぶ</h2>
-      <p>迷ったら「おまかせ」から始めましょう。</p>
+      <p>{PRACTICE_CATALOG.pronunciation.setupDescription}</p>
     </div>
     <div class="focus-grid">
       {#each focuses as focus}
@@ -469,24 +525,13 @@
     <p>別の内容を選ぶか、単語が準備されるまで待ってください。</p>
     <button class="primary-button" onclick={() => (phase = "choose")}>別の内容を選ぶ</button>
   </section>
-{:else if phase === "completed"}
-  <section class="status-panel">
-    <p class="completion-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" /></svg>
-    </p>
-    <h2>発音練習を完了</h2>
-    <p>
-      {session?.completedItems ?? 0}問を確認しました。記録は{browserState?.pendingCount
-        ? "同期待ちです"
-        : "同期済みです"}。
-    </p>
-    <button
-      class="primary-button"
-      onclick={() =>
-        void (browserState?.pendingCount ? initializePronunciation() : (phase = "choose"))}
-    >
-      {browserState?.pendingCount ? "同期を再試行" : "別の内容を練習する"}
+{:else if phase === "completed" && completionSummary}
+  <section class="status-panel shared-result-panel">
+    <PracticeResult summary={completionSummary} />
+    <button class="primary-button" onclick={() => void leaveCompletedResult()}>
+      {browserState?.activePronunciationSessionId ? "同期を再試行" : "別の内容を練習する"}
     </button>
+    <a class="text-link" href="#progress">記録で詳しく見る</a>
   </section>
 {:else if card}
   <section

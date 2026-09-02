@@ -4,6 +4,7 @@ import type {
   GrammarCard,
   GuidedSessionView,
   MaterializedCardState,
+  PracticeMode,
   PronunciationCard,
   PronunciationSessionView,
   ReflexAnswerRecord,
@@ -15,6 +16,7 @@ import type {
   SyncPullResponse,
 } from "../domain/types";
 import type { PronunciationFocus } from "../domain/pronunciation";
+import { QUIZ_SELECTION_STRATEGY, parseReflexAttemptMetadata } from "../domain/reflex";
 import { parseAttemptInput } from "../domain/validation";
 import {
   STUDY_STORAGE_LOCK,
@@ -55,10 +57,20 @@ interface PersistedMeta {
   activeReadingSessionId: string | null;
   activeGrammarSessionId: string | null;
   activeGrammarTopicId: string | null;
-  lastCompletedStudySessionId: string | null;
-  dismissedStudySessionId: string | null;
+  presentedResult: PracticeResultPointer | null;
+  dismissedResultSessionIds: string[];
   learnerCursor: number;
   contentRevision: number | null;
+}
+
+type LegacyMetaFields = {
+  lastCompletedStudySessionId?: string | null;
+  dismissedStudySessionId?: string | null;
+};
+
+export interface PracticeResultPointer {
+  mode: PracticeMode;
+  sessionId: string;
 }
 
 export interface BrowserOfflineState extends Omit<PersistedMeta, "key" | "version"> {
@@ -124,6 +136,7 @@ interface CachedPronunciationSession {
   key: string;
   mode: "pronunciation";
   session: PronunciationSessionView;
+  attempts: AttemptInput[];
 }
 
 interface CachedReflexSession {
@@ -137,6 +150,7 @@ interface CachedGuidedSession {
   key: string;
   mode: "reading" | "grammar";
   session: GuidedSessionView;
+  attempts: AttemptInput[];
 }
 
 type CachedSession =
@@ -218,30 +232,52 @@ export class OfflineLearningStore {
     return this.clearActiveSession("study", sessionId);
   }
 
-  dismissStudyResult(sessionId: string): Promise<BrowserOfflineState> {
-    if (sessionId.trim().length === 0) throw new Error("study result ID must be non-empty");
+  presentPracticeResult(mode: PracticeMode, sessionId: string): Promise<BrowserOfflineState> {
+    if (sessionId.trim().length === 0) throw new Error("practice result ID must be non-empty");
     return this.locks.request(OFFLINE_DB_LOCK, async () => {
       await this.reconcileLegacyStateUnderLock();
       const transaction = this.db.transaction(META_STORE, "readwrite");
       const metaStore = transaction.objectStore(META_STORE);
       const latest = await requiredMeta(metaStore);
-      const dismissesCompletedResult = latest.lastCompletedStudySessionId === sessionId;
-      const dismissesActiveSession = latest.activeSessionId === sessionId;
-      if (!dismissesCompletedResult && !dismissesActiveSession) {
+      const next: PersistedMeta = {
+        ...latest,
+        revision: latest.revision + 1,
+        presentedResult: { mode, sessionId },
+        dismissedResultSessionIds: latest.dismissedResultSessionIds.filter(
+          (dismissed) => dismissed !== sessionId,
+        ),
+      };
+      metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
+      await transactionDone(transaction);
+      persistIdentityMirror(this.storage, next);
+      return this.snapshot();
+    });
+  }
+
+  dismissPracticeResult(mode: PracticeMode, sessionId: string): Promise<BrowserOfflineState> {
+    if (sessionId.trim().length === 0) throw new Error("practice result ID must be non-empty");
+    return this.locks.request(OFFLINE_DB_LOCK, async () => {
+      await this.reconcileLegacyStateUnderLock();
+      const transaction = this.db.transaction(META_STORE, "readwrite");
+      const metaStore = transaction.objectStore(META_STORE);
+      const latest = await requiredMeta(metaStore);
+      const isPresented =
+        latest.presentedResult?.mode === mode && latest.presentedResult.sessionId === sessionId;
+      if (!isPresented && latest.dismissedResultSessionIds.includes(sessionId)) {
         await transactionDone(transaction);
         return this.snapshot();
       }
       const next: PersistedMeta = {
         ...latest,
         revision: latest.revision + 1,
-        // Hiding a result must not orphan a session whose canonical closure has
-        // not reached this device yet. The active ID keeps the session in the
-        // next sync payload; clearActiveSession owns the lifecycle transition.
-        activeSessionId: latest.activeSessionId,
-        lastCompletedStudySessionId: dismissesCompletedResult
-          ? null
-          : latest.lastCompletedStudySessionId,
-        dismissedStudySessionId: sessionId,
+        // Presentation is independent from the active session pointer. If
+        // canonical closure is still pending, sync retains that pointer.
+        presentedResult: isPresented ? null : latest.presentedResult,
+        dismissedResultSessionIds: [
+          sessionId,
+          ...latest.dismissedResultSessionIds.filter((dismissed) => dismissed !== sessionId),
+        ].slice(0, 50),
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -298,6 +334,7 @@ export class OfflineLearningStore {
       key: sessionKey("pronunciation", session.id),
       mode: "pronunciation",
       session,
+      attempts: [],
     });
   }
 
@@ -306,6 +343,7 @@ export class OfflineLearningStore {
       key: sessionKey(session.mode, session.id),
       mode: session.mode,
       session,
+      attempts: [],
     });
   }
 
@@ -581,17 +619,39 @@ export class OfflineLearningStore {
     );
   }
 
+  getPronunciationSessionRecord(
+    sessionId: string,
+  ): Promise<{ session: PronunciationSessionView; attempts: AttemptInput[] } | null> {
+    return this.getCachedSession<CachedPronunciationSession>("pronunciation", sessionId).then(
+      (value) => (value ? { session: value.session, attempts: value.attempts ?? [] } : null),
+    );
+  }
+
   getReflexSession(
     sessionId: string,
   ): Promise<{ session: ReflexSessionView; answers: ReflexAnswerRecord[] } | null> {
     return this.getCachedSession<CachedReflexSession>("reflex", sessionId).then((value) =>
-      value ? { session: value.session, answers: value.answers } : null,
+      value
+        ? {
+            session: normalizeCachedReflexSession(value.session),
+            answers: (value.answers ?? []).map(normalizeReflexAnswer),
+          }
+        : null,
     );
   }
 
   getReadingSession(sessionId: string): Promise<GuidedSessionView | null> {
     return this.getCachedSession<CachedGuidedSession>("reading", sessionId).then(
       (value) => value?.session ?? null,
+    );
+  }
+
+  getGuidedSessionRecord(
+    mode: "reading" | "grammar",
+    sessionId: string,
+  ): Promise<{ session: GuidedSessionView; attempts: AttemptInput[] } | null> {
+    return this.getCachedSession<CachedGuidedSession>(mode, sessionId).then((value) =>
+      value ? { session: value.session, attempts: value.attempts ?? [] } : null,
     );
   }
 
@@ -612,25 +672,45 @@ export class OfflineLearningStore {
   private async ensureState(createId: () => string): Promise<void> {
     const existing = await this.readMeta();
     if (existing) {
+      const legacy = existing as Partial<PersistedMeta> & LegacyMetaFields;
+      const hasLegacyFields =
+        Object.prototype.hasOwnProperty.call(existing, "lastCompletedStudySessionId") ||
+        Object.prototype.hasOwnProperty.call(existing, "dismissedStudySessionId");
       if (
         existing.activeReflexSessionId === undefined ||
         existing.activeReadingSessionId === undefined ||
         existing.activeGrammarSessionId === undefined ||
         existing.activeGrammarTopicId === undefined ||
-        existing.lastCompletedStudySessionId === undefined ||
-        existing.dismissedStudySessionId === undefined
+        existing.presentedResult === undefined ||
+        existing.dismissedResultSessionIds === undefined ||
+        hasLegacyFields
       ) {
-        const transaction = this.db.transaction(META_STORE, "readwrite");
-        transaction.objectStore(META_STORE).put({
+        const legacyDismissed = legacy.dismissedStudySessionId
+          ? [legacy.dismissedStudySessionId]
+          : [];
+        const legacyPresented =
+          legacy.lastCompletedStudySessionId &&
+          legacy.lastCompletedStudySessionId !== legacy.dismissedStudySessionId
+            ? { mode: "study" as const, sessionId: legacy.lastCompletedStudySessionId }
+            : null;
+        const migrated = {
           ...existing,
           revision: existing.revision + 1,
           activeReflexSessionId: existing.activeReflexSessionId ?? null,
           activeReadingSessionId: existing.activeReadingSessionId ?? null,
           activeGrammarSessionId: existing.activeGrammarSessionId ?? null,
           activeGrammarTopicId: existing.activeGrammarTopicId ?? null,
-          lastCompletedStudySessionId: existing.lastCompletedStudySessionId ?? null,
-          dismissedStudySessionId: existing.dismissedStudySessionId ?? null,
-        } satisfies PersistedMeta);
+          presentedResult:
+            existing.presentedResult === undefined ? legacyPresented : existing.presentedResult,
+          dismissedResultSessionIds:
+            existing.dismissedResultSessionIds === undefined
+              ? legacyDismissed
+              : existing.dismissedResultSessionIds,
+        } as PersistedMeta & LegacyMetaFields;
+        delete migrated.lastCompletedStudySessionId;
+        delete migrated.dismissedStudySessionId;
+        const transaction = this.db.transaction(META_STORE, "readwrite");
+        transaction.objectStore(META_STORE).put(migrated satisfies PersistedMeta);
         await transactionDone(transaction);
       }
       await this.reconcileLegacyStateUnderLock();
@@ -780,8 +860,7 @@ export class OfflineLearningStore {
         activeReadingSessionId: mode === "reading" ? sessionId : latest.activeReadingSessionId,
         activeGrammarSessionId: mode === "grammar" ? sessionId : latest.activeGrammarSessionId,
         activeGrammarTopicId: mode === "grammar" ? topicId : latest.activeGrammarTopicId,
-        lastCompletedStudySessionId: mode === "study" ? null : latest.lastCompletedStudySessionId,
-        dismissedStudySessionId: mode === "study" ? null : latest.dismissedStudySessionId,
+        presentedResult: null,
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -827,8 +906,6 @@ export class OfflineLearningStore {
         activeReadingSessionId: mode === "reading" ? null : latest.activeReadingSessionId,
         activeGrammarSessionId: mode === "grammar" ? null : latest.activeGrammarSessionId,
         activeGrammarTopicId: mode === "grammar" ? null : latest.activeGrammarTopicId,
-        lastCompletedStudySessionId:
-          mode === "study" ? sessionId : latest.lastCompletedStudySessionId,
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -892,6 +969,7 @@ async function replacePronunciationPack(
     key: sessionKey("pronunciation", session.id),
     mode: "pronunciation",
     session,
+    attempts: [],
   } satisfies CachedPronunciationSession);
 }
 
@@ -901,6 +979,7 @@ async function replaceReflexPack(
   cards: ReflexCard[],
 ): Promise<void> {
   const store = transaction.objectStore(PRONUNCIATION_CARD_STORE);
+  await enrichLegacyReflexAnswers(transaction, session.id);
   await deleteSessionCards(store, session.id);
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
@@ -927,6 +1006,7 @@ async function replaceGuidedPack(
     key: sessionKey(session.mode, session.id),
     mode: session.mode,
     session,
+    attempts: [],
   } satisfies CachedGuidedSession);
 }
 
@@ -973,6 +1053,7 @@ async function putMergedSession(store: IDBObjectStore, incoming: CachedSession):
       completedItems: Math.max(incoming.session.completedItems, previous.session.completedItems),
       endedAt: incoming.session.endedAt ?? previous.session.endedAt,
     },
+    attempts: previous.attempts ?? [],
   });
 }
 
@@ -1055,16 +1136,25 @@ async function advanceCachedSessionProgress(
     return;
   }
   if (cached.mode === "reflex") {
-    const round = attempt.metadata?.round;
+    let metadata;
+    try {
+      metadata = parseReflexAttemptMetadata(attempt.metadata, {
+        legacyResponseMs: attempt.responseMs,
+      });
+    } catch {
+      transaction.abort();
+      throw new Error("cached reflex attempt is missing its objective result");
+    }
     if (
       attempt.correct === undefined ||
-      attempt.responseMs === undefined ||
-      typeof round !== "number" ||
-      !Number.isSafeInteger(round)
+      (metadata.timingInterrupted
+        ? attempt.responseMs !== undefined
+        : attempt.responseMs === undefined)
     ) {
       transaction.abort();
       throw new Error("cached reflex attempt is missing its objective result");
     }
+    const display = reflexAnswerDisplay(attempt.activityType, metadata);
     store.put({
       ...cached,
       session: {
@@ -1072,13 +1162,15 @@ async function advanceCachedSessionProgress(
         completedItems: Math.min(cached.session.maxItems, cached.session.completedItems + 1),
       },
       answers: [
-        ...cached.answers,
+        ...(cached.answers ?? []).map(normalizeReflexAnswer),
         {
           eventId: attempt.eventId,
           cardId: attempt.cardId,
           correct: attempt.correct,
-          responseMs: attempt.responseMs,
-          round,
+          responseMs: attempt.responseMs ?? null,
+          timingInterrupted: metadata.timingInterrupted,
+          round: metadata.round,
+          ...display,
         },
       ],
     } satisfies CachedReflexSession);
@@ -1090,7 +1182,66 @@ async function advanceCachedSessionProgress(
       ...cached.session,
       completedItems: Math.min(cached.session.maxItems, cached.session.completedItems + 1),
     },
+    attempts: [...(cached.attempts ?? []), attempt],
   });
+}
+
+async function enrichLegacyReflexAnswers(
+  transaction: IDBTransaction,
+  sessionId: string,
+): Promise<void> {
+  const sessionStore = transaction.objectStore(SESSION_STORE);
+  const key = sessionKey("reflex", sessionId);
+  const cached = (await request(sessionStore.get(key))) as CachedReflexSession | undefined;
+  if (!cached || cached.answers.every(({ label }) => label !== undefined)) return;
+  const cards = (await request(
+    transaction.objectStore(PRONUNCIATION_CARD_STORE).index("sessionId").getAll(sessionId),
+  )) as CachedReflexCard[];
+  const cardsById = new Map(cards.map(({ card }) => [card.cardId, card]));
+  sessionStore.put({
+    ...cached,
+    answers: cached.answers.map((answer) => {
+      const normalized = normalizeReflexAnswer(answer);
+      if (normalized.label !== undefined) return normalized;
+      const card = cardsById.get(answer.cardId);
+      return card ? { ...normalized, ...reflexCardDisplay(card) } : normalized;
+    }),
+  } satisfies CachedReflexSession);
+}
+
+function normalizeReflexAnswer(answer: ReflexAnswerRecord): ReflexAnswerRecord {
+  return {
+    ...answer,
+    timingInterrupted: answer.timingInterrupted ?? false,
+  };
+}
+
+export function normalizeCachedReflexSession(session: ReflexSessionView): ReflexSessionView {
+  return {
+    ...session,
+    activityType: session.activityType ?? "mixed",
+    choiceCount: session.choiceCount ?? 4,
+    selectionStrategy: session.selectionStrategy ?? QUIZ_SELECTION_STRATEGY,
+  };
+}
+
+function reflexAnswerDisplay(
+  activityType: AttemptInput["activityType"],
+  metadata: ReturnType<typeof parseReflexAttemptMetadata>,
+): { label: string; detail: string | null } {
+  const answer = metadata.options.find(({ id }) => id === metadata.answerChoiceId)?.label;
+  if (activityType === "meaning_to_hanzi" || activityType === "pinyin_to_hanzi") {
+    return { label: answer ?? metadata.prompt, detail: metadata.promptHint ?? metadata.prompt };
+  }
+  return { label: metadata.prompt, detail: metadata.promptHint ?? answer ?? null };
+}
+
+function reflexCardDisplay(card: ReflexCard): { label: string; detail: string | null } {
+  const answer = card.choices.find(({ id }) => id === card.answerChoiceId)?.label;
+  if (card.activityType === "meaning_to_hanzi" || card.activityType === "pinyin_to_hanzi") {
+    return { label: answer ?? card.prompt, detail: card.promptHint ?? card.prompt };
+  }
+  return { label: card.prompt, detail: card.promptHint ?? answer ?? null };
 }
 
 function deleteSessionCards(store: IDBObjectStore, sessionId: string): Promise<void> {
@@ -1139,8 +1290,8 @@ function migrateMeta(
       activeReadingSessionId: null,
       activeGrammarSessionId: null,
       activeGrammarTopicId: null,
-      lastCompletedStudySessionId: null,
-      dismissedStudySessionId: null,
+      presentedResult: null,
+      dismissedResultSessionIds: [],
       learnerCursor: 0,
       contentRevision: null,
     },
@@ -1305,8 +1456,8 @@ function mapState(meta: PersistedMeta, pendingCount: number): BrowserOfflineStat
     activeReadingSessionId: meta.activeReadingSessionId,
     activeGrammarSessionId: meta.activeGrammarSessionId,
     activeGrammarTopicId: meta.activeGrammarTopicId,
-    lastCompletedStudySessionId: meta.lastCompletedStudySessionId,
-    dismissedStudySessionId: meta.dismissedStudySessionId,
+    presentedResult: meta.presentedResult,
+    dismissedResultSessionIds: meta.dismissedResultSessionIds,
     learnerCursor: meta.learnerCursor,
     contentRevision: meta.contentRevision,
     pendingCount,
@@ -1376,17 +1527,24 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
 }
 
 async function requiredMeta(store: IDBObjectStore): Promise<PersistedMeta> {
-  const value = (await request(store.get(STATE_KEY))) as PersistedMeta | undefined;
+  const value = (await request(store.get(STATE_KEY))) as
+    (Partial<PersistedMeta> & LegacyMetaFields) | undefined;
   if (!value) throw new Error("IndexedDB study identity disappeared; refusing to replace it");
+  const legacyDismissed = value.dismissedStudySessionId ? [value.dismissedStudySessionId] : [];
+  const legacyPresented =
+    value.lastCompletedStudySessionId &&
+    value.lastCompletedStudySessionId !== value.dismissedStudySessionId
+      ? { mode: "study" as const, sessionId: value.lastCompletedStudySessionId }
+      : null;
   return {
     ...value,
     activeReflexSessionId: value.activeReflexSessionId ?? null,
     activeReadingSessionId: value.activeReadingSessionId ?? null,
     activeGrammarSessionId: value.activeGrammarSessionId ?? null,
     activeGrammarTopicId: value.activeGrammarTopicId ?? null,
-    lastCompletedStudySessionId: value.lastCompletedStudySessionId ?? null,
-    dismissedStudySessionId: value.dismissedStudySessionId ?? null,
-  };
+    presentedResult: value.presentedResult === undefined ? legacyPresented : value.presentedResult,
+    dismissedResultSessionIds: value.dismissedResultSessionIds ?? legacyDismissed,
+  } as PersistedMeta;
 }
 
 function request<T>(value: IDBRequest<T>): Promise<T> {

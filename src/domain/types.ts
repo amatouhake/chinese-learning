@@ -28,6 +28,8 @@ export type PracticeMode = (typeof PRACTICE_MODES)[number];
 export type LearnerId = string;
 export type FsrsRating = 1 | 2 | 3 | 4;
 export type StudyDirection = "mixed" | "hanzi_to_meaning" | "meaning_to_hanzi";
+export type QuizActivity = "mixed" | ReflexActivityType;
+export type QuizChoiceCount = 4 | 9;
 
 export interface FsrsReviewInput {
   rating: FsrsRating;
@@ -186,6 +188,9 @@ export interface ReflexSessionView {
   maxItems: number;
   completedItems: number;
   poolSize: number;
+  activityType: QuizActivity;
+  choiceCount: QuizChoiceCount;
+  selectionStrategy: "weak_and_slow_v1";
   startedAt: number;
   endedAt: number | null;
 }
@@ -194,8 +199,135 @@ export interface ReflexAnswerRecord {
   eventId: string;
   cardId: string;
   correct: boolean;
-  responseMs: number;
+  responseMs: number | null;
+  timingInterrupted: boolean;
   round: number;
+  label?: string;
+  detail?: string | null;
+}
+
+export type LearnerPracticeId =
+  "vocabulary_review" | "vocabulary_quiz" | "pronunciation" | "reading" | "grammar";
+
+export interface PracticeAttentionItem {
+  cardId: string;
+  label: string;
+  detail: string | null;
+  reasons: string[];
+}
+
+export interface PracticeRatingEvidence {
+  responses: number;
+  distribution: Record<FsrsRating, number>;
+}
+
+export interface PracticeCorrectnessEvidence {
+  responses: number;
+  correct: number;
+  rate: number | null;
+}
+
+export interface PracticeSessionTrend {
+  label: string;
+  unit: "percent";
+  values: number[];
+  comparableSessionIds: string[];
+}
+
+interface PracticeSessionSummaryBase {
+  summaryVersion: 1;
+  sessionId: string;
+  learnerId: LearnerId;
+  mode: PracticeMode;
+  practice: LearnerPracticeId;
+  startedAt: number;
+  endedAt: number;
+  completedItems: number;
+  requestedItems: number;
+  attentionItems: PracticeAttentionItem[];
+  trend: PracticeSessionTrend | null;
+  evidenceCoverage?: {
+    status: "partial";
+    recordedItems: number;
+  };
+}
+
+export interface VocabularyReviewSessionSummary extends PracticeSessionSummaryBase {
+  mode: "study";
+  practice: "vocabulary_review";
+  configuration: {
+    direction: StudyDirection;
+    requestedItems: number;
+    actualItems: number;
+  };
+  evidence: {
+    ratings: PracticeRatingEvidence;
+    directions: Record<"hanzi_to_meaning" | "meaning_to_hanzi", number>;
+    sources: Record<"due" | "new", number>;
+  };
+}
+
+export interface VocabularyQuizSessionSummary extends PracticeSessionSummaryBase {
+  mode: "reflex";
+  practice: "vocabulary_quiz";
+  configuration: {
+    activityType: QuizActivity;
+    choiceCount: QuizChoiceCount;
+    requestedItems: number;
+    selectionStrategy: "weak_and_slow_v1";
+  };
+  evidence: {
+    correctness: PracticeCorrectnessEvidence;
+    averageResponseMs: number | null;
+    timedResponses: number;
+    timingInterrupted: number;
+    slowResponses: number;
+  };
+}
+
+export interface PronunciationSessionSummary extends PracticeSessionSummaryBase {
+  mode: "pronunciation";
+  practice: "pronunciation";
+  configuration: { focus: PronunciationFocus; requestedItems: number };
+  evidence: {
+    activities: Partial<Record<PronunciationActivityType, number>>;
+    correctness: PracticeCorrectnessEvidence | null;
+    selfRatings: PracticeRatingEvidence | null;
+    skipped: number;
+  };
+}
+
+export interface ReadingSessionSummary extends PracticeSessionSummaryBase {
+  mode: "reading";
+  practice: "reading";
+  configuration: { requestedItems: number };
+  evidence: {
+    comprehension: PracticeRatingEvidence;
+    grammarTopics: Array<{ id: string; title: string }>;
+  };
+}
+
+export interface GrammarSessionSummary extends PracticeSessionSummaryBase {
+  mode: "grammar";
+  practice: "grammar";
+  configuration: { requestedItems: number; focusTopicId: string | null };
+  evidence: {
+    correctness: PracticeCorrectnessEvidence;
+    confidence: PracticeRatingEvidence;
+    grammarTopics: Array<{ id: string; title: string }>;
+  };
+}
+
+export type PracticeSessionSummary =
+  | VocabularyReviewSessionSummary
+  | VocabularyQuizSessionSummary
+  | PronunciationSessionSummary
+  | ReadingSessionSummary
+  | GrammarSessionSummary;
+
+export interface PracticeSessionHistory {
+  generatedAt: number;
+  sessions: PracticeSessionSummary[];
 }
 
 export interface PronunciationMedia {
@@ -405,6 +537,7 @@ export interface ProgressTroubleItem {
   cardId: string;
   mode: PracticeMode;
   activityType: ActivityType;
+  choiceCount?: QuizChoiceCount;
   label: string;
   detail: string | null;
   recentAttempts: number;
@@ -494,12 +627,17 @@ export interface ProgressSnapshot {
   };
   reflex: {
     recentResponses: number;
-    correctness: ProgressCorrectness;
-    latency: {
-      averageResponseMs: number | null;
-      slowResponses: number;
-      slowThresholdMs: number;
-    };
+    byChoiceCount: Array<{
+      choiceCount: QuizChoiceCount;
+      recentResponses: number;
+      correctness: ProgressCorrectness;
+      latency: {
+        averageResponseMs: number | null;
+        slowResponses: number | null;
+        slowThresholdMs: number | null;
+      };
+      lastPracticedAt: number | null;
+    }>;
     lastPracticedAt: number | null;
     troublesomeItems: ProgressTroubleItem[];
   };

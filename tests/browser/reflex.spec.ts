@@ -19,13 +19,13 @@ test.describe("Reflex automaticity dogfood", () => {
 
     await introduceVocabulary(page, 8);
     const stateBeforeReflex = await readCardStates(page);
-    await selectMobileMode(page, "瞬発");
+    await openVocabularyQuiz(page);
     await expect(page.locator(".surface-nav")).toBeHidden();
     await expect(page.getByRole("button", { name: "音声オン" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
     const sessionId = (await readMeta(page)).activeReflexSessionId;
     expect(typeof sessionId).toBe("string");
@@ -43,18 +43,62 @@ test.describe("Reflex automaticity dogfood", () => {
     await context.setOffline(true);
     await answerReflex(page, 5, true);
     await answerReflex(page, 6, false);
+    await downgradeCachedReflexSessionConfiguration(page, sessionId as string);
     await page.reload();
     await expect(page.locator(".reflex-card")).toBeVisible();
-    await answerReflex(page, 7, true);
+    await expect(page.locator(".reflex-choice-grid button")).toHaveCount(4);
+    await answerReflex(page, 7, true, 2_650);
     const queued = await readOutbox(page);
-    const queuedReflex = queued.filter(({ mode }) => mode === "reflex");
+    const initiallyQueuedReflex = queued.filter(({ mode }) => mode === "reflex");
+    expect(initiallyQueuedReflex).toHaveLength(3);
+    await downgradeQueuedReflexAttempt(
+      page,
+      initiallyQueuedReflex[0]!.eventId,
+      sessionId as string,
+    );
+    const queuedReflex = (await readOutbox(page)).filter(({ mode }) => mode === "reflex");
     expect(queuedReflex).toHaveLength(3);
+    expect(queuedReflex[0]?.metadata).not.toHaveProperty("timingInterrupted");
+    expect(queuedReflex[0]?.metadata).not.toHaveProperty("choiceCount");
+    expect(queuedReflex[0]?.responseMs).toBeGreaterThanOrEqual(0);
     expect(queuedReflex.every(({ fsrsReview }) => fsrsReview === undefined)).toBe(true);
+    expect(queuedReflex.find(({ metadata }) => metadata?.round === 7)?.metadata).toMatchObject({
+      choiceCount: 4,
+      timingInterrupted: false,
+    });
+
+    for (let round = 8; round <= 12; round += 1) {
+      await answerReflex(page, round, true, 0, round === 12);
+    }
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.locator(".shared-result-panel")).toHaveCSS(
+      "background-color",
+      "rgb(246, 240, 229)",
+    );
+    await expect(page.locator(".shared-result-panel .result-heading h2")).toHaveCSS(
+      "color",
+      "rgb(26, 32, 40)",
+    );
+    const completedAttentionLabels = await page
+      .locator(".result-attention strong")
+      .allTextContents();
+    expect(completedAttentionLabels.length).toBeGreaterThan(0);
+    expect(completedAttentionLabels.every((label) => !label.startsWith("card:"))).toBe(true);
+    expect(
+      await page.locator(".result-attention em").filter({ hasText: "ゆっくり" }).count(),
+    ).toBeGreaterThan(0);
+    expect((await readMeta(page)).activeReflexSessionId).toBe(sessionId);
+    expect((await readMeta(page)).presentedResult).toEqual({ mode: "reflex", sessionId });
+    expect((await readReflexSession(page, sessionId as string))?.answers).toHaveLength(12);
 
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
     await expect(page.locator(".sync-status")).toContainText("同期済み");
+    expect((await readMeta(page)).activeReflexSessionId).toBeNull();
+    expect((await readMeta(page)).presentedResult).toEqual({ mode: "reflex", sessionId });
 
     const duplicate = await postAttempt(page, queuedReflex[0]!);
     expect(duplicate).toMatchObject({
@@ -64,13 +108,7 @@ test.describe("Reflex automaticity dogfood", () => {
       cardState: null,
     });
 
-    for (let round = 8; round <= 12; round += 1) {
-      await answerReflex(page, round, true, 0, round === 12);
-    }
-    await expect(page.getByRole("heading", { name: "瞬発練習を完了" })).toBeVisible({
-      timeout: 20_000,
-    });
-    expect((await readMeta(page)).activeReflexSessionId).toBeNull();
+    await expect.poll(() => cachedReflexCardCount(page, sessionId as string)).toBe(0);
 
     const stored = await readReflexSession(page, sessionId as string);
     expect(stored?.answers).toHaveLength(12);
@@ -86,7 +124,21 @@ test.describe("Reflex automaticity dogfood", () => {
     expect(canonicalAttempts.every((change) => change.reviewCreated === false)).toBe(true);
     expect(await readCardStates(page)).toEqual(stateBeforeReflex);
 
-    await page.getByRole("button", { name: "同じ練習をもう一度" }).click();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible();
+    await page.getByRole("link", { name: "記録で詳しく見る" }).click();
+    await expect(page.getByRole("heading", { name: "最近の練習" })).toBeVisible();
+    await page.locator(".session-history-list button").first().click();
+    await expect(page.locator(".history-detail .practice-result")).toHaveCSS(
+      "background-color",
+      "rgb(246, 240, 229)",
+    );
+    await expect(page.locator(".result-attention strong").first()).toHaveText(
+      completedAttentionLabels[0]!,
+    );
+    await page.goto("/#reflex");
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible();
+    await page.getByRole("button", { name: "同じ設定でもう一度" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
     expect((await readMeta(page)).activeReflexSessionId).not.toBe(sessionId);
     expect(
@@ -102,10 +154,16 @@ test.describe("Reflex automaticity dogfood", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/#reflex");
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-choice-grid button")).toHaveCount(4, {
       timeout: 20_000,
     });
+    const firstChoice = page.locator(".reflex-choice-grid button").first();
+    const idleBorder = await firstChoice.evaluate((button) => getComputedStyle(button).borderColor);
+    await firstChoice.hover();
+    await expect
+      .poll(() => firstChoice.evaluate((button) => getComputedStyle(button).borderColor))
+      .not.toBe(idleBorder);
     await page.keyboard.press("1");
     await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
     await page.keyboard.press("Enter");
@@ -125,6 +183,258 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("button", { name: "文法コース" })).toBeVisible();
   });
 
+  test("遅れて閉じた最終同期後もクイズ結果の操作を復元する", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await introduceVocabulary(page, 8);
+    await openVocabularyQuiz(page);
+
+    let delayedFinalAttempt = false;
+    await page.route("**/api/attempts", async (route) => {
+      const attempt = route.request().postDataJSON() as AttemptInput;
+      if (!delayedFinalAttempt && attempt.mode === "reflex" && attempt.metadata?.round === 12) {
+        delayedFinalAttempt = true;
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+      }
+      await route.continue();
+    });
+
+    await page.getByRole("button", { name: "この設定で始める" }).click();
+    await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
+    const sessionId = (await readMeta(page)).activeReflexSessionId;
+    expect(typeof sessionId).toBe("string");
+
+    for (let round = 1; round <= 12; round += 1) {
+      await answerReflex(page, round, true, 0, round === 12);
+    }
+    expect(delayedFinalAttempt).toBe(true);
+    await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(
+      page.getByText("現在の記録を同期してから、次の練習を始められます。"),
+    ).toBeVisible();
+    expect((await readMeta(page)).activeReflexSessionId).toBe(sessionId);
+
+    await expect
+      .poll(() => readMeta(page).then((meta) => meta.activeReflexSessionId), {
+        timeout: 20_000,
+      })
+      .toBeNull();
+    await expect(page.getByRole("button", { name: "同じ設定でもう一度" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "設定を変える" })).toBeVisible();
+    await expect(page.getByText("現在の記録を同期してから、次の練習を始められます。")).toHaveCount(
+      0,
+    );
+  });
+
+  test("touch Quiz choices do not retain hover styling on the next question", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      baseURL: "http://127.0.0.1:8787",
+      hasTouch: true,
+      viewport: { width: 390, height: 844 },
+    });
+    const page = await context.newPage();
+    try {
+      await introduceVocabulary(page, 8);
+      await openVocabularyQuiz(page);
+      await page.getByRole("button", { name: /8問/ }).click();
+      await page.getByRole("button", { name: "この設定で始める" }).click();
+      await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
+
+      const firstChoice = page.locator(".reflex-choice-grid button").first();
+      const idleBorder = await firstChoice.evaluate(
+        (button) => getComputedStyle(button).borderColor,
+      );
+      await firstChoice.tap();
+      await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled({ timeout: 20_000 });
+      await page.getByRole("button", { name: "次へ" }).tap();
+      await expect(page.locator(".card-meta span").first()).toHaveText("2 / 8");
+
+      await expect
+        .poll(() =>
+          page
+            .locator(".reflex-choice-grid button")
+            .first()
+            .evaluate((button) => getComputedStyle(button).borderColor),
+        )
+        .toBe(idleBorder);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("an empty Quiz session returns to settings instead of retrying the same configuration", async ({
+    page,
+  }) => {
+    await introduceVocabulary(page, 8);
+    let emptySessionId: string | null = null;
+    await page.route("**/api/reflex/sessions", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      const body = route.request().postDataJSON() as {
+        sessionId: string;
+        deviceId: string;
+        maxItems: number;
+        activityType: string;
+        choiceCount: number;
+      };
+      if (body.activityType !== "hanzi_to_meaning" || body.choiceCount !== 9) {
+        await route.continue();
+        return;
+      }
+      emptySessionId = body.sessionId;
+      const session = {
+        id: body.sessionId,
+        deviceId: body.deviceId,
+        maxItems: body.maxItems,
+        completedItems: 0,
+        poolSize: 0,
+        activityType: "hanzi_to_meaning",
+        choiceCount: 9,
+        selectionStrategy: "weak_and_slow_v1",
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ disposition: "created", session }),
+      });
+    });
+    await page.route("**/api/sync/pull", async (route) => {
+      const body = route.request().postDataJSON() as { cursor: number; reflexSessionId?: string };
+      if (!emptySessionId || body.reflexSessionId !== emptySessionId) {
+        await route.continue();
+        return;
+      }
+      const session = {
+        id: emptySessionId,
+        deviceId: "empty-quiz-device",
+        maxItems: 8,
+        completedItems: 0,
+        poolSize: 0,
+        activityType: "hanzi_to_meaning",
+        choiceCount: 9,
+        selectionStrategy: "weak_and_slow_v1",
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          nextCursor: body.cursor,
+          hasMore: false,
+          currentContentRevision: null,
+          contentChanged: false,
+          learnerChanges: [],
+          contentChanges: [],
+          studyPack: null,
+          reflexPack: { status: "empty", session, cards: [] },
+          pronunciationPack: null,
+          readingPack: null,
+          grammarPack: null,
+        }),
+      });
+    });
+
+    await page.goto("/#reflex");
+    await page.getByRole("button", { name: /漢字 → 意味/ }).click();
+    await page.getByRole("button", { name: /9択/ }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
+    await expect(
+      page.getByRole("heading", { name: "まだクイズに使える単語がありません" }),
+    ).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole("button", { name: "設定を変える" })).toBeVisible();
+    await page.getByRole("button", { name: "設定を変える" }).click();
+    await expect(page.getByRole("heading", { name: "単語を素早く見分ける" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /漢字 → 意味/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("button", { name: /9択/ })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "混合" }).click();
+    await page.getByRole("button", { name: "4択" }).click();
+    await expect(page.getByRole("button", { name: "混合" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("button", { name: "4択" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("mobile navigation marks Quiz as the 単語 parent", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.goto("/#reflex");
+    const trigger = page.locator("#mobile-mode-trigger");
+    await expect(trigger).toHaveText("単語");
+    await trigger.click();
+    const study = page.getByRole("menuitemradio", { name: "単語" });
+    await expect(study).toHaveAttribute("aria-checked", "true");
+    await expect(study).toHaveClass(/active/);
+    await expect(study).toBeFocused();
+    await expect(page.locator("#mobile-mode-menu [aria-checked='true']")).toHaveCount(1);
+  });
+
+  test("9択設定を固定し、画面を離れた回答だけ反応時間を無効にする", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await introduceVocabulary(page, 9);
+    await page.goto("/#reflex");
+    await page.getByRole("button", { name: /漢字 → 意味/ }).click();
+    await page.getByRole("button", { name: /9択/ }).click();
+    await page.getByRole("button", { name: /8問/ }).click();
+
+    const sessionRequest = page.waitForRequest(
+      (request) => request.url().endsWith("/api/reflex/sessions") && request.method() === "POST",
+    );
+    await page.getByRole("button", { name: "この設定で始める" }).click();
+    expect(await (await sessionRequest).postDataJSON()).toMatchObject({
+      activityType: "hanzi_to_meaning",
+      choiceCount: 9,
+      maxItems: 8,
+    });
+    await expect(page.locator(".reflex-choice-grid button")).toHaveCount(9, { timeout: 20_000 });
+    await expect(page.locator(".reflex-card")).toHaveAttribute("data-activity", "hanzi_to_meaning");
+    await expect(page.locator(".reflex-card")).toHaveAttribute("data-choice-count", "9");
+
+    const captured: AttemptInput[] = [];
+    await page.route("**/api/attempts", async (route) => {
+      captured.push(route.request().postDataJSON() as AttemptInput);
+      await route.continue();
+    });
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.locator(".reflex-choice-grid button").first().click();
+    await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
+    await expect.poll(() => captured.length).toBe(1);
+    const interrupted = captured[0];
+    if (!interrupted) throw new Error("interrupted quiz attempt was not captured");
+    expect(interrupted.responseMs).toBeUndefined();
+    expect(interrupted.metadata).toMatchObject({
+      timingInterrupted: true,
+      choiceCount: 9,
+      options: expect.arrayContaining([expect.objectContaining({ position: 1 })]),
+    });
+    expect((interrupted.metadata?.options as unknown[]).length).toBe(9);
+
+    await page.evaluate(() => {
+      localStorage.setItem(
+        "chinese-learning.quiz-preferences.v1",
+        JSON.stringify({ activityType: "meaning_to_hanzi", choiceCount: 4, size: 20 }),
+      );
+    });
+    await page.reload();
+    await expect(page.locator(".reflex-choice-grid button")).toHaveCount(9, { timeout: 20_000 });
+    await expect(page.locator(".reflex-card")).toHaveAttribute("data-activity", "hanzi_to_meaning");
+  });
+
   test("autoplays canonical pronunciation at the recall-safe phase and keeps replay available", async ({
     page,
   }) => {
@@ -141,8 +451,8 @@ test.describe("Reflex automaticity dogfood", () => {
     await page.evaluate(() => {
       (window as typeof window & { pronunciationPlays: string[] }).pronunciationPlays.length = 0;
     });
-    await selectMobileMode(page, "瞬発");
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await openVocabularyQuiz(page);
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
 
     const observed = new Set<string>();
@@ -204,8 +514,8 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("button", { name: "音声オフ" })).toBeVisible();
 
     await introduceVocabulary(page, 8);
-    await selectMobileMode(page, "瞬発");
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await openVocabularyQuiz(page);
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
 
     let replayVerified = false;
@@ -231,9 +541,9 @@ test.describe("Reflex automaticity dogfood", () => {
   }) => {
     await page.goto("/#reflex");
     await context.setOffline(true);
-    await page.getByRole("button", { name: "12問の瞬発練習を始める" }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
     await expect(page.getByRole("alert")).toContainText(
-      "再接続すると、新しい瞬発練習を準備できます",
+      "再接続すると、新しい単語クイズを準備できます",
     );
   });
 
@@ -241,7 +551,7 @@ test.describe("Reflex automaticity dogfood", () => {
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 844 });
       await page.goto("/#reflex");
-      const start = page.getByRole("button", { name: "12問の瞬発練習を始める" });
+      const start = page.getByRole("button", { name: "この設定で始める" });
       await expect(start.or(page.locator(".reflex-card"))).toBeVisible({ timeout: 20_000 });
       if (await start.isVisible()) await start.click();
       await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
@@ -336,6 +646,12 @@ async function selectMobileMode(page: Page, label: string): Promise<void> {
   await expect(page.locator("#mobile-mode-trigger")).toHaveText(label);
 }
 
+async function openVocabularyQuiz(page: Page): Promise<void> {
+  await selectMobileMode(page, "単語");
+  await page.getByRole("link", { name: "クイズ", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "単語を素早く見分ける" })).toBeVisible();
+}
+
 function reflexGeometry(
   page: Page,
 ): Promise<Record<string, { top: number; left: number; height: number }>> {
@@ -382,6 +698,91 @@ function readReflexSession(
   return readStoreValue(page, "sessions", `reflex\u001f${sessionId}`) as Promise<{
     answers: ReflexAnswerRecord[];
   } | null>;
+}
+
+function cachedReflexCardCount(page: Page, sessionId: string): Promise<number> {
+  return readAll(page, "pronunciationCards").then(
+    (cards) => cards.filter((card) => card.sessionId === sessionId).length,
+  );
+}
+
+function downgradeQueuedReflexAttempt(
+  page: Page,
+  eventId: string,
+  sessionId: string,
+): Promise<void> {
+  return page.evaluate(
+    async ({ dbName, eventId, sessionKey }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName, 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const transaction = db.transaction(["outbox", "sessions"], "readwrite");
+      const outbox = transaction.objectStore("outbox");
+      const sessions = transaction.objectStore("sessions");
+      const attempt = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const get = outbox.get(eventId);
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      });
+      const metadata = { ...(attempt.metadata as Record<string, unknown>) };
+      delete metadata.choiceCount;
+      delete metadata.timingInterrupted;
+      outbox.put({ ...attempt, metadata });
+
+      const session = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const get = sessions.get(sessionKey);
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      });
+      const answers = (session.answers as Array<Record<string, unknown>>).map((answer) => {
+        if (answer.eventId !== eventId) return answer;
+        const legacy = { ...answer };
+        delete legacy.timingInterrupted;
+        delete legacy.label;
+        delete legacy.detail;
+        return legacy;
+      });
+      sessions.put({ ...session, answers });
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    },
+    { dbName: DB_NAME, eventId, sessionKey: `reflex\u001f${sessionId}` },
+  );
+}
+
+function downgradeCachedReflexSessionConfiguration(page: Page, sessionId: string): Promise<void> {
+  return page.evaluate(
+    async ({ dbName, sessionKey }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName, 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const transaction = db.transaction("sessions", "readwrite");
+      const sessions = transaction.objectStore("sessions");
+      const cached = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        const get = sessions.get(sessionKey);
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      });
+      const legacySession = { ...(cached.session as Record<string, unknown>) };
+      delete legacySession.activityType;
+      delete legacySession.choiceCount;
+      delete legacySession.selectionStrategy;
+      sessions.put({ ...cached, session: legacySession });
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    },
+    { dbName: DB_NAME, sessionKey: `reflex\u001f${sessionId}` },
+  );
 }
 
 function readStoreValue(page: Page, storeName: string, key: string): Promise<unknown> {

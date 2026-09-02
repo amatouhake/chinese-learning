@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Response } from "@playwright/test";
 
 import type { AttemptInput, GrammarCard, ReadingCard } from "../../src/domain/types";
+import { readOfflineMeta, seedLegacyCompletedSession } from "./offline-fixtures";
 
 test.describe("reading and grammar dogfood", () => {
   test.describe.configure({ timeout: 60_000 });
@@ -159,6 +160,104 @@ test.describe("reading and grammar dogfood", () => {
     await expect(page.locator(".grammar-heading h2")).toHaveText(connectedTopic.title);
     await expect.poll(() => requestedTopics.at(-1)).toBe(connectedTopic.id);
   });
+
+  test("offline Reading results keep grammar topic titles through reconnect and history", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const captured = { reading: null as ReadingCard | null };
+    page.on("response", (response) => void captureLatestReadingCard(response, captured));
+
+    await page.goto("/#reading");
+    await expect(page.locator(".reading-prompt h2")).toBeVisible({ timeout: 20_000 });
+    await expect.poll(() => captured.reading).not.toBeNull();
+    const topic = captured.reading?.grammarTopics[0];
+    if (!topic) throw new Error("captured Reading card has no grammar topic");
+
+    await context.setOffline(true);
+    for (let index = 0; index < 5; index += 1) {
+      for (const label of ["単語を表示", "ピンインを表示", "意味を表示", "文法を表示"]) {
+        await page.getByRole("button", { name: new RegExp(label) }).click();
+      }
+      await page.getByRole("button", { name: /だいたい/ }).click();
+      if (index < 4) await expect(page.locator(".reading-prompt h2")).toBeVisible();
+    }
+
+    await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
+    await expect(page.locator(".practice-result")).toContainText(topic.title);
+    await expect(page.locator(".practice-result")).not.toContainText(topic.id);
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
+    await expect(page.locator(".practice-result")).toContainText(topic.title);
+    await expect(page.locator(".practice-result")).not.toContainText(topic.id);
+
+    await context.setOffline(false);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    await page.goto("/#progress");
+    await expect(page.getByRole("heading", { name: "最近の練習" })).toBeVisible();
+    const historyEntry = page
+      .locator(".session-history-list button")
+      .filter({ hasText: "読解" })
+      .first();
+    await expect(historyEntry).toBeVisible({ timeout: 20_000 });
+    await historyEntry.click();
+    await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
+    await expect(page.locator(".practice-result")).toContainText(topic.title);
+    await expect(page.locator(".practice-result")).not.toContainText(topic.id);
+  });
+
+  for (const restoredMode of ["reading", "grammar"] as const) {
+    test(`reopens a zero-detail legacy ${restoredMode} result in its saved submode`, async ({
+      page,
+    }) => {
+      const sessionRequests: string[] = [];
+      page.on("request", (request) => {
+        if (request.method() === "POST" && request.url().endsWith("/sessions")) {
+          sessionRequests.push(new URL(request.url()).pathname);
+        }
+      });
+      await page.goto("/#reading");
+      await expect(page.locator(".reading-prompt h2")).toBeVisible({ timeout: 20_000 });
+      await seedLegacyCompletedSession(page, restoredMode, {
+        id: `${restoredMode}:legacy-completed`,
+        deviceId: "device:legacy-completed",
+        mode: restoredMode,
+        maxItems: 5,
+        completedItems: 5,
+        focusTopicId: restoredMode === "grammar" ? "grammar:foundation:ma-question" : null,
+        startedAt: Date.parse("2026-08-31T00:00:00Z"),
+        endedAt: Date.parse("2026-08-31T00:10:00Z"),
+      });
+      const requestsBeforeReload = sessionRequests.length;
+
+      for (let reload = 0; reload < 2; reload += 1) {
+        await page.reload();
+        await expect(
+          page.getByRole("heading", { name: restoredMode === "reading" ? "5文完了" : "5問完了" }),
+        ).toBeVisible();
+        await expect(page.getByRole("status")).toContainText("0 / 5件分");
+        await expect(page.locator(".guided-nav button.active")).toHaveText(
+          restoredMode === "reading" ? "例文を読む" : "文法コース",
+        );
+      }
+      expect(sessionRequests).toHaveLength(requestsBeforeReload);
+
+      const nextSession = page.waitForRequest(
+        (request) =>
+          request.method() === "POST" && request.url().endsWith(`/api/${restoredMode}/sessions`),
+      );
+      await page
+        .getByRole("button", {
+          name: restoredMode === "reading" ? "別の読解を始める" : "別の文法を始める",
+        })
+        .click();
+      await nextSession;
+      expect((await readOfflineMeta(page)).presentedResult).toBeNull();
+    });
+  }
 });
 
 async function captureGuidedCards(

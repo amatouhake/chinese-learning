@@ -1,18 +1,18 @@
 import type { ActivityType, PracticeMode, StudyDirection } from "../domain/types";
+import type { PronunciationFocus } from "../domain/pronunciation";
 
 export type Surface = "progress" | "study" | "reflex" | "pronunciation" | "reading";
 
 export const SURFACE_OPTIONS: Array<{ value: Surface; label: string }> = [
   { value: "study", label: "単語" },
-  { value: "reflex", label: "瞬発" },
   { value: "pronunciation", label: "発音" },
   { value: "reading", label: "読解" },
-  { value: "progress", label: "進捗" },
+  { value: "progress", label: "記録" },
 ];
 
 export const PRACTICE_MODE_LABELS: Record<PracticeMode, string> = {
   study: "単語",
-  reflex: "瞬発",
+  reflex: "単語・クイズ",
   pronunciation: "発音",
   reading: "読解",
   grammar: "文法",
@@ -22,6 +22,14 @@ export const STUDY_DIRECTION_LABELS: Record<StudyDirection, string> = {
   mixed: "混合",
   hanzi_to_meaning: "漢字 → 日本語",
   meaning_to_hanzi: "日本語 → 漢字",
+};
+
+export const PRONUNCIATION_FOCUS_LABELS: Record<PronunciationFocus, string> = {
+  mixed: "おまかせ",
+  pinyin: "ピンイン",
+  tones: "声調",
+  listening: "聞き取り",
+  speaking: "発話",
 };
 
 export function activityTypeLabel(activity: ActivityType): string {
@@ -55,8 +63,17 @@ export function studyDirectionLabel(direction: StudyDirection): string {
   return STUDY_DIRECTION_LABELS[direction];
 }
 
+export function pronunciationFocusLabel(focus: PronunciationFocus): string {
+  return PRONUNCIATION_FOCUS_LABELS[focus];
+}
+
 export function surfaceLabel(surface: Surface): string {
+  if (surface === "reflex") return "単語";
   return SURFACE_OPTIONS.find((option) => option.value === surface)?.label ?? "学習";
+}
+
+export function parentSurface(surface: Surface): Surface {
+  return surface === "reflex" ? "study" : surface;
 }
 
 export function learnerError(error: unknown, fallback: string): string {
