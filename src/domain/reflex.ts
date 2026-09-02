@@ -232,11 +232,11 @@ function sessionPriority(card: ReflexCard, answers: readonly ReflexAnswerRecord[
   const unseenBonus = own.length === 0 ? 3 : 0;
   const currentTrouble = latest
     ? latest.correct
-      ? card.choices.length === 4 &&
-        latest.responseMs !== null &&
-        latest.responseMs >= REFLEX_SLOW_RESPONSE_MS
-        ? 4
-        : -2
+      ? latest.timingInterrupted || latest.responseMs === null
+        ? 0
+        : card.choices.length === 4 && latest.responseMs >= REFLEX_SLOW_RESPONSE_MS
+          ? 4
+          : -2
       : 8
     : 0;
   return card.history.priority + unseenBonus + currentTrouble - own.length * 1.5;

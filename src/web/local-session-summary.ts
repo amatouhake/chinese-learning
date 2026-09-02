@@ -286,7 +286,18 @@ function localTopics(attempts: readonly AttemptInput[]) {
         typeof metadata.topicTitle === "string" ? metadata.topicTitle : metadata.topicId,
       );
     if (Array.isArray(metadata?.grammarTopicIds)) {
-      for (const id of metadata.grammarTopicIds) if (typeof id === "string") topics.set(id, id);
+      for (const id of metadata.grammarTopicIds) {
+        if (typeof id === "string" && !topics.has(id)) topics.set(id, "文法トピック");
+      }
+    }
+    if (Array.isArray(metadata?.grammarTopics)) {
+      for (const topic of metadata.grammarTopics) {
+        if (typeof topic !== "object" || topic === null || Array.isArray(topic)) continue;
+        const record = topic as Record<string, unknown>;
+        if (typeof record.id === "string" && typeof record.title === "string") {
+          topics.set(record.id, record.title);
+        }
+      }
     }
   }
   return [...topics].map(([id, title]) => ({ id, title }));

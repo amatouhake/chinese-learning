@@ -600,8 +600,8 @@
   {:else if phase === "empty"}
     <div class="empty-state">
       <h3>まだクイズに使える単語がありません</h3>
-      <p>単語をいくつか練習してから、オンラインで新しい練習を準備してください。</p>
-      <button class="primary-button" onclick={() => void createNewSession()}>もう一度確認</button>
+      <p>この設定ではクイズを準備できませんでした。出題方向や選択肢数を変えてください。</p>
+      <button class="primary-button" onclick={() => void returnToSettings()}>設定を変える</button>
     </div>
   {:else if phase === "completed" && session && completionSummary}
     <div class="empty-state session-summary shared-result-panel">

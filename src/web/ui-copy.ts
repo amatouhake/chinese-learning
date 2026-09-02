@@ -72,6 +72,10 @@ export function surfaceLabel(surface: Surface): string {
   return SURFACE_OPTIONS.find((option) => option.value === surface)?.label ?? "学習";
 }
 
+export function parentSurface(surface: Surface): Surface {
+  return surface === "reflex" ? "study" : surface;
+}
+
 export function learnerError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : "";
   const knownMessage = {

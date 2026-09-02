@@ -161,6 +161,54 @@ test.describe("reading and grammar dogfood", () => {
     await expect.poll(() => requestedTopics.at(-1)).toBe(connectedTopic.id);
   });
 
+  test("offline Reading results keep grammar topic titles through reconnect and history", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const captured = { reading: null as ReadingCard | null };
+    page.on("response", (response) => void captureLatestReadingCard(response, captured));
+
+    await page.goto("/#reading");
+    await expect(page.locator(".reading-prompt h2")).toBeVisible({ timeout: 20_000 });
+    await expect.poll(() => captured.reading).not.toBeNull();
+    const topic = captured.reading?.grammarTopics[0];
+    if (!topic) throw new Error("captured Reading card has no grammar topic");
+
+    await context.setOffline(true);
+    for (let index = 0; index < 5; index += 1) {
+      for (const label of ["単語を表示", "ピンインを表示", "意味を表示", "文法を表示"]) {
+        await page.getByRole("button", { name: new RegExp(label) }).click();
+      }
+      await page.getByRole("button", { name: /だいたい/ }).click();
+      if (index < 4) await expect(page.locator(".reading-prompt h2")).toBeVisible();
+    }
+
+    await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
+    await expect(page.locator(".practice-result")).toContainText(topic.title);
+    await expect(page.locator(".practice-result")).not.toContainText(topic.id);
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
+    await expect(page.locator(".practice-result")).toContainText(topic.title);
+    await expect(page.locator(".practice-result")).not.toContainText(topic.id);
+
+    await context.setOffline(false);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect.poll(() => outboxCount(page), { timeout: 20_000 }).toBe(0);
+    await page.goto("/#progress");
+    await expect(page.getByRole("heading", { name: "最近の練習" })).toBeVisible();
+    const historyEntry = page
+      .locator(".session-history-list button")
+      .filter({ hasText: "読解" })
+      .first();
+    await expect(historyEntry).toBeVisible({ timeout: 20_000 });
+    await historyEntry.click();
+    await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
+    await expect(page.locator(".practice-result")).toContainText(topic.title);
+    await expect(page.locator(".practice-result")).not.toContainText(topic.id);
+  });
+
   for (const restoredMode of ["reading", "grammar"] as const) {
     test(`reopens a zero-detail legacy ${restoredMode} result in its saved submode`, async ({
       page,

@@ -288,6 +288,7 @@
           sentenceId: readingCard.sentenceId,
           revealOrder: ["vocabulary", "pinyin", "meaning", "grammar"],
           grammarTopicIds: readingCard.grammarTopics.map(({ id }) => id),
+          grammarTopics: readingCard.grammarTopics.map(({ id, title }) => ({ id, title })),
           itemLabel: readingCard.sentence.chinese,
           itemDetail: readingCard.sentence.pinyin,
         },

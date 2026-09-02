@@ -148,6 +148,23 @@ describe("Reflex automaticity selection", () => {
 
     expect(selectNextReflexCard([fourChoice, nineChoice], answers, 3)?.cardId).toBe("four");
   });
+
+  test("keeps interrupted correct timing neutral for repeat priority", () => {
+    const target = card("target", "hanzi_to_meaning", 0);
+    const faster = card("faster", "meaning_to_hanzi", 1.9);
+    const cooldownA = card("cooldown-a", "hanzi_to_pinyin", 0);
+    const cooldownB = card("cooldown-b", "pinyin_to_hanzi", 0);
+    const answers: ReflexAnswerRecord[] = [
+      answer("target", 1, true, null, true),
+      answer("faster", 2, true, 600),
+      answer("cooldown-a", 3, true, 600),
+      answer("cooldown-b", 4, true, 600),
+    ];
+
+    expect(selectNextReflexCard([target, faster, cooldownA, cooldownB], answers, 5)?.cardId).toBe(
+      "target",
+    );
+  });
 });
 
 function card(id: string, activityType: ReflexActivityType, priority: number): ReflexCard {
@@ -178,14 +195,15 @@ function answer(
   cardId: string,
   round: number,
   correct: boolean,
-  responseMs: number,
+  responseMs: number | null,
+  timingInterrupted = false,
 ): ReflexAnswerRecord {
   return {
     eventId: `event:${round}`,
     cardId,
     correct,
     responseMs,
-    timingInterrupted: false,
+    timingInterrupted,
     round,
   };
 }

@@ -165,6 +165,122 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("button", { name: "文法コース" })).toBeVisible();
   });
 
+  test("an empty Quiz session returns to settings instead of retrying the same configuration", async ({
+    page,
+  }) => {
+    await introduceVocabulary(page, 8);
+    let emptySessionId: string | null = null;
+    await page.route("**/api/reflex/sessions", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      const body = route.request().postDataJSON() as {
+        sessionId: string;
+        deviceId: string;
+        maxItems: number;
+        activityType: string;
+        choiceCount: number;
+      };
+      if (body.activityType !== "hanzi_to_meaning" || body.choiceCount !== 9) {
+        await route.continue();
+        return;
+      }
+      emptySessionId = body.sessionId;
+      const session = {
+        id: body.sessionId,
+        deviceId: body.deviceId,
+        maxItems: body.maxItems,
+        completedItems: 0,
+        poolSize: 0,
+        activityType: "hanzi_to_meaning",
+        choiceCount: 9,
+        selectionStrategy: "weak_and_slow_v1",
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ disposition: "created", session }),
+      });
+    });
+    await page.route("**/api/sync/pull", async (route) => {
+      const body = route.request().postDataJSON() as { cursor: number; reflexSessionId?: string };
+      if (!emptySessionId || body.reflexSessionId !== emptySessionId) {
+        await route.continue();
+        return;
+      }
+      const session = {
+        id: emptySessionId,
+        deviceId: "empty-quiz-device",
+        maxItems: 8,
+        completedItems: 0,
+        poolSize: 0,
+        activityType: "hanzi_to_meaning",
+        choiceCount: 9,
+        selectionStrategy: "weak_and_slow_v1",
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          nextCursor: body.cursor,
+          hasMore: false,
+          currentContentRevision: null,
+          contentChanged: false,
+          learnerChanges: [],
+          contentChanges: [],
+          studyPack: null,
+          reflexPack: { status: "empty", session, cards: [] },
+          pronunciationPack: null,
+          readingPack: null,
+          grammarPack: null,
+        }),
+      });
+    });
+
+    await page.goto("/#reflex");
+    await page.getByRole("button", { name: /漢字 → 意味/ }).click();
+    await page.getByRole("button", { name: /9択/ }).click();
+    await page.getByRole("button", { name: "この設定で始める" }).click();
+    await expect(
+      page.getByRole("heading", { name: "まだクイズに使える単語がありません" }),
+    ).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole("button", { name: "設定を変える" })).toBeVisible();
+    await page.getByRole("button", { name: "設定を変える" }).click();
+    await expect(page.getByRole("heading", { name: "単語を素早く見分ける" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /漢字 → 意味/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("button", { name: /9択/ })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "混合" }).click();
+    await page.getByRole("button", { name: "4択" }).click();
+    await expect(page.getByRole("button", { name: "混合" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("button", { name: "4択" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("mobile navigation marks Quiz as the 単語 parent", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.goto("/#reflex");
+    const trigger = page.locator("#mobile-mode-trigger");
+    await expect(trigger).toHaveText("単語");
+    await trigger.click();
+    const study = page.getByRole("menuitemradio", { name: "単語" });
+    await expect(study).toHaveAttribute("aria-checked", "true");
+    await expect(study).toHaveClass(/active/);
+    await expect(study).toBeFocused();
+    await expect(page.locator("#mobile-mode-menu [aria-checked='true']")).toHaveCount(1);
+  });
+
   test("9択設定を固定し、画面を離れた回答だけ反応時間を無効にする", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await introduceVocabulary(page, 9);

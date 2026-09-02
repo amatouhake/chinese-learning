@@ -6,7 +6,7 @@
   import ReflexPractice from "./ReflexPractice.svelte";
   import ReadingGrammar from "./ReadingGrammar.svelte";
   import { getSoundEnabled, subscribeToSound, toggleSound } from "./sound";
-  import { SURFACE_OPTIONS, surfaceLabel, type Surface } from "./ui-copy";
+  import { SURFACE_OPTIONS, parentSurface, surfaceLabel, type Surface } from "./ui-copy";
   import VocabularyStudy from "./VocabularyStudy.svelte";
 
   let surface: Surface = surfaceFromHash();
@@ -133,14 +133,15 @@
             <button
               type="button"
               role="menuitemradio"
-              aria-checked={surface === option.value}
-              tabindex={surface === option.value ? 0 : -1}
-              class:active={surface === option.value}
+              aria-checked={parentSurface(surface) === option.value}
+              tabindex={parentSurface(surface) === option.value ? 0 : -1}
+              class:active={parentSurface(surface) === option.value}
               onclick={() => selectSurfaceFromMenu(option.value)}
             >
               <span>{option.label}</span>
-              {#if surface === option.value}<svg aria-hidden="true" viewBox="0 0 20 20"
-                  ><path d="m4.5 10.5 3.3 3.3 7.7-7.6" /></svg
+              {#if parentSurface(surface) === option.value}<svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"><path d="m4.5 10.5 3.3 3.3 7.7-7.6" /></svg
                 >{/if}
             </button>
           {/each}

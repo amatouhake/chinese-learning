@@ -73,6 +73,32 @@ describe("local session summaries", () => {
     }
   });
 
+  test("keeps Reading grammar topic titles in offline evidence", () => {
+    const summary = localGuidedSummary(guidedSession("reading", 2, 2), [
+      {
+        ...attempts("reading", 1)[0]!,
+        metadata: {
+          interaction: "staged-sentence-reading",
+          grammarTopicIds: ["grammar:topic:a", "grammar:topic:b"],
+          grammarTopics: [
+            { id: "grammar:topic:a", title: "「是」の文" },
+            { id: "grammar:topic:b", title: "所有を表す「的」" },
+          ],
+        },
+      },
+    ]);
+
+    expect(summary.practice).toBe("reading");
+    if (summary.practice !== "reading") return;
+    expect(summary.evidence.grammarTopics).toEqual([
+      { id: "grammar:topic:a", title: "「是」の文" },
+      { id: "grammar:topic:b", title: "所有を表す「的」" },
+    ]);
+    expect(summary.evidence.grammarTopics.map(({ title }) => title)).not.toContain(
+      "grammar:topic:a",
+    );
+  });
+
   test("uses durable Quiz answer labels after prepared cards are removed", () => {
     const session: ReflexSessionView = {
       id: "quiz:completed",
