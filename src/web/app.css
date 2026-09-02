@@ -169,9 +169,11 @@ main {
   letter-spacing: 0.01em;
 }
 
-.surface-nav button:hover {
-  border-color: var(--ink-line-bright);
-  color: var(--paper);
+@media (hover: hover) and (pointer: fine) {
+  .surface-nav button:hover {
+    border-color: var(--ink-line-bright);
+    color: var(--paper);
+  }
 }
 
 .surface-nav button.active {
@@ -203,9 +205,14 @@ main {
   text-align: left;
 }
 
-.mobile-mode-trigger:hover,
 .mobile-mode-trigger[aria-expanded="true"] {
   border-color: var(--cyan);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mobile-mode-trigger:hover {
+    border-color: var(--cyan);
+  }
 }
 
 .mobile-mode-trigger svg {
@@ -254,12 +261,19 @@ main {
   text-align: left;
 }
 
-.mobile-mode-menu button:hover,
 .mobile-mode-menu button:focus-visible,
 .mobile-mode-menu button.active {
   border-color: var(--ink-line-bright);
   color: var(--paper);
   background: var(--ink-raised);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mobile-mode-menu button:hover {
+    border-color: var(--ink-line-bright);
+    color: var(--paper);
+    background: var(--ink-raised);
+  }
 }
 
 .mobile-mode-menu button.active {
@@ -304,10 +318,16 @@ main {
   font-weight: 800;
 }
 
-.sound-toggle:hover,
 .sound-toggle.enabled {
   border-color: var(--cyan);
   color: var(--cyan);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sound-toggle:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+  }
 }
 
 .learning-shell {
@@ -544,9 +564,11 @@ main {
   letter-spacing: -0.01em;
 }
 
-.reveal-button:hover,
-.primary-button:hover {
-  background: var(--red);
+@media (hover: hover) and (pointer: fine) {
+  .reveal-button:hover,
+  .primary-button:hover {
+    background: var(--red);
+  }
 }
 
 .reveal-button small,
@@ -741,13 +763,15 @@ kbd {
   text-align: left;
 }
 
-.rating:hover,
-.choice-grid button:hover,
-.binary-grid button:hover,
-.production-ratings button:hover,
-.secondary-button:hover,
-.text-button:hover {
-  border-color: var(--red);
+@media (hover: hover) and (pointer: fine) {
+  .rating:hover,
+  .choice-grid button:hover,
+  .binary-grid button:hover,
+  .production-ratings button:hover,
+  .secondary-button:hover,
+  .text-button:hover {
+    border-color: var(--red);
+  }
 }
 
 .rating kbd {
@@ -771,7 +795,6 @@ kbd {
 }
 
 .rating-1 strong,
-.rating-1:hover strong,
 .binary-grid .missed {
   color: var(--red-deep);
 }
@@ -936,8 +959,10 @@ kbd {
   cursor: pointer;
 }
 
-.reflex-start .mode-card:hover {
-  border-color: var(--red);
+@media (hover: hover) and (pointer: fine) {
+  .reflex-start .mode-card:hover {
+    border-color: var(--red);
+  }
 }
 
 .reflex-start .mode-card strong {
@@ -1186,7 +1211,20 @@ kbd {
   display: grid;
   width: min(100%, 46rem);
   gap: 1rem;
+  border-color: var(--paper-muted);
+  color: var(--paper-ink);
+  background: var(--paper);
   text-align: left;
+}
+
+.shared-result-panel .practice-result h2,
+.shared-result-panel .practice-result h3 {
+  color: var(--paper-ink);
+}
+
+.shared-result-panel .practice-result .result-configuration,
+.shared-result-panel .practice-result .result-note {
+  color: var(--paper-muted-ink);
 }
 
 .practice-result {
@@ -1488,9 +1526,11 @@ kbd {
   text-align: left;
 }
 
-.session-history-list button:hover {
-  color: var(--cyan);
-  background: var(--ink-raised);
+@media (hover: hover) and (pointer: fine) {
+  .session-history-list button:hover {
+    color: var(--cyan);
+    background: var(--ink-raised);
+  }
 }
 
 .session-history-list time,
@@ -1577,9 +1617,14 @@ kbd {
   text-align: left;
 }
 
-.study-option-grid button:hover,
 .study-option-grid button.selected {
   border-color: var(--cyan);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .study-option-grid button:hover {
+    border-color: var(--cyan);
+  }
 }
 
 .study-option-grid button.selected {
@@ -1807,8 +1852,10 @@ kbd {
   cursor: pointer;
 }
 
-.focus-grid button:hover {
-  border-color: var(--cyan);
+@media (hover: hover) and (pointer: fine) {
+  .focus-grid button:hover {
+    border-color: var(--cyan);
+  }
 }
 
 .focus-grid button.recommended {
@@ -1880,8 +1927,10 @@ kbd {
   cursor: pointer;
 }
 
-.audio-button:hover {
-  background: #94dbe2;
+@media (hover: hover) and (pointer: fine) {
+  .audio-button:hover {
+    background: #94dbe2;
+  }
 }
 
 .audio-button span {
@@ -2308,8 +2357,10 @@ code {
   cursor: pointer;
 }
 
-.refresh-button:hover {
-  border-color: var(--cyan);
+@media (hover: hover) and (pointer: fine) {
+  .refresh-button:hover {
+    border-color: var(--cyan);
+  }
 }
 
 .dashboard-status {

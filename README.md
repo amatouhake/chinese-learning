@@ -102,6 +102,11 @@ tab after a new shell activates. Rebuilding and restarting the Worker therefore 
 local tab without clearing browser storage; the deployed build keeps the normal installable PWA
 update behavior.
 
+`bun run dev:worker` does not apply D1 migrations. After pulling a branch that adds migrations,
+run `bunx wrangler d1 migrations list chinese-learning --local` to inspect the local schema and
+then run `bun run db:migrate:local` explicitly before starting the Worker again. This keeps ordinary
+development server startup non-mutating.
+
 After the first online study set is prepared, the browser can install the app and continue that
 bounded Vocabulary set without a connection, including across reloads. Prepared Quiz, Reading,
 Grammar, and Pronunciation sets also work offline. A brand-new Quiz requires a connection so

@@ -73,6 +73,14 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.getByRole("heading", { name: "12問完了" })).toBeVisible({
       timeout: 20_000,
     });
+    await expect(page.locator(".shared-result-panel")).toHaveCSS(
+      "background-color",
+      "rgb(246, 240, 229)",
+    );
+    await expect(page.locator(".shared-result-panel .result-heading h2")).toHaveCSS(
+      "color",
+      "rgb(26, 32, 40)",
+    );
     const completedAttentionLabels = await page
       .locator(".result-attention strong")
       .allTextContents();
@@ -121,6 +129,10 @@ test.describe("Reflex automaticity dogfood", () => {
     await page.getByRole("link", { name: "記録で詳しく見る" }).click();
     await expect(page.getByRole("heading", { name: "最近の練習" })).toBeVisible();
     await page.locator(".session-history-list button").first().click();
+    await expect(page.locator(".history-detail .practice-result")).toHaveCSS(
+      "background-color",
+      "rgb(246, 240, 229)",
+    );
     await expect(page.locator(".result-attention strong").first()).toHaveText(
       completedAttentionLabels[0]!,
     );
@@ -146,6 +158,12 @@ test.describe("Reflex automaticity dogfood", () => {
     await expect(page.locator(".reflex-choice-grid button")).toHaveCount(4, {
       timeout: 20_000,
     });
+    const firstChoice = page.locator(".reflex-choice-grid button").first();
+    const idleBorder = await firstChoice.evaluate((button) => getComputedStyle(button).borderColor);
+    await firstChoice.hover();
+    await expect
+      .poll(() => firstChoice.evaluate((button) => getComputedStyle(button).borderColor))
+      .not.toBe(idleBorder);
     await page.keyboard.press("1");
     await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled();
     await page.keyboard.press("Enter");
@@ -163,6 +181,44 @@ test.describe("Reflex automaticity dogfood", () => {
     await page.getByRole("button", { name: "読解", exact: true }).click();
     await expect(page.getByRole("button", { name: "例文を読む" })).toBeVisible();
     await expect(page.getByRole("button", { name: "文法コース" })).toBeVisible();
+  });
+
+  test("touch Quiz choices do not retain hover styling on the next question", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      baseURL: "http://127.0.0.1:8787",
+      hasTouch: true,
+      viewport: { width: 390, height: 844 },
+    });
+    const page = await context.newPage();
+    try {
+      await introduceVocabulary(page, 8);
+      await openVocabularyQuiz(page);
+      await page.getByRole("button", { name: /8問/ }).click();
+      await page.getByRole("button", { name: "この設定で始める" }).click();
+      await expect(page.locator(".reflex-card")).toBeVisible({ timeout: 20_000 });
+
+      const firstChoice = page.locator(".reflex-choice-grid button").first();
+      const idleBorder = await firstChoice.evaluate(
+        (button) => getComputedStyle(button).borderColor,
+      );
+      await firstChoice.tap();
+      await expect(page.getByRole("button", { name: "次へ" })).toBeEnabled({ timeout: 20_000 });
+      await page.getByRole("button", { name: "次へ" }).tap();
+      await expect(page.locator(".card-meta span").first()).toHaveText("2 / 8");
+
+      await expect
+        .poll(() =>
+          page
+            .locator(".reflex-choice-grid button")
+            .first()
+            .evaluate((button) => getComputedStyle(button).borderColor),
+        )
+        .toBe(idleBorder);
+    } finally {
+      await context.close();
+    }
   });
 
   test("an empty Quiz session returns to settings instead of retrying the same configuration", async ({
