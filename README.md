@@ -193,12 +193,15 @@ Cloudflare Access
      -> D1 chinese-learning-production
 ```
 
-Read-only inspection recorded the owner workers.dev subdomain `kenkenhagizou-075`. The Worker, D1,
-R2 bucket, Access organization, Access application, and production secrets do not yet exist. The
-production Wrangler environment intentionally contains an Account ID placeholder, a D1 placeholder,
-and Access placeholders; `bun run check:production` must fail until the owner supplies a valid
-Account ID and fills the other placeholders after the corresponding setup. The Account ID must stay
-outside Git and the fake local D1 UUID is never copied into `env.production`.
+Read-only inspection recorded the owner workers.dev subdomain `kenkenhagizou-075`. The Worker, fresh
+D1, Access organization/application, and required production secrets are now provisioned; the D1
+remains empty until the later migration/import steps. The committed Wrangler configuration omits
+`account_id`: Wrangler selects the account from the authenticated session or the optional external
+`CLOUDFLARE_ACCOUNT_ID`. The production D1 UUID remains a Git-external operational value, so the
+tracked configuration keeps its D1 placeholder and a temporary production config must supply the
+real UUID. Access issuer, audience, and owner subject are Worker secrets declared in
+`env.production.secrets.required`, never plain vars. The fake local D1 UUID is never copied into
+`env.production`.
 
 Cloudflare Access can protect a Worker's production `workers.dev` URL directly, so a custom domain is
 not required for this private personal deployment. Create a hostname-based self-hosted application
@@ -223,8 +226,19 @@ documentation for the later owner-approved execution, not commands run by CI or 
    one allow rule for the owner. Keep the Access session duration suitable for a personal phone.
    Record the team issuer URL (`https://<team-name>.cloudflareaccess.com`) and the application's
    AUD tag. After the first authorized browser login, obtain the stable Access user ID/`sub` from
-   the Access identity view and record it as the owner subject. Never put a JWT or secret in the
-   repository or logs.
+   the Access identity view and record it as the owner subject. Provision those three values as
+   environment-specific Worker secrets, not `vars`:
+
+   ```sh
+   # DO NOT RUN YET — each command creates a new remote Worker version.
+   ./node_modules/.bin/wrangler secret put ACCESS_ISSUER --env production
+   ./node_modules/.bin/wrangler secret put ACCESS_AUDIENCE --env production
+   ./node_modules/.bin/wrangler secret put ACCESS_OWNER_SUB --env production
+   ```
+
+   The required names are declared in `env.production.secrets.required`; `wrangler deploy` validates
+   that the remote secrets exist before upload. Never put a JWT or secret in the repository, logs,
+   `vars`, or a secrets file.
 
 3. **Create the fresh D1 database (remote mutation — DO NOT RUN YET).** The command must name the
    production environment and database explicitly:
@@ -234,17 +248,28 @@ documentation for the later owner-approved execution, not commands run by CI or 
    ./node_modules/.bin/wrangler d1 create chinese-learning-production --env production
    ```
 
-   Copy only the returned database UUID into `env.production.d1_databases[0].database_id` locally.
-   Do not use `--update-config` blindly, do not reuse `boardoor-db`, and do not copy the local fake
-   UUID. Run `./node_modules/.bin/wrangler d1 info chinese-learning-production --env production`
-   (read-only) and confirm the name/UUID before proceeding.
+   Copy only the returned database UUID into `env.production.d1_databases[0].database_id` in an
+   ignored temporary production config. Do not write it into the tracked config. Do not use
+   `--update-config` blindly, do not reuse `boardoor-db`, and do not copy the local fake UUID. Run
+   `./node_modules/.bin/wrangler d1 info chinese-learning-production --env production` (read-only)
+   and confirm the name/UUID before proceeding.
 
-4. **Fill non-secret production configuration locally.** Replace the three Access placeholders and
-   the D1 placeholder in `wrangler.jsonc`; keep `ENVIRONMENT=production`,
-   `LOCAL_STUDY_BYPASS=false`, an empty production secret list, explicit Static Assets, and empty
-   `r2_buckets`. Run `bun run cf-types`, then `bun run check:production`. This guard must pass before
-   any remote migration or upload. No Access JWT, API token, or browser write secret belongs in
-   `wrangler.jsonc`.
+4. **Prepare non-secret production configuration outside Git.** Use a disposable deployment
+   worktree or ignored temporary config, keeping the real D1 UUID there only. Leave `account_id`
+   absent; authenticated Wrangler or an external `CLOUDFLARE_ACCOUNT_ID` selects the account. Keep
+   the three Access values in the remote Worker secrets declared by `secrets.required`, not in
+   `vars`. From the temporary worktree, where the temporary file is `wrangler.jsonc`, run:
+
+   ```sh
+   bun run cf-types
+   bun run check:production -- --config /tmp/chinese-learning-production/wrangler.jsonc
+   bun run build:web
+   bun run check:production:artifacts
+   bun run build:production -- --config /tmp/chinese-learning-production/wrangler.jsonc
+   ```
+
+   The production dry run must pass before any remote migration or upload. No Access JWT, API
+   token, or browser write secret belongs in `wrangler.jsonc`.
 
    The default is **A — fresh production learning state**. Do not promote `.wrangler/state` or any
    other local database automatically. Before step 6, the owner must explicitly choose **B —
@@ -315,10 +340,11 @@ documentation for the later owner-approved execution, not commands run by CI or 
    the restore is destructive and must be explicitly approved. Do not improvise cleanup SQL. The
    generated import files are deterministic and idempotent for a corrected rerun after recovery.
 
-9. **Verify the remote corpus read-only.** With the real D1 UUID and Access values filled, run:
+9. **Verify the remote corpus read-only.** With the temporary config supplying the real D1 UUID and
+   the required Access secrets already provisioned, run:
 
    ```sh
-   bun run verify:production
+   bun run verify:production -- --config /tmp/chinese-learning-production/wrangler.jsonc
    ```
 
    It refuses every environment except `production`, targets `chinese-learning-production`, uses

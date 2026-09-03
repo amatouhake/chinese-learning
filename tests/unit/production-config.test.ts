@@ -4,7 +4,7 @@ import {
   assertProductionConfig,
   LOCAL_FAKE_D1_ID,
   parseJsonc,
-  PRODUCTION_ACCOUNT_ID_PLACEHOLDER,
+  PRODUCTION_ACCESS_SECRET_NAMES,
   PRODUCTION_BUILD_COMMAND,
   PRODUCTION_D1_PLACEHOLDER,
   validateProductionConfig,
@@ -57,31 +57,13 @@ test("production guard requires the standalone production build pipeline", () =>
   expect(config.env.production.build.command).toBe(PRODUCTION_BUILD_COMMAND);
 });
 
-test("production guard rejects missing, placeholder, or invalid Account IDs", () => {
-  for (const accountId of [
-    undefined,
-    PRODUCTION_ACCOUNT_ID_PLACEHOLDER,
-    "not-an-account-id",
-    "00000000000000000000000000000000",
-  ]) {
-    const config = productionConfig();
-    const errors = validateProductionConfig({
-      ...config,
-      env: {
-        production: {
-          ...config.env.production,
-          account_id: accountId,
-        },
-      },
-    });
-
-    expect(errors).toContain(
-      "env.production.account_id must be a valid Cloudflare Account ID supplied after account setup",
-    );
-  }
+test("production guard leaves Account ID selection to Wrangler", () => {
+  const config = productionConfig();
+  expect(config.env.production).not.toHaveProperty("account_id");
+  expect(validateProductionConfig(config)).toEqual([]);
 });
 
-test("production guard rejects bypass, missing Access config, wrong environment, and R2", () => {
+test("production guard requires Access secrets and rejects plain vars, bypass, and R2", () => {
   const base = productionConfig();
   const production = base.env.production;
   expect(
@@ -101,6 +83,21 @@ test("production guard rejects bypass, missing Access config, wrong environment,
       expect.stringContaining("r2_buckets"),
     ]),
   );
+
+  expect(
+    validateProductionConfig({
+      ...base,
+      env: {
+        production: {
+          ...production,
+          secrets: { required: ["ACCESS_ISSUER", "ACCESS_AUDIENCE"] },
+        },
+      },
+    }),
+  ).toContain(
+    "env.production.secrets.required must contain exactly ACCESS_ISSUER, ACCESS_AUDIENCE, and ACCESS_OWNER_SUB",
+  );
+
   expect(
     validateProductionConfig(
       {
@@ -108,7 +105,12 @@ test("production guard rejects bypass, missing Access config, wrong environment,
         env: {
           production: {
             ...production,
-            vars: { ...production.vars, ACCESS_AUDIENCE: "__SET_AFTER_ACCESS_SETUP__" },
+            vars: {
+              ...production.vars,
+              ACCESS_ISSUER: "https://private-study.cloudflareaccess.com",
+              ACCESS_AUDIENCE: "private-study-audience",
+              ACCESS_OWNER_SUB: "owner-subject",
+            },
           },
         },
       },
@@ -117,7 +119,9 @@ test("production guard rejects bypass, missing Access config, wrong environment,
   ).toEqual(
     expect.arrayContaining([
       expect.stringContaining("environment must be exactly production"),
-      expect.stringContaining("ACCESS_AUDIENCE"),
+      ...PRODUCTION_ACCESS_SECRET_NAMES.map((name) =>
+        expect.stringContaining(`env.production.vars.${name}`),
+      ),
     ]),
   );
 });
@@ -130,7 +134,6 @@ function productionConfig() {
     env: {
       production: {
         name: "chinese-learning-production",
-        account_id: "1234567890abcdef1234567890abcdef",
         workers_dev: true,
         preview_urls: false,
         compatibility_date: "2026-08-29",
@@ -138,11 +141,8 @@ function productionConfig() {
         vars: {
           ENVIRONMENT: "production",
           LOCAL_STUDY_BYPASS: "false",
-          ACCESS_ISSUER: "https://private-study.cloudflareaccess.com",
-          ACCESS_AUDIENCE: "private-study-audience",
-          ACCESS_OWNER_SUB: "owner-subject",
         },
-        secrets: { required: [] },
+        secrets: { required: [...PRODUCTION_ACCESS_SECRET_NAMES] },
         assets: {
           directory: "./dist",
           binding: "ASSETS",
