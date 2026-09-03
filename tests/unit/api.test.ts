@@ -19,10 +19,57 @@ test("postJson uses same-origin credentials without a browser bearer token", asy
     await expect(postJson("/api/health", { check: true })).resolves.toEqual({ ok: true });
     expect(requestInit).toMatchObject({
       credentials: "same-origin",
-      redirect: "follow",
+      redirect: "manual",
       cache: "no-store",
     });
     expect(new Headers(requestInit?.headers).has("authorization")).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("postJson treats an opaque Access redirect as authentication required", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestInit: RequestInit | undefined;
+  globalThis.fetch = Object.assign(
+    async (...args: Parameters<typeof fetch>) => {
+      requestInit = args[1] as RequestInit | undefined;
+      return {
+        type: "opaqueredirect",
+        status: 0,
+        ok: false,
+        redirected: false,
+        headers: new Headers(),
+        json: async () => null,
+      } as Response;
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+  try {
+    await expect(postJson("/api/health", {})).rejects.toMatchObject({
+      status: 401,
+      code: "auth_required",
+      message: expect.stringContaining("Sign-in is required"),
+    });
+    expect(requestInit).toMatchObject({
+      credentials: "same-origin",
+      redirect: "manual",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("postJson preserves actual fetch failures as network failures", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async () => {
+      throw new TypeError("Failed to fetch");
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+  try {
+    await expect(postJson("/api/health", {})).rejects.toThrow("Failed to fetch");
   } finally {
     globalThis.fetch = originalFetch;
   }

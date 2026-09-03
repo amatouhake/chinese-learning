@@ -14,12 +14,15 @@ export async function postJson<T = unknown>(path: string, body: unknown): Promis
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     credentials: "same-origin",
-    redirect: "follow",
+    redirect: "manual",
     cache: "no-store",
   });
 
+  const isAccessRedirect =
+    response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400);
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  const isAccessResponse = response.redirected || contentType.includes("text/html");
+  const isAccessResponse =
+    isAccessRedirect || response.redirected || contentType.includes("text/html");
   const payload: unknown = isAccessResponse ? null : await response.json().catch(() => null);
   if (!response.ok) {
     throw apiErrorFromResponse(response.status, payload, isAccessResponse);
@@ -37,7 +40,11 @@ function apiErrorFromResponse(
 ): ApiError {
   const serverCode = recordString(payload, "code");
   if (isAccessResponse || status === 401) {
-    return new ApiError(authRequiredMessage(), status, serverCode ?? "auth_required");
+    return new ApiError(
+      authRequiredMessage(),
+      status === 0 ? 401 : status,
+      serverCode ?? "auth_required",
+    );
   }
   if (status === 403 || serverCode === "forbidden") {
     return new ApiError("You are not authorized to use this private study.", status, "forbidden");

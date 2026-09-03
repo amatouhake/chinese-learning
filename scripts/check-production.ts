@@ -5,6 +5,8 @@ import { configuredValue } from "../src/worker/auth";
 export const PRODUCTION_ENVIRONMENT = "production";
 export const PRODUCTION_WORKER_NAME = "chinese-learning-production";
 export const PRODUCTION_DATABASE_NAME = "chinese-learning-production";
+export const PRODUCTION_BUILD_COMMAND =
+  "bun run check:production && bun run build:web && bun run check:production:artifacts";
 export const PRODUCTION_ACCOUNT_ID_PLACEHOLDER = "__SET_AFTER_CLOUDFLARE_ACCOUNT_SETUP__";
 export const LOCAL_FAKE_D1_ID = "00000000-0000-0000-0000-000000000001";
 export const PRODUCTION_D1_PLACEHOLDER = "__SET_AFTER_D1_CREATE__";
@@ -127,10 +129,7 @@ export function validateProductionConfig(config: unknown, environment = "product
   const build = production.build;
   if (!isRecord(build) || typeof build.command !== "string") {
     errors.push("env.production.build.command must run the production and artifact guards");
-  } else if (
-    !build.command.includes("check:production") ||
-    !build.command.includes("check:production:artifacts")
-  ) {
+  } else if (build.command !== PRODUCTION_BUILD_COMMAND) {
     errors.push(
       "env.production.build.command must run check:production and check:production:artifacts",
     );

@@ -5,6 +5,7 @@ import {
   LOCAL_FAKE_D1_ID,
   parseJsonc,
   PRODUCTION_ACCOUNT_ID_PLACEHOLDER,
+  PRODUCTION_BUILD_COMMAND,
   PRODUCTION_D1_PLACEHOLDER,
   validateProductionConfig,
 } from "../../scripts/check-production";
@@ -36,6 +37,24 @@ test("production guard rejects fake, placeholder, or missing D1 IDs", () => {
     });
     expect(errors.some((error) => error.includes("real D1 UUID"))).toBe(true);
   }
+});
+
+test("production guard requires the standalone production build pipeline", () => {
+  const config = productionConfig();
+  const errors = validateProductionConfig({
+    ...config,
+    env: {
+      production: {
+        ...config.env.production,
+        build: { command: "bun run check:production:artifacts" },
+      },
+    },
+  });
+
+  expect(errors).toContain(
+    "env.production.build.command must run check:production and check:production:artifacts",
+  );
+  expect(config.env.production.build.command).toBe(PRODUCTION_BUILD_COMMAND);
 });
 
 test("production guard rejects missing, placeholder, or invalid Account IDs", () => {

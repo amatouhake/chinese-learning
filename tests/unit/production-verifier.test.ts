@@ -15,12 +15,20 @@ test("production verifier targets only the explicit production D1 environment", 
     "--remote",
     "--env",
     "production",
+    "--config",
+    "wrangler.jsonc",
     "--command",
     expect.stringMatching(/^SELECT\b/u),
     "--json",
   ]);
   expect(command[command.indexOf("--command") + 1]).toContain("FROM lexemes");
   expect(command).not.toContain("--local");
+});
+
+test("production verifier passes an alternate config path to Wrangler", () => {
+  const command = buildProductionVerificationCommand("wrangler", "./alternate-wrangler.jsonc");
+  expect(command).toContain("--config");
+  expect(command[command.indexOf("--config") + 1]).toBe("./alternate-wrangler.jsonc");
 });
 
 test("production verifier refuses non-SELECT or multi-statement SQL", () => {

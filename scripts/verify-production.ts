@@ -13,6 +13,7 @@ const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
 export function buildProductionVerificationCommand(
   wrangler = `${projectRoot}/node_modules/.bin/wrangler`,
+  config = "wrangler.jsonc",
 ): string[] {
   const query = verificationQuery();
   assertSelectOnlySql(query);
@@ -24,6 +25,8 @@ export function buildProductionVerificationCommand(
     "--remote",
     "--env",
     PRODUCTION_ENVIRONMENT,
+    "--config",
+    config,
     "--command",
     query,
     "--json",
@@ -53,7 +56,7 @@ if (import.meta.main) {
     const config = parseJsonc(readFileSync(options.config, "utf8"));
     assertProductionConfig(config, options.environment);
 
-    const command = buildProductionVerificationCommand();
+    const command = buildProductionVerificationCommand(undefined, options.config);
     const result = Bun.spawnSync(command, {
       cwd: projectRoot,
       stdout: "pipe",
