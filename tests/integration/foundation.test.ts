@@ -1199,15 +1199,18 @@ describe("D1 learning foundation", () => {
     expect(await count("attempts", "event_id", reused.eventId)).toBe(0);
   });
 
-  test("Worker requires the configured bearer token before immutable attempt writes", async () => {
+  test("Worker keeps study access loopback-only and ignores browser bearer auth", async () => {
     const fixture = await seedScheduledCard("http-auth");
     const input = scheduledInput(fixture, "http-auth-event", "2026-08-29T10:00:00Z", 1);
 
-    const missing = await postAttempt(input, null);
+    const remote = { url: "https://example.test/api/attempts" };
+    const missing = await postAttempt(input, remote);
     expect(missing.status).toBe(401);
-    expect(missing.headers.get("www-authenticate")).toBe("Bearer");
 
-    const incorrect = await postAttempt(input, "Bearer incorrect-token");
+    const incorrect = await postAttempt(input, {
+      ...remote,
+      authorization: "Bearer ignored-browser-bearer",
+    });
     expect(incorrect.status).toBe(401);
     await expect(incorrect.json()).resolves.toMatchObject({ code: "unauthorized" });
     expect(await count("attempts", "event_id", input.eventId)).toBe(0);
@@ -1218,11 +1221,19 @@ describe("D1 learning foundation", () => {
   });
 
   test("Hono Worker exposes the API and reserved MCP boundaries in workerd", async () => {
-    const health = await exports.default.fetch(new Request("https://example.test/api/health"));
+    const health = await exports.default.fetch(
+      new Request("http://127.0.0.1/api/health", {
+        headers: { origin: "http://127.0.0.1" },
+      }),
+    );
     expect(health.status).toBe(200);
     await expect(health.json()).resolves.toMatchObject({ ok: true });
 
-    const mcp = await exports.default.fetch(new Request("https://example.test/mcp"));
+    const mcp = await exports.default.fetch(
+      new Request("http://127.0.0.1/mcp", {
+        headers: { origin: "http://127.0.0.1" },
+      }),
+    );
     expect(mcp.status).toBe(501);
   });
 });
@@ -1409,12 +1420,16 @@ async function applyImport(input: V1ImportInput): Promise<void> {
 
 function postAttempt(
   input: AttemptInput,
-  authorization: string | null = "Bearer integration-test-write-token",
+  options: { url?: string; authorization?: string } = {},
 ): Promise<Response> {
-  const headers = new Headers({ "content-type": "application/json" });
-  if (authorization !== null) headers.set("authorization", authorization);
+  const url = options.url ?? "http://127.0.0.1/api/attempts";
+  const headers = new Headers({
+    "content-type": "application/json",
+    origin: new URL(url).origin,
+  });
+  if (options.authorization) headers.set("authorization", options.authorization);
   return exports.default.fetch(
-    new Request("https://example.test/api/attempts", {
+    new Request(url, {
       method: "POST",
       headers,
       body: JSON.stringify(input),

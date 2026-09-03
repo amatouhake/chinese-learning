@@ -1,9 +1,10 @@
 # Learner identity foundation
 
-The application is multi-user ready internally and single-user operationally. There is no account
-surface or production authentication system. Every authorized request currently resolves to the
-stable canonical learner ID `learner:owner:v1` in `src/worker/current-learner.ts`; database and
-domain services receive that resolved ID explicitly rather than reading an implicit singleton.
+The application is multi-user ready internally and single-user operationally. Private production
+uses Cloudflare Access for browser authentication, but has no application account surface. Every
+authorized request resolves to the stable canonical learner ID `learner:owner:v1` in
+`src/worker/current-learner.ts`; database and domain services receive that resolved ID explicitly
+rather than reading an implicit singleton.
 
 ## Ownership inventory and model
 
@@ -35,16 +36,18 @@ ID to every learner-scoped operation. Learning payloads still contain durable de
 identity, but never a selectable learner ID. Supplying an extra `learnerId` field cannot select a
 different learner.
 
-A future provider integration should resolve:
+The current provider boundary resolves:
 
 ```text
-provider credential -> provider identity -> canonical learner ID
+Cloudflare Access JWT `sub` -> configured owner authorization -> canonical learner ID
 ```
 
-Provider subjects, email addresses, usernames, and Access identities are not learner primary keys.
-No provider-identity table is present yet because there is no provider integration to persist. Login,
-signup, profiles, account switching, account-local browser migrations, and public registration remain
-explicit non-goals.
+Provider subjects, email addresses, usernames, and Access identities are authentication identities,
+not learner primary keys. The Worker trusts only a verified Access JWT `sub`, compares it with the
+configured owner subject, and never accepts a learner ID from a client payload. No
+provider-identity table is present because this milestone has one fixed owner and no identity
+provisioning lifecycle. Login UI, signup, profiles, account switching, account-local browser
+migrations, and public registration remain explicit non-goals.
 
 ## Sync and projection semantics
 

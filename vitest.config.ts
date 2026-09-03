@@ -7,7 +7,7 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         bindings: {
-          ATTEMPT_WRITE_TOKEN: "integration-test-write-token",
+          ENVIRONMENT: "local",
           LOCAL_STUDY_BYPASS: "true",
           TEST_MIGRATIONS: await readD1Migrations(
             new URL("./migrations", import.meta.url).pathname,

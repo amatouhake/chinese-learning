@@ -18,8 +18,10 @@ recent session summaries with a separate canonical long-term Progress snapshot. 
 broad content prefetch, and Remote MCP product surfaces remain deferred.
 
 Canonical learning state is learner-scoped internally while the product remains operationally
-single-user: the Worker always resolves the fixed owner learner, with no login, account chooser, or
-learner field in browser requests. Shared corpus/card definitions are not duplicated. See
+single-user: the Worker always resolves the fixed owner learner, with no application login UI,
+account chooser, or learner field in browser requests. Private production access is provided by
+Cloudflare Access; it is authentication, not a new learner/account model. Shared corpus/card
+definitions are not duplicated. See
 [Learner identity foundation](docs/learner-identity.md) for the ownership, sync, migration, and future
 authentication boundary.
 
@@ -83,7 +85,6 @@ Install, migrate a fresh local D1 database, and import the corpus:
 ```sh
 bun install --frozen-lockfile
 cp .dev.vars.example .dev.vars
-# Replace ATTEMPT_WRITE_TOKEN in .dev.vars with a private random local value.
 bun run cf-types
 bun run db:migrate:local
 bun run import:v1 -- \
@@ -138,12 +139,11 @@ event payload.
 
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
 when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
-sends a same-origin `application/json` request. Cross-origin and simple-form requests cannot use
-the bypass. The version-controlled Wrangler configuration keeps it `false`, and production
-requests still require the existing bearer token. No credential is included in the frontend bundle.
-
-Wrangler stores ordinary local D1 data under `.wrangler/`, which is ignored. No deploy script or CI
-deploy is configured.
+sends a same-origin JSON request (safe GET/HEAD requests are allowed for local health/MCP checks).
+Cross-origin and simple-form requests cannot use the bypass. The version-controlled Wrangler
+configuration keeps it `false`; production instead requires a signed Cloudflare Access JWT and
+the configured owner `sub`. Browser requests send same-origin credentials and no reusable bearer
+secret. Wrangler stores ordinary local D1 data under `.wrangler/`, which is ignored.
 
 ## Verification and development commands
 
@@ -177,6 +177,224 @@ recreates both corpus imports, verifies pronunciation media, prepares an isolate
 database, and runs Playwright. It expects the three pinned source checkouts from Fresh local setup at
 their documented `/tmp/chinese-learning-*` paths. Each corpus or browser command also accepts the
 corresponding `--vocabulary-root`, `--v1-root`, and `--audio-root` overrides.
+
+## Private production deployment (owner-gated)
+
+The first production topology is one private Worker with one fresh D1 database and Worker Static
+Assets (the current staged media is 480 MP3 files, 4,844,082 bytes / approximately 4.62 MiB;
+the largest file is 14,627 bytes):
+
+```text
+Cloudflare Access
+  -> chinese-learning-production.kenkenhagizou-075.workers.dev
+     -> Worker Static Assets (SPA + 480 pronunciation MP3s)
+     -> Hono /api/*
+     -> authenticated /mcp (501 reservation)
+     -> D1 chinese-learning-production
+```
+
+Read-only inspection recorded the owner workers.dev subdomain `kenkenhagizou-075`. The Worker, D1,
+R2 bucket, Access organization, Access application, and production secrets do not yet exist. The
+production Wrangler environment intentionally contains an Account ID placeholder, a D1 placeholder,
+and Access placeholders; `bun run check:production` must fail until the owner supplies a valid
+Account ID and fills the other placeholders after the corresponding setup. The Account ID must stay
+outside Git and the fake local D1 UUID is never copied into `env.production`.
+
+Cloudflare Access can protect a Worker's production `workers.dev` URL directly, so a custom domain is
+not required for this private personal deployment. Create a hostname-based self-hosted application
+for the exact workers.dev hostname before the first Worker deployment, or use the Worker-level
+Access control immediately when the Worker exists. Permit only the owner. OTP and Google are both
+compatible choices; this Worker depends only on the resulting signed Access JWT, not on an IdP SDK.
+
+All remote mutation commands in the sequence below are explicitly marked `DO NOT RUN YET`. They are
+documentation for the later owner-approved execution, not commands run by CI or this PR.
+
+### Later owner-approved execution sequence
+
+1. **Local preflight.** Check out this merged baseline/PR, install the frozen lockfile, confirm the
+   three pinned source checkouts, and run `bun run check:full`. Confirm `find .generated/public/media
+-name '*.mp3' | wc -l` is `480`. Run `bun run check:production:artifacts` after a web build; it
+   must report 480 staged and 480 copied MP3 files. Do not proceed if `bun run check:production`
+   reports any error.
+
+2. **Enable and configure Access (remote mutation — DO NOT RUN YET).** In Zero Trust, enable the
+   organization and choose an IdP. Create a private self-hosted Access application for
+   `chinese-learning-production.kenkenhagizou-075.workers.dev`, with a deny-by-default policy and
+   one allow rule for the owner. Keep the Access session duration suitable for a personal phone.
+   Record the team issuer URL (`https://<team-name>.cloudflareaccess.com`) and the application's
+   AUD tag. After the first authorized browser login, obtain the stable Access user ID/`sub` from
+   the Access identity view and record it as the owner subject. Never put a JWT or secret in the
+   repository or logs.
+
+3. **Create the fresh D1 database (remote mutation — DO NOT RUN YET).** The command must name the
+   production environment and database explicitly:
+
+   ```sh
+   # DO NOT RUN YET — creates a remote D1 database.
+   ./node_modules/.bin/wrangler d1 create chinese-learning-production --env production
+   ```
+
+   Copy only the returned database UUID into `env.production.d1_databases[0].database_id` locally.
+   Do not use `--update-config` blindly, do not reuse `boardoor-db`, and do not copy the local fake
+   UUID. Run `./node_modules/.bin/wrangler d1 info chinese-learning-production --env production`
+   (read-only) and confirm the name/UUID before proceeding.
+
+4. **Fill non-secret production configuration locally.** Replace the three Access placeholders and
+   the D1 placeholder in `wrangler.jsonc`; keep `ENVIRONMENT=production`,
+   `LOCAL_STUDY_BYPASS=false`, an empty production secret list, explicit Static Assets, and empty
+   `r2_buckets`. Run `bun run cf-types`, then `bun run check:production`. This guard must pass before
+   any remote migration or upload. No Access JWT, API token, or browser write secret belongs in
+   `wrangler.jsonc`.
+
+   The default is **A — fresh production learning state**. Do not promote `.wrangler/state` or any
+   other local database automatically. Before step 6, the owner must explicitly choose **B —
+   migrate trusted local owner history** if that is desired. B requires a separate reviewed export/
+   import operation covering the learner-owned `learner_settings`, `card_state`, FSRS reviews,
+   grammar state, study sessions, attempts, registered devices, and learner-scoped change rows.
+   It must preserve `learner:owner:v1`, every original device/event/session identity and semantic
+   occurrence order, and must not duplicate or invent events. This PR intentionally provides no
+   history migration command; fresh content bootstrap is the only supported first-deployment path.
+
+5. **Generate deterministic import files locally.** Use the pinned repositories and the existing
+   importer contracts, in this order:
+
+   ```sh
+   bun run import:v1 -- \
+     --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
+     --v1-root /tmp/chinese-learning-v1-source \
+     --output .generated/v1-import.sql
+   bun run import:pronunciation -- \
+     --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
+     --audio-root /tmp/chinese-learning-audio-cmn \
+     --output .generated/pronunciation-import.sql \
+     --media-root .generated/public/media \
+     --report .generated/pronunciation-report.json
+   bun run check:production:artifacts
+   ```
+
+6. **Apply all schema migrations to the fresh D1 (remote mutation — DO NOT RUN YET).** This applies
+   migrations `0001` through `0016`, including `0016_pronunciation_mapping_evidence.sql`, before
+   any corpus rows are imported:
+
+   ```sh
+   # DO NOT RUN YET — applies migrations to the remote production D1.
+   ./node_modules/.bin/wrangler d1 migrations apply chinese-learning-production --remote --env production
+   ```
+
+   Stop on any migration error. Do not manually mark migrations applied or run `0016` separately.
+   For later risky schema work, take a portable export first; the first database is expected to be
+   empty so no local learning history is included here.
+
+7. **Record a pre-import recovery point (read-only).** After migrations succeed, inspect the D1
+   production version and current Time Travel bookmark:
+
+   ```sh
+   ./node_modules/.bin/wrangler d1 info chinese-learning-production --env production
+   ./node_modules/.bin/wrangler d1 time-travel info chinese-learning-production --env production
+   ```
+
+   Current D1 documentation describes Time Travel as always on for production-backend databases,
+   with retention of 7 days on Workers Free and 30 days on Workers Paid. The owner's billing tier
+   was not exposed by the read-only account inspection, so the actual retention must be confirmed
+   from `d1 info`/the dashboard after creation. Keep the bookmark output private.
+
+8. **Import the full corpus, then pronunciation metadata (remote mutations — DO NOT RUN YET).**
+   Each command targets the explicit production name/environment. The first import must be complete
+   595-word v1 content; the second depends on the imported 800 readings and adds pronunciation
+   metadata, cards, and 480 media mappings:
+
+   ```sh
+   # DO NOT RUN YET — mutates the remote production D1.
+   ./node_modules/.bin/wrangler d1 execute chinese-learning-production --remote --env production --file .generated/v1-import.sql
+
+   # DO NOT RUN YET — mutates the remote production D1.
+   ./node_modules/.bin/wrangler d1 execute chinese-learning-production --remote --env production --file .generated/pronunciation-import.sql
+   ```
+
+   If either import fails, stop. Use the bookmark taken immediately before that import for recovery;
+   the restore is destructive and must be explicitly approved. Do not improvise cleanup SQL. The
+   generated import files are deterministic and idempotent for a corrected rerun after recovery.
+
+9. **Verify the remote corpus read-only.** With the real D1 UUID and Access values filled, run:
+
+   ```sh
+   bun run verify:production
+   ```
+
+   It refuses every environment except `production`, targets `chinese-learning-production`, uses
+   `--remote`, and sends one fixed SELECT-only query. It checks 595 lexemes, 800 active readings,
+   1,190 scheduled vocabulary cards, 4,141 pronunciation cards, 960 audio cards, 480 media
+   mappings, 429 original plus 51 recovered exact mappings, zero invalid mappings/audio gaps, and
+   zero pronunciation card state/history. Do not run this command until the owner has created the
+   production D1; this planning PR does not run it remotely.
+
+10. **Deploy the Worker (remote mutation — DO NOT RUN YET).** The production build hook repeats the
+    configuration and artifact guards before Wrangler uploads anything:
+
+    ```sh
+    # DO NOT RUN YET — uploads and activates the production Worker and Static Assets.
+    bun run deploy:production
+    ```
+
+    The resulting origin is `https://chinese-learning-production.kenkenhagizou-075.workers.dev`.
+    Access must already be protecting that hostname. Inspect deployment status (read-only), then
+    open the origin in a private browser session. The first unauthenticated request should stop at
+    the Access login page; a request with a valid owner session should reach the Worker.
+
+11. **Android/PWA dogfood.** In Android Chrome, authenticate, open the origin, confirm `/api/health`
+    and one study session, install the PWA, close/reopen it, prepare a bounded set, and play a
+    cached pronunciation recording. Switch offline and verify cached navigation, card answering,
+    IndexedDB outbox retention, and Cache Storage audio. Reconnect and verify push-before-pull
+    convergence. Let the Access session expire, confirm API errors ask for sign-in rather than
+    clearing local state, reauthenticate, and retry sync. The service worker bypasses `/api/*`,
+    caches only same-origin shell/media resources, and uses `updateViaCache: "none"` in production;
+    a new shell activates on the next normal browser update cycle.
+
+### Production rollback and recovery
+
+- **Worker:** before changing code, record the active deployment/version ID with the dashboard or
+  `./node_modules/.bin/wrangler versions list --name chinese-learning-production --env production
+--json` (read-only). A rollback creates a new active deployment and does not change D1 or Static
+  Assets bindings. If the bad build includes a broken service worker, reopen the origin after the
+  rollback, allow the new service worker to activate, and clear only the affected site/PWA cache
+  as a last resort; IndexedDB/outbox is application data and should not be cleared casually.
+  Rollback itself is a remote mutation:
+
+  ```sh
+  # DO NOT RUN YET — replace VERSION_ID with the recorded known-good version.
+  ./node_modules/.bin/wrangler rollback VERSION_ID --name chinese-learning-production --env production --message "restore known-good private deployment"
+  ```
+
+- **D1:** Worker rollback does not roll back D1. Before future risky migrations, use a private local
+  export (read-only remote query plus local file creation):
+
+  ```sh
+  ./node_modules/.bin/wrangler d1 export chinese-learning-production --remote --env production --output ./.generated/private-production-backup.sql
+  ```
+
+  Confirm the database `version` is `production`; if so, Time Travel can restore within the plan's
+  retention window. A restore overwrites the database in place and returns a bookmark for undo, so
+  it requires owner approval and a maintenance pause:
+
+  ```sh
+  # DO NOT RUN YET — destructive in-place D1 recovery.
+  ./node_modules/.bin/wrangler d1 time-travel restore chinese-learning-production --env production --bookmark BOOKMARK
+  ```
+
+  Do not assume a Worker rollback repairs a schema or data change. Verify with `bun run
+verify:production` after any recovery.
+
+- **Content import:** on a fresh D1, a failed migration/import is an abort point. Restore the
+  bookmark from immediately before the failed import (or use the private backup/recovery procedure
+  if Time Travel is unavailable), regenerate the same pinned SQL, and rerun only after the local
+  guard and source verification pass. The 89 ambiguous and 26 missing source-audio cases are
+  intentional and do not block the 480 exact media mappings.
+
+- **Access/PWA:** Access session expiry does not delete IndexedDB or the outbox. `/api/*` is not
+  served from the service-worker cache, so a failed authenticated push remains queued. Reauthenticate
+  in Chrome/PWA and retry. If a bad shell is installed, use the Worker rollback, wait for
+  `service-worker.js` to update, and preserve IndexedDB while removing only stale Cache Storage if
+  necessary.
 
 Install the browser binary once with `bun run browser:install` before running `test:browser` or
 `check:full`. Browser preparation is rebuilt under `.generated/browser-test`; it does not reuse or
@@ -403,11 +621,20 @@ sessions, and pending card IDs are filtered before replacement so a pull cannot 
 staged concurrently. Pronunciation media for the available pack is explicitly staged in a dedicated
 Cache Storage cache rather than being added by a generic runtime media cache.
 
-`POST /api/attempts` remains fail-closed and accepts
-`Authorization: Bearer <ATTEMPT_WRITE_TOKEN>` outside the explicit loopback-only development mode.
-Wrangler declares the token as a required encrypted secret; local development reads the private
-value from `.dev.vars`, while tests use only a disposable binding. Production Cloudflare Access
-remains a separate deferred deployment concern rather than being assumed by the Worker.
+All `/api/*` routes and the reserved `/mcp` route pass through one private-auth middleware.
+Production accepts only the signed `Cf-Access-Jwt-Assertion` header issued by Cloudflare Access:
+`jose` verifies the RS256 signature against the team's rotating JWKS, exact issuer, application
+audience, required expiry and subject, and any supplied not-before claim. The Worker then requires
+the configured owner `sub` and still resolves all domain operations to `learner:owner:v1`; clients
+cannot select a learner. The browser uses same-origin credentials and never sends a bearer token.
+
+The local bypass is deliberately narrower: it requires `LOCAL_STUDY_BYPASS=true`, a loopback URL,
+same-origin browser metadata, and JSON for body-bearing requests. A production environment with that
+flag enabled returns `auth_unconfigured` and never falls back to a token or identity header. Missing
+or invalid Access authentication returns 401, an authenticated non-owner returns 403, and an
+incomplete deployment configuration returns 503. Authentication failures do not touch IndexedDB or
+the durable outbox. The frontend treats an Access login HTML page or redirect as an auth-expiry
+error, rather than trying to parse it as an API response.
 
 ## Local progress read model
 
