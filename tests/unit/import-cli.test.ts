@@ -175,6 +175,101 @@ test("v1 import compares source bytes hidden by assume-unchanged", async () => {
   }
 });
 
+test("pronunciation metadata extraction compares vocabulary bytes hidden by assume-unchanged", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chinese-learning-pronunciation-metadata-"));
+  const vocabularyRoot = join(root, "vocabulary");
+  const audioRoot = join(root, "audio");
+  const relativeVocabularyPath = "wordlists/exclusive/old/1.json";
+  const vocabularyPath = join(vocabularyRoot, relativeVocabularyPath);
+  const audioPath = join(audioRoot, "64k/hsk/cmn-行.mp3");
+  const indexPath = join(root, "index.tags.txt");
+  const cleanOutput = join(root, "generated/clean.json");
+  const repeatedOutput = join(root, "generated/repeated.json");
+  const modifiedOutput = join(root, "generated/modified.json");
+  const vocabularyEntry = {
+    simplified: "行",
+    forms: [
+      {
+        traditional: "行",
+        transcriptions: { pinyin: "xíng", numeric: "xing2" },
+        meanings: ["to walk"],
+      },
+      {
+        traditional: "行",
+        transcriptions: { pinyin: "háng", numeric: "hang2" },
+        meanings: ["row"],
+      },
+    ],
+  };
+
+  try {
+    await mkdir(dirname(vocabularyPath), { recursive: true });
+    await mkdir(dirname(audioPath), { recursive: true });
+    await writeFile(vocabularyPath, JSON.stringify([vocabularyEntry]));
+    await writeFile(audioPath, "fixture audio bytes");
+    await writeFile(
+      indexPath,
+      [
+        "[GLOBAL]",
+        "SWAC_COLL_COPYRIGHT=Yue Tan",
+        "SWAC_COLL_LICENSE=CC-BY-SA",
+        "",
+        "[cmn-xing.flac]",
+        "SWAC_TEXT=行",
+        "SWAC_PRON_PHON=xíng",
+      ].join("\n"),
+    );
+    initializeGitCheckout(vocabularyRoot);
+    initializeGitCheckout(audioRoot);
+
+    const extractionArguments = [
+      process.execPath,
+      "run",
+      "scripts/extract-pronunciation-metadata.ts",
+      "--index",
+      indexPath,
+      "--vocabulary-root",
+      vocabularyRoot,
+      "--audio-root",
+      audioRoot,
+      "--levels",
+      "1",
+    ];
+    const clean = Bun.spawnSync([...extractionArguments, "--output", cleanOutput], {
+      cwd: projectRoot,
+    });
+    expect(clean.exitCode).toBe(0);
+    const cleanSnapshot = await readFile(cleanOutput, "utf8");
+    expect(JSON.parse(cleanSnapshot).records).toHaveLength(1);
+
+    const repeated = Bun.spawnSync([...extractionArguments, "--output", repeatedOutput], {
+      cwd: projectRoot,
+    });
+    expect(repeated.exitCode).toBe(0);
+    expect(await readFile(repeatedOutput, "utf8")).toBe(cleanSnapshot);
+
+    runGit(vocabularyRoot, "update-index", "--assume-unchanged", relativeVocabularyPath);
+    await writeFile(
+      vocabularyPath,
+      JSON.stringify([{ ...vocabularyEntry, forms: [vocabularyEntry.forms[0]] }]),
+    );
+    expect(
+      gitOutput(vocabularyRoot, "status", "--porcelain=v1", "--", relativeVocabularyPath),
+    ).toBe("");
+
+    const modified = Bun.spawnSync([...extractionArguments, "--output", modifiedOutput], {
+      cwd: projectRoot,
+    });
+    expect(modified.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(modified.stderr)).toContain(
+      "worktree bytes differ from the recorded commit",
+    );
+    await expect(stat(modifiedOutput)).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("pronunciation import rejects tracked audio missing from the worktree", async () => {
   const root = await mkdtemp(join(tmpdir(), "chinese-learning-audio-missing-"));
   const vocabularyRoot = join(root, "vocabulary");

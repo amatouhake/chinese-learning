@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   AUDIO_MAPPING_BASIS_SINGLE_READING,
   AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
+  buildPronunciationImportStatements,
   derivePronunciationImportIdentity,
   pronunciationCoverage,
   resolvePronunciationAudioItem,
@@ -239,6 +240,41 @@ describe("pronunciation source classification", () => {
     });
   });
 
+  test("validates a declared source-pronunciation target against the unique canonical match", async () => {
+    const polyphonic = lexeme("行", [
+      { pinyin: "xíng", numeric: "xing2", meanings: ["to walk"] },
+      { pinyin: "háng", numeric: "hang2", meanings: ["row"] },
+    ]);
+    const readings = uniqueReadings(polyphonic, "lexeme:complete-hsk:%E8%A1%8C");
+    const metadata = metadataSource([
+      { sourceText: "行", sourcePronunciation: "xíng", sourcePath: "flac/cmn-x.flac" },
+    ]);
+
+    await expect(
+      derivePronunciationImportIdentity(
+        sourcePronunciationInput(polyphonic, metadata, readings[1]!.id),
+      ),
+    ).rejects.toThrow("source pronunciation does not uniquely resolve declared target reading");
+
+    const duplicate = lexeme("乐", [
+      { pinyin: "lè", numeric: "le4", meanings: ["happy"], traditional: "樂" },
+      { pinyin: "lè", numeric: "le4", meanings: ["music"], traditional: "乐" },
+    ]);
+    const duplicateReadings = uniqueReadings(duplicate, "lexeme:complete-hsk:%E4%B9%90");
+    const duplicateMetadata = metadataSource([
+      { sourceText: "乐", sourcePronunciation: "lè", sourcePath: "flac/cmn-le.flac" },
+    ]);
+    await expect(
+      derivePronunciationImportIdentity(
+        sourcePronunciationInput(duplicate, duplicateMetadata, duplicateReadings[0]!.id),
+      ),
+    ).rejects.toThrow("source pronunciation does not uniquely resolve declared target reading");
+
+    const correct = sourcePronunciationInput(polyphonic, metadata, readings[0]!.id);
+    const statements = await buildPronunciationImportStatements(correct);
+    expect(statements.join("\n")).toContain(AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION);
+  });
+
   test("reports the card and media coverage implied by exact readings", () => {
     const input: PronunciationImportInput = {
       vocabularyVersion: "vocabulary-test",
@@ -364,6 +400,37 @@ function audioFile(digest: string) {
     sourcePath: "64k/hsk/cmn-test.mp3",
     contentSha256: digest.repeat(64),
     byteLength: 128,
+  };
+}
+
+function sourcePronunciationInput(
+  lexemeValue: ReturnType<typeof lexeme>,
+  metadata: ReturnType<typeof metadataSource>,
+  targetReadingId: string,
+): PronunciationImportInput {
+  const record = metadata.records[0]!;
+  return {
+    vocabularyVersion: "vocabulary-test",
+    audioVersion: "audio-test",
+    lexemes: [lexemeValue],
+    metadataSource: metadata,
+    audioItems: [
+      {
+        simplified: lexemeValue.simplified,
+        ...audioFile("e"),
+        status: "reliable",
+        targetReadingId,
+        mappingBasis: AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
+        sourceEvidence: {
+          sourceText: record.sourceText,
+          sourcePronunciation: record.sourcePronunciation,
+          normalizedSourcePinyin: record.normalizedSourcePinyin,
+          metadataSourceId: metadata.id,
+          metadataSourceDigest: metadata.artifactSha256,
+          metadataSourceRecordPath: record.sourcePath,
+        },
+      },
+    ],
   };
 }
 

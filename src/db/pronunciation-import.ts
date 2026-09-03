@@ -154,9 +154,7 @@ export function resolvePronunciationAudioItem(
     metadataSourceRecordPath: sourceRecord.sourcePath,
   };
   const sourceSyllables = normalizeSourcePinyin(sourceRecord.sourcePronunciation);
-  const matches = readings.filter(({ form }) =>
-    sameNormalizedPinyin(sourceSyllables, normalizeNumericPinyin(form.transcriptions.numeric)),
-  );
+  const matches = matchingCanonicalReadings(readings, sourceSyllables);
   if (matches.length === 1) {
     return {
       simplified: lexeme.simplified,
@@ -547,7 +545,17 @@ function validateInput(input: PronunciationImportInput): void {
             `source-pronunciation audio basis needs multiple readings: ${item.simplified}`,
           );
         }
-        validateSourceEvidence(item.sourceEvidence, input.metadataSource, item.simplified);
+        const sourceSyllables = validateSourceEvidence(
+          item.sourceEvidence,
+          input.metadataSource,
+          item.simplified,
+        );
+        const matches = matchingCanonicalReadings(readings, sourceSyllables);
+        if (matches.length !== 1 || matches[0]?.id !== item.targetReadingId) {
+          throw new Error(
+            `source pronunciation does not uniquely resolve declared target reading: ${item.simplified}`,
+          );
+        }
       } else {
         throw new Error(`audio mapping basis is invalid: ${item.simplified}`);
       }
@@ -662,7 +670,7 @@ function validateSourceEvidence(
   evidence: PronunciationSourceEvidence | undefined,
   metadataSource: PronunciationMetadataSource | undefined,
   simplified: string,
-): void {
+): ReturnType<typeof normalizeSourcePinyin> {
   if (!evidence || !metadataSource) {
     throw new Error(`exact source pronunciation evidence is missing: ${simplified}`);
   }
@@ -697,6 +705,16 @@ function validateSourceEvidence(
   if (!sameStringArray(evidence.normalizedSourcePinyin, normalizedSourcePinyin)) {
     throw new Error(`exact source pronunciation pinyin evidence conflicts: ${simplified}`);
   }
+  return normalizeSourcePinyin(evidence.sourcePronunciation);
+}
+
+function matchingCanonicalReadings(
+  readings: ReadonlyArray<{ id: string; form: V1SourceLexeme["forms"][number] }>,
+  sourceSyllables: ReturnType<typeof normalizeSourcePinyin>,
+): Array<{ id: string; form: V1SourceLexeme["forms"][number] }> {
+  return readings.filter(({ form }) =>
+    sameNormalizedPinyin(sourceSyllables, normalizeNumericPinyin(form.transcriptions.numeric)),
+  );
 }
 
 function metadataSourceIdentity(source: PronunciationMetadataSource | undefined): string {

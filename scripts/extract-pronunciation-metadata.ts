@@ -5,7 +5,7 @@ import { format as formatWithPrettier } from "prettier";
 
 import { normalizeSourcePinyin, normalizedPinyinTokens } from "../src/domain/pronunciation";
 import { uniqueReadings, type V1SourceLexeme } from "../src/db/v1-import";
-import { parseSourceLexemes } from "./import-v1";
+import { assertCleanImportedPaths, parseSourceLexemes } from "./import-v1";
 
 const SUPPORTED_OPTIONS = new Set([
   "--index",
@@ -34,12 +34,14 @@ if (import.meta.main) await main();
 
 async function main(): Promise<void> {
   const options = parseArguments(Bun.argv.slice(2));
-  const vocabularyVersion = gitHead(options.vocabularyRoot);
-  const audioVersion = gitHead(options.audioRoot);
   const levels = options.levels;
+  const vocabularyPaths = levels.map((level) => `wordlists/exclusive/old/${level}.json`);
+  const vocabularyVersion = gitHead(options.vocabularyRoot);
+  assertCleanImportedPaths(options.vocabularyRoot, vocabularyPaths, vocabularyVersion);
+  const audioVersion = gitHead(options.audioRoot);
   const lexemes: V1SourceLexeme[] = [];
-  for (const level of levels) {
-    const sourcePath = join(options.vocabularyRoot, `wordlists/exclusive/old/${level}.json`);
+  for (const [index, level] of levels.entries()) {
+    const sourcePath = join(options.vocabularyRoot, vocabularyPaths[index] ?? "");
     lexemes.push(...parseSourceLexemes(await Bun.file(sourcePath).json(), level));
   }
 
