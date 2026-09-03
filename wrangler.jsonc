@@ -4,17 +4,18 @@
   "main": "./src/worker/index.ts",
   "compatibility_date": "2026-08-29",
   "compatibility_flags": ["nodejs_compat"],
-  "secrets": {
-    "required": ["ATTEMPT_WRITE_TOKEN"],
-  },
   "vars": {
+    "ENVIRONMENT": "local",
     "LOCAL_STUDY_BYPASS": "false",
+  },
+  "secrets": {
+    "required": [],
   },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/mcp"],
+    "run_worker_first": ["/api/*", "/mcp", "/mcp/*"],
   },
   "d1_databases": [
     {
@@ -28,6 +29,50 @@
     "enabled": true,
     "logs": {
       "head_sampling_rate": 1,
+    },
+  },
+  "env": {
+    "production": {
+      "name": "chinese-learning-production",
+      "account_id": "__SET_AFTER_CLOUDFLARE_ACCOUNT_SETUP__",
+      "workers_dev": true,
+      "preview_urls": false,
+      "compatibility_date": "2026-08-29",
+      "compatibility_flags": ["nodejs_compat"],
+      "vars": {
+        "ENVIRONMENT": "production",
+        "LOCAL_STUDY_BYPASS": "false",
+        "ACCESS_ISSUER": "__SET_AFTER_ACCESS_SETUP__",
+        "ACCESS_AUDIENCE": "__SET_AFTER_ACCESS_SETUP__",
+        "ACCESS_OWNER_SUB": "__SET_AFTER_ACCESS_SETUP__",
+      },
+      "secrets": {
+        "required": [],
+      },
+      "assets": {
+        "directory": "./dist",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/api/*", "/mcp", "/mcp/*"],
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "chinese-learning-production",
+          "database_id": "__SET_AFTER_D1_CREATE__",
+          "migrations_dir": "./migrations",
+        },
+      ],
+      "r2_buckets": [],
+      "observability": {
+        "enabled": true,
+        "logs": {
+          "head_sampling_rate": 1,
+        },
+      },
+      "build": {
+        "command": "bun run check:production && bun run build:web && bun run check:production:artifacts",
+      },
     },
   },
 }

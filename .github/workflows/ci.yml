@@ -17,8 +17,6 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      ATTEMPT_WRITE_TOKEN: ci-only-build-placeholder
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -30,6 +28,19 @@ jobs:
 
       - name: Install dependencies from lockfile
         run: bun install --frozen-lockfile
+
+      - name: Test production guards without Cloudflare credentials
+        env:
+          CLOUDFLARE_API_KEY: ""
+          CLOUDFLARE_API_TOKEN: ""
+          XDG_CONFIG_HOME: ${{ runner.temp }}/wrangler-config
+        run: >-
+          bun test
+          tests/unit/access-auth.test.ts
+          tests/unit/api.test.ts
+          tests/unit/production-artifacts.test.ts
+          tests/unit/production-config.test.ts
+          tests/unit/production-verifier.test.ts
 
       - name: Run the repository quality gate
         env:

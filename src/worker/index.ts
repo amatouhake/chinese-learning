@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type Next } from "hono";
 
 import { ingestAttempt } from "../db/ingestion";
 import { getProgressSnapshot } from "../db/progress";
@@ -27,368 +27,300 @@ import {
   parseNextGuidedCardInput,
 } from "../domain/reading-grammar-validation";
 import { parseSyncPullInput } from "../domain/sync-validation";
-import { authorizeStudyWrite } from "./auth";
+import {
+  authorizeStudyRequest,
+  type AccessAuthDecision,
+  type AccessJwtVerifier,
+  verifyAccessJwt,
+} from "./auth";
 import { resolveCurrentLearner } from "./current-learner";
 
-const app = new Hono<{ Bindings: CloudflareBindings }>();
 type AppContext = Context<{ Bindings: CloudflareBindings }>;
+export interface WorkerAppOptions {
+  verifyAccessJwt?: AccessJwtVerifier;
+}
 
-app.get("/api/health", (context) =>
-  context.json({
-    ok: true,
-    service: "chinese-learning",
-  }),
-);
+export function createWorkerApp(options: WorkerAppOptions = {}): Hono<{
+  Bindings: CloudflareBindings;
+}> {
+  const app = new Hono<{ Bindings: CloudflareBindings }>();
+  const authVerifier = options.verifyAccessJwt ?? verifyAccessJwt;
 
-app.post("/api/progress", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  context.header("Cache-Control", "no-store");
-  return context.json(await getProgressSnapshot(context.env.DB, resolveCurrentLearner()));
-});
-
-app.post("/api/practice-sessions/recent", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const body = await readJsonBody(context);
-    const limit = historyLimit(body);
-    context.header("Cache-Control", "no-store");
-    return context.json(
-      await getRecentPracticeSessions(context.env.DB, resolveCurrentLearner(), { limit }),
-    );
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/practice-sessions/:sessionId/summary", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    context.header("Cache-Control", "no-store");
-    return context.json(
-      await getPracticeSessionSummary(
-        context.env.DB,
-        resolveCurrentLearner(),
-        context.req.param("sessionId"),
-      ),
-    );
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/attempts", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  let input;
-  try {
-    input = parseAttemptInput(await context.req.json<unknown>());
-  } catch (error) {
-    return context.json(
+  const requirePrivateAuth = async (context: AppContext, next: Next) => {
+    const authorization = await authorizeStudyRequest(
+      context.req.raw,
       {
-        error: error instanceof Error ? error.message : "invalid attempt body",
-        code: "invalid_input",
+        environment: context.env.ENVIRONMENT,
+        localStudyBypass: context.env.LOCAL_STUDY_BYPASS,
+        issuer: context.env.ACCESS_ISSUER,
+        audience: context.env.ACCESS_AUDIENCE,
+        ownerSubject: context.env.ACCESS_OWNER_SUB,
       },
-      400,
+      authVerifier,
     );
-  }
+    const authError = authenticationError(context, authorization);
+    if (authError) return authError;
+    return next();
+  };
 
-  try {
-    const result = await ingestAttempt(context.env.DB, resolveCurrentLearner(), input);
-    return context.json(result, result.disposition === "inserted" ? 201 : 200);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
+  app.use("/api/*", requirePrivateAuth);
+  app.use("/mcp", requirePrivateAuth);
+  app.use("/mcp/*", requirePrivateAuth);
 
-app.post("/api/study/sessions", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseCreateStudySessionInput(await readJsonBody(context));
-    const result = await createStudySession(context.env.DB, resolveCurrentLearner(), input);
-    return context.json(result, result.disposition === "created" ? 201 : 200);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/study/sessions/:sessionId/next", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseNextStudyCardInput(await readJsonBody(context));
-    const result = await getNextStudyCard(
-      context.env.DB,
-      resolveCurrentLearner(),
-      context.req.param("sessionId"),
-      input.deviceId,
-    );
-    return context.json(result);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/reflex/sessions", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseCreateReflexSessionInput(await readJsonBody(context));
-    const result = await createReflexSession(context.env.DB, resolveCurrentLearner(), input);
-    return context.json(result, result.disposition === "created" ? 201 : 200);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/pronunciation/sessions", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseCreatePronunciationSessionInput(await readJsonBody(context));
-    const result = await createPronunciationSession(context.env.DB, resolveCurrentLearner(), input);
-    return context.json(result, result.disposition === "created" ? 201 : 200);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/pronunciation/sessions/:sessionId/next", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseNextPronunciationCardInput(await readJsonBody(context));
-    const result = await getNextPronunciationCard(
-      context.env.DB,
-      resolveCurrentLearner(),
-      context.req.param("sessionId"),
-      input.deviceId,
-    );
-    return context.json(result);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/reading/sessions", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseCreateReadingSessionInput(await readJsonBody(context));
-    const result = await createReadingSession(context.env.DB, resolveCurrentLearner(), input);
-    return context.json(result, result.disposition === "created" ? 201 : 200);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/reading/sessions/:sessionId/next", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseNextGuidedCardInput(await readJsonBody(context));
-    return context.json(
-      await getNextReadingCard(
-        context.env.DB,
-        resolveCurrentLearner(),
-        context.req.param("sessionId"),
-        input.deviceId,
-      ),
-    );
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/grammar/sessions", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseCreateGrammarSessionInput(await readJsonBody(context));
-    const result = await createGrammarSession(context.env.DB, resolveCurrentLearner(), input);
-    return context.json(result, result.disposition === "created" ? 201 : 200);
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/grammar/sessions/:sessionId/next", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseNextGuidedCardInput(await readJsonBody(context));
-    return context.json(
-      await getNextGrammarCard(
-        context.env.DB,
-        resolveCurrentLearner(),
-        context.req.param("sessionId"),
-        input.deviceId,
-      ),
-    );
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.post("/api/sync/pull", async (context) => {
-  const authorization = await authorizeStudyWrite(
-    context.req.raw,
-    context.env.ATTEMPT_WRITE_TOKEN,
-    context.env.LOCAL_STUDY_BYPASS,
-  );
-  const authError = authenticationError(context, authorization);
-  if (authError) return authError;
-
-  try {
-    const input = parseSyncPullInput(await readJsonBody(context));
-    return context.json(await pullSyncChanges(context.env.DB, resolveCurrentLearner(), input));
-  } catch (error) {
-    const response = domainError(context, error);
-    if (response) return response;
-    throw error;
-  }
-});
-
-app.all("/mcp", (context) =>
-  context.json(
-    {
-      error: "Remote MCP is reserved for a later read-only slice.",
-    },
-    501,
-  ),
-);
-
-app.onError((error, context) => {
-  console.error(
-    JSON.stringify({
-      message: "request failed",
-      error: error.message,
-      path: context.req.path,
+  app.get("/api/health", (context) =>
+    context.json({
+      ok: true,
+      service: "chinese-learning",
     }),
   );
-  return context.json({ error: "Internal server error" }, 500);
-});
 
-export default app;
+  app.post("/api/progress", async (context) => {
+    context.header("Cache-Control", "no-store");
+    return context.json(await getProgressSnapshot(context.env.DB, resolveCurrentLearner()));
+  });
+
+  app.post("/api/practice-sessions/recent", async (context) => {
+    try {
+      const body = await readJsonBody(context);
+      const limit = historyLimit(body);
+      context.header("Cache-Control", "no-store");
+      return context.json(
+        await getRecentPracticeSessions(context.env.DB, resolveCurrentLearner(), { limit }),
+      );
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/practice-sessions/:sessionId/summary", async (context) => {
+    try {
+      context.header("Cache-Control", "no-store");
+      return context.json(
+        await getPracticeSessionSummary(
+          context.env.DB,
+          resolveCurrentLearner(),
+          context.req.param("sessionId"),
+        ),
+      );
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/attempts", async (context) => {
+    let input;
+    try {
+      input = parseAttemptInput(await context.req.json<unknown>());
+    } catch (error) {
+      return context.json(
+        {
+          error: error instanceof Error ? error.message : "invalid attempt body",
+          code: "invalid_input",
+        },
+        400,
+      );
+    }
+
+    try {
+      const result = await ingestAttempt(context.env.DB, resolveCurrentLearner(), input);
+      return context.json(result, result.disposition === "inserted" ? 201 : 200);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/study/sessions", async (context) => {
+    try {
+      const input = parseCreateStudySessionInput(await readJsonBody(context));
+      const result = await createStudySession(context.env.DB, resolveCurrentLearner(), input);
+      return context.json(result, result.disposition === "created" ? 201 : 200);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/study/sessions/:sessionId/next", async (context) => {
+    try {
+      const input = parseNextStudyCardInput(await readJsonBody(context));
+      const result = await getNextStudyCard(
+        context.env.DB,
+        resolveCurrentLearner(),
+        context.req.param("sessionId"),
+        input.deviceId,
+      );
+      return context.json(result);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/reflex/sessions", async (context) => {
+    try {
+      const input = parseCreateReflexSessionInput(await readJsonBody(context));
+      const result = await createReflexSession(context.env.DB, resolveCurrentLearner(), input);
+      return context.json(result, result.disposition === "created" ? 201 : 200);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/pronunciation/sessions", async (context) => {
+    try {
+      const input = parseCreatePronunciationSessionInput(await readJsonBody(context));
+      const result = await createPronunciationSession(
+        context.env.DB,
+        resolveCurrentLearner(),
+        input,
+      );
+      return context.json(result, result.disposition === "created" ? 201 : 200);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/pronunciation/sessions/:sessionId/next", async (context) => {
+    try {
+      const input = parseNextPronunciationCardInput(await readJsonBody(context));
+      const result = await getNextPronunciationCard(
+        context.env.DB,
+        resolveCurrentLearner(),
+        context.req.param("sessionId"),
+        input.deviceId,
+      );
+      return context.json(result);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/reading/sessions", async (context) => {
+    try {
+      const input = parseCreateReadingSessionInput(await readJsonBody(context));
+      const result = await createReadingSession(context.env.DB, resolveCurrentLearner(), input);
+      return context.json(result, result.disposition === "created" ? 201 : 200);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/reading/sessions/:sessionId/next", async (context) => {
+    try {
+      const input = parseNextGuidedCardInput(await readJsonBody(context));
+      return context.json(
+        await getNextReadingCard(
+          context.env.DB,
+          resolveCurrentLearner(),
+          context.req.param("sessionId"),
+          input.deviceId,
+        ),
+      );
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/grammar/sessions", async (context) => {
+    try {
+      const input = parseCreateGrammarSessionInput(await readJsonBody(context));
+      const result = await createGrammarSession(context.env.DB, resolveCurrentLearner(), input);
+      return context.json(result, result.disposition === "created" ? 201 : 200);
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/grammar/sessions/:sessionId/next", async (context) => {
+    try {
+      const input = parseNextGuidedCardInput(await readJsonBody(context));
+      return context.json(
+        await getNextGrammarCard(
+          context.env.DB,
+          resolveCurrentLearner(),
+          context.req.param("sessionId"),
+          input.deviceId,
+        ),
+      );
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  app.post("/api/sync/pull", async (context) => {
+    try {
+      const input = parseSyncPullInput(await readJsonBody(context));
+      return context.json(await pullSyncChanges(context.env.DB, resolveCurrentLearner(), input));
+    } catch (error) {
+      const response = domainError(context, error);
+      if (response) return response;
+      throw error;
+    }
+  });
+
+  const reservedMcp = (context: AppContext) =>
+    context.json(
+      {
+        error: "Remote MCP is reserved for a later read-only slice.",
+      },
+      501,
+    );
+  app.all("/mcp", reservedMcp);
+  app.all("/mcp/*", reservedMcp);
+
+  app.onError((error, context) => {
+    console.error(
+      JSON.stringify({
+        message: "request failed",
+        error: error.name,
+        path: context.req.path,
+      }),
+    );
+    return context.json({ error: "Internal server error" }, 500);
+  });
+
+  return app;
+}
+
+export default createWorkerApp();
 
 function authenticationError(
   context: AppContext,
-  authorization: "authorized" | "unauthorized" | "unconfigured",
+  authorization: AccessAuthDecision,
 ): Response | null {
-  if (authorization === "authorized") return null;
+  if (authorization.status === "authorized") return null;
   context.header("Cache-Control", "no-store");
-  if (authorization === "unconfigured") {
+  if (authorization.status === "unconfigured") {
     return context.json(
-      { error: "Study write authentication is not configured", code: "auth_unconfigured" },
+      { error: "Private study access is not configured", code: "auth_unconfigured" },
       503,
     );
   }
-  context.header("WWW-Authenticate", "Bearer");
+  if (authorization.status === "forbidden") {
+    return context.json({ error: "Forbidden", code: "forbidden" }, 403);
+  }
   return context.json({ error: "Unauthorized", code: "unauthorized" }, 401);
 }
 

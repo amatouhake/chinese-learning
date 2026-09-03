@@ -13,7 +13,8 @@ const EXPECTED_METADATA_SNAPSHOT_SHA256 =
   "b3cb696adef27aa132aa9e219cd619a0baef6188b720ffa779d72e2813ea899b";
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
-interface PronunciationDatabaseSummary {
+export interface PronunciationDatabaseSummary {
+  lexemes: number;
   readings: number;
   scheduled_vocabulary_cards: number;
   vocabulary_card_states: number;
@@ -186,12 +187,15 @@ async function main(): Promise<void> {
   }
 }
 
-function assertDatabaseSummary(value: unknown): asserts value is PronunciationDatabaseSummary {
+export function assertDatabaseSummary(
+  value: unknown,
+): asserts value is PronunciationDatabaseSummary {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("pronunciation verification did not return a database summary");
   }
   const summary = value as Record<string, unknown>;
   const expected: Record<string, number> = {
+    lexemes: 595,
     readings: 800,
     scheduled_vocabulary_cards: 1190,
     vocabulary_card_states: 1190,
@@ -316,8 +320,9 @@ function firstResult(value: unknown): unknown {
   return results[0];
 }
 
-function verificationQuery(): string {
+export function verificationQuery(): string {
   return `SELECT
+    (SELECT COUNT(*) FROM lexemes) AS lexemes,
     (SELECT COUNT(*) FROM lexeme_readings WHERE retired_at IS NULL) AS readings,
     (SELECT COUNT(*) FROM cards WHERE retired_at IS NULL AND scheduler_eligible = 1)
       AS scheduled_vocabulary_cards,
