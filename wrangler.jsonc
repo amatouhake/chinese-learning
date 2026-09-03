@@ -34,7 +34,6 @@
   "env": {
     "production": {
       "name": "chinese-learning-production",
-      "account_id": "__SET_AFTER_CLOUDFLARE_ACCOUNT_SETUP__",
       "workers_dev": true,
       "preview_urls": false,
       "compatibility_date": "2026-08-29",
@@ -42,12 +41,9 @@
       "vars": {
         "ENVIRONMENT": "production",
         "LOCAL_STUDY_BYPASS": "false",
-        "ACCESS_ISSUER": "__SET_AFTER_ACCESS_SETUP__",
-        "ACCESS_AUDIENCE": "__SET_AFTER_ACCESS_SETUP__",
-        "ACCESS_OWNER_SUB": "__SET_AFTER_ACCESS_SETUP__",
       },
       "secrets": {
-        "required": [],
+        "required": ["ACCESS_ISSUER", "ACCESS_AUDIENCE", "ACCESS_OWNER_SUB"],
       },
       "assets": {
         "directory": "./dist",

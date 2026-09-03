@@ -1,16 +1,17 @@
 import { readFileSync } from "node:fs";
 
-import { configuredValue } from "../src/worker/auth";
-
 export const PRODUCTION_ENVIRONMENT = "production";
 export const PRODUCTION_WORKER_NAME = "chinese-learning-production";
 export const PRODUCTION_DATABASE_NAME = "chinese-learning-production";
 export const PRODUCTION_BUILD_COMMAND =
   "bun run check:production && bun run build:web && bun run check:production:artifacts";
-export const PRODUCTION_ACCOUNT_ID_PLACEHOLDER = "__SET_AFTER_CLOUDFLARE_ACCOUNT_SETUP__";
 export const LOCAL_FAKE_D1_ID = "00000000-0000-0000-0000-000000000001";
 export const PRODUCTION_D1_PLACEHOLDER = "__SET_AFTER_D1_CREATE__";
-export const ACCESS_CONFIG_PLACEHOLDER = "__SET_AFTER_ACCESS_SETUP__";
+export const PRODUCTION_ACCESS_SECRET_NAMES = [
+  "ACCESS_ISSUER",
+  "ACCESS_AUDIENCE",
+  "ACCESS_OWNER_SUB",
+] as const;
 
 export function validateProductionConfig(config: unknown, environment = "production"): string[] {
   const errors: string[] = [];
@@ -26,11 +27,6 @@ export function validateProductionConfig(config: unknown, environment = "product
   if (!isRecord(production)) return ["wrangler.jsonc is missing env.production"];
 
   expectEqual(errors, production.name, PRODUCTION_WORKER_NAME, "env.production.name");
-  if (!isCloudflareAccountId(stringValue(production.account_id))) {
-    errors.push(
-      "env.production.account_id must be a valid Cloudflare Account ID supplied after account setup",
-    );
-  }
   expectEqual(errors, production.workers_dev, true, "env.production.workers_dev");
   expectEqual(errors, production.preview_urls, false, "env.production.preview_urls");
   expectEqual(
@@ -57,12 +53,9 @@ export function validateProductionConfig(config: unknown, environment = "product
       "env.production.vars.ENVIRONMENT",
     );
     expectEqual(errors, vars.LOCAL_STUDY_BYPASS, "false", "env.production.vars.LOCAL_STUDY_BYPASS");
-    if (!validAccessIssuer(vars.ACCESS_ISSUER)) {
-      errors.push("env.production.vars.ACCESS_ISSUER must be a configured HTTPS Access issuer");
-    }
-    for (const name of ["ACCESS_AUDIENCE", "ACCESS_OWNER_SUB"] as const) {
-      if (!configuredValue(stringValue(vars[name]))) {
-        errors.push(`env.production.vars.${name} must be configured`);
+    for (const name of PRODUCTION_ACCESS_SECRET_NAMES) {
+      if (Object.hasOwn(vars, name)) {
+        errors.push(`env.production.vars.${name} must be declared as a Worker secret, not a var`);
       }
     }
     if (Object.hasOwn(vars, "ATTEMPT_WRITE_TOKEN")) {
@@ -73,8 +66,10 @@ export function validateProductionConfig(config: unknown, environment = "product
   const secrets = production.secrets;
   if (!isRecord(secrets) || !Array.isArray(secrets.required)) {
     errors.push("env.production.secrets.required must be explicit");
-  } else if (secrets.required.length > 0) {
-    errors.push("env.production must not require the browser ATTEMPT_WRITE_TOKEN secret");
+  } else if (!sameStringArray(secrets.required, [...PRODUCTION_ACCESS_SECRET_NAMES])) {
+    errors.push(
+      "env.production.secrets.required must contain exactly ACCESS_ISSUER, ACCESS_AUDIENCE, and ACCESS_OWNER_SUB",
+    );
   }
 
   const assets = production.assets;
@@ -200,17 +195,6 @@ function parseArguments(arguments_: string[]): { config: string; environment: st
   return { config: values.get("--config") ?? "wrangler.jsonc", environment };
 }
 
-function validAccessIssuer(value: unknown): boolean {
-  const issuer = configuredValue(stringValue(value));
-  if (!issuer) return false;
-  try {
-    const url = new URL(issuer);
-    return url.protocol === "https:" && url.pathname === "/" && !url.search && !url.hash;
-  } catch {
-    return false;
-  }
-}
-
 function isRealUuid(value: string): boolean {
   return (
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value) &&
@@ -218,10 +202,6 @@ function isRealUuid(value: string): boolean {
     value !== "00000000-0000-0000-0000-000000000000" &&
     value !== PRODUCTION_D1_PLACEHOLDER
   );
-}
-
-function isCloudflareAccountId(value: string | undefined): boolean {
-  return typeof value === "string" && /^[0-9a-f]{32}$/iu.test(value) && !/^0+$/u.test(value);
 }
 
 function expectEqual(errors: string[], actual: unknown, expected: unknown, field: string): void {
