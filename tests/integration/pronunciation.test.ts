@@ -5,16 +5,24 @@ import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 import { ingestAttempt } from "../../src/db/ingestion";
 import { getPracticeSessionSummary } from "../../src/db/practice-sessions";
 import {
+  AUDIO_MAPPING_BASIS_SINGLE_READING,
+  AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
   buildPronunciationImportStatements,
   type PronunciationImportInput,
 } from "../../src/db/pronunciation-import";
-import { createPronunciationSession, getNextPronunciationCard } from "../../src/db/pronunciation";
+import {
+  createPronunciationSession,
+  getNextPronunciationCard,
+  getOfflinePronunciationPack,
+} from "../../src/db/pronunciation";
 import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
 } from "../../src/domain/pronunciation";
+import { normalizeSourcePinyin, normalizedPinyinTokens } from "../../src/domain/pronunciation";
 import {
   buildV1ImportStatements,
+  uniqueReadings,
   type V1ImportInput,
   type V1SourceLexeme,
 } from "../../src/db/v1-import";
@@ -75,6 +83,158 @@ describe("pronunciation foundation", () => {
          JOIN lexemes l ON l.id = r.lexeme_id WHERE l.simplified IN ('行', '吗')`,
       ),
     ).toBe(0);
+  });
+
+  test("persists recovered evidence on one reading and leaves its sibling without audio", async () => {
+    const lexemes = [
+      lexeme(
+        "声",
+        [
+          { pinyin: "shēng", numeric: "sheng1", meanings: ["sound"] },
+          { pinyin: "shèng", numeric: "sheng4", meanings: ["voice"] },
+        ],
+        1,
+      ),
+    ];
+    await applyStatements(
+      await buildV1ImportStatements({
+        lexemes,
+        enrichments: [],
+        vocabularyVersion: "recovered-evidence-vocabulary",
+        v1Version: "recovered-evidence-v1",
+        createdAt: 10,
+      }),
+    );
+    const readingIds = uniqueReadings(lexemes[0]!, "lexeme:complete-hsk:%E5%A3%B0").map(
+      ({ id }) => id,
+    );
+    const metadataSource = {
+      id: "shtooka:integration-test",
+      artifactSha256: "d".repeat(64),
+      records: [
+        {
+          sourceText: "声",
+          sourcePronunciation: "shēng",
+          normalizedSourcePinyin: normalizedPinyinTokens(normalizeSourcePinyin("shēng")),
+          sourcePath: "flac/cmn-recovered.flac",
+        },
+      ],
+    };
+    await applyStatements(
+      await buildPronunciationImportStatements({
+        lexemes,
+        vocabularyVersion: "recovered-evidence-vocabulary",
+        audioVersion: "recovered-evidence-audio",
+        metadataSource,
+        audioItems: [
+          {
+            simplified: "声",
+            status: "reliable",
+            targetReadingId: readingIds[0]!,
+            mappingBasis: AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
+            sourcePath: "64k/hsk/cmn-声.mp3",
+            contentSha256: "e".repeat(64),
+            byteLength: 128,
+            sourceEvidence: {
+              sourceText: "声",
+              sourcePronunciation: "shēng",
+              normalizedSourcePinyin: ["sheng1"],
+              metadataSourceId: metadataSource.id,
+              metadataSourceDigest: metadataSource.artifactSha256,
+              metadataSourceRecordPath: "flac/cmn-recovered.flac",
+            },
+          },
+        ],
+        createdAt: 10,
+      }),
+    );
+
+    const mappings = await env.DB.prepare(
+      `SELECT r.numeric_pinyin, rm.mapping_basis, rm.source_text, rm.source_pronunciation,
+        rm.normalized_source_pinyin, rm.metadata_source_id, rm.metadata_source_digest,
+        rm.metadata_source_record_path,
+        (SELECT COUNT(*) FROM cards c
+         WHERE c.lexeme_reading_id = r.id AND c.activity_type LIKE 'audio_to_%'
+           AND c.retired_at IS NULL) AS audio_cards
+       FROM lexeme_readings r
+       LEFT JOIN lexeme_reading_media rm ON rm.lexeme_reading_id = r.id
+       WHERE r.lexeme_id = 'lexeme:complete-hsk:%E5%A3%B0'
+       ORDER BY r.numeric_pinyin`,
+    ).all<Record<string, unknown>>();
+    expect(mappings.results).toEqual([
+      {
+        numeric_pinyin: "sheng1",
+        mapping_basis: AUDIO_MAPPING_BASIS_SOURCE_PRONUNCIATION,
+        source_text: "声",
+        source_pronunciation: "shēng",
+        normalized_source_pinyin: '["sheng1"]',
+        metadata_source_id: "shtooka:integration-test",
+        metadata_source_digest: "d".repeat(64),
+        metadata_source_record_path: "flac/cmn-recovered.flac",
+        audio_cards: 2,
+      },
+      {
+        numeric_pinyin: "sheng4",
+        mapping_basis: null,
+        source_text: null,
+        source_pronunciation: null,
+        normalized_source_pinyin: null,
+        metadata_source_id: null,
+        metadata_source_digest: null,
+        metadata_source_record_path: null,
+        audio_cards: 0,
+      },
+    ]);
+    await expect(
+      env.DB.prepare(
+        `UPDATE media_assets SET attribution = 'changed' WHERE source_version = 'recovered-evidence-audio'`,
+      ).run(),
+    ).rejects.toThrow("media assets are immutable");
+
+    const offlineTarget = await env.DB.prepare(
+      `SELECT c.id FROM cards c
+       WHERE c.lexeme_reading_id = ?
+         AND c.activity_type = 'audio_to_hanzi'
+         AND c.retired_at IS NULL`,
+    )
+      .bind(readingIds[0])
+      .first<{ id: string }>();
+    if (!offlineTarget) throw new Error("missing recovered offline target card");
+    const temporaryRetirement = 9_999_999;
+    await env.DB.prepare(
+      `UPDATE cards SET retired_at = ?
+       WHERE subject_type = 'lexeme_reading' AND retired_at IS NULL AND id <> ?`,
+    )
+      .bind(temporaryRetirement, offlineTarget.id)
+      .run();
+    try {
+      await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+        sessionId: "recovered-offline-session",
+        deviceId: "recovered-offline-device",
+        focus: "listening",
+        maxItems: 1,
+      });
+      const offlinePack = await getOfflinePronunciationPack(
+        env.DB,
+        FIXED_OWNER_LEARNER_ID,
+        "recovered-offline-session",
+        "recovered-offline-device",
+      );
+      expect(offlinePack.cards).toEqual([
+        expect.objectContaining({
+          readingId: readingIds[0],
+          activityType: "audio_to_hanzi",
+          media: expect.objectContaining({ url: expect.stringContaining("audio-cmn") }),
+        }),
+      ]);
+    } finally {
+      await env.DB.prepare(
+        `UPDATE cards SET retired_at = NULL
+         WHERE subject_type = 'lexeme_reading' AND retired_at = ?`,
+      )
+        .bind(temporaryRetirement)
+        .run();
+    }
   });
 
   test("derives neutral tones and lexical tone pairs from the exact reading", async () => {
@@ -232,7 +392,7 @@ describe("pronunciation foundation", () => {
     ).toBe(6);
   });
 
-  test("withholds Hanzi-keyed audio when vocabulary adds an active sibling reading", async () => {
+  test("keeps exact-reading audio usable when vocabulary adds an active sibling reading", async () => {
     const original = [
       lexeme("声", [{ pinyin: "shēng", numeric: "sheng1", meanings: ["sound"] }], 1),
     ];
@@ -315,7 +475,14 @@ describe("pronunciation foundation", () => {
         "audio-safety-session",
         "audio-safety-device",
       );
-      expect(next).toMatchObject({ status: "empty", card: null });
+      expect(next).toMatchObject({
+        status: "card",
+        card: {
+          readingId: expect.stringContaining("sheng1"),
+          activityType: "audio_to_hanzi",
+          media: { url: expect.stringContaining("audio-cmn") },
+        },
+      });
     } finally {
       await env.DB.prepare(
         `UPDATE cards SET retired_at = NULL
@@ -659,6 +826,8 @@ async function applyPronunciationFixture(): Promise<void> {
 }
 
 function pronunciationFixtureInput(lexemes: V1SourceLexeme[]): PronunciationImportInput {
+  const love = lexemes.find(({ simplified }) => simplified === "爱");
+  if (!love) throw new Error("pronunciation fixture is missing 爱");
   return {
     lexemes,
     vocabularyVersion: "pronunciation-fixture-vocabulary",
@@ -667,6 +836,8 @@ function pronunciationFixtureInput(lexemes: V1SourceLexeme[]): PronunciationImpo
       {
         simplified: "爱",
         status: "reliable",
+        targetReadingId: uniqueReadings(love, "lexeme:complete-hsk:%E7%88%B1")[0]!.id,
+        mappingBasis: AUDIO_MAPPING_BASIS_SINGLE_READING,
         sourcePath: "64k/hsk/cmn-爱.mp3",
         contentSha256: "a".repeat(64),
         byteLength: 128,
@@ -720,7 +891,7 @@ async function cardFor(
   if (!row) throw new Error(`missing ${activityType} card for ${simplified}`);
   const sessionId = `direct-card:${simplified}:${activityType}`;
   await env.DB.prepare(
-    `UPDATE cards SET retired_at = 0
+    `UPDATE cards SET retired_at = created_at
      WHERE subject_type = 'lexeme_reading' AND id <> ?`,
   )
     .bind(row.id)
@@ -734,7 +905,7 @@ async function cardFor(
   const card = await getNextPronunciationCard(env.DB, FIXED_OWNER_LEARNER_ID, sessionId, sessionId);
   await env.DB.prepare(
     `UPDATE cards SET retired_at = NULL
-     WHERE subject_type = 'lexeme_reading' AND retired_at = 0`,
+     WHERE subject_type = 'lexeme_reading' AND retired_at = created_at`,
   ).run();
   return card.card;
 }
@@ -772,6 +943,11 @@ function reliablePronunciationInput(
       {
         simplified,
         status: "reliable",
+        targetReadingId: uniqueReadings(
+          lexemes[0]!,
+          `lexeme:complete-hsk:${encodeURIComponent(simplified)}`,
+        )[0]!.id,
+        mappingBasis: AUDIO_MAPPING_BASIS_SINGLE_READING,
         sourcePath: `64k/hsk/cmn-${simplified}.mp3`,
         contentSha256: "c".repeat(64),
         byteLength: 128,

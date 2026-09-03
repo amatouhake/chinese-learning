@@ -34,6 +34,7 @@
     "db:execute:local": "wrangler d1 execute chinese-learning --local",
     "import:v1": "bun run scripts/import-v1.ts",
     "import:pronunciation": "bun run scripts/import-pronunciation.ts",
+    "extract:pronunciation-metadata": "bun run scripts/extract-pronunciation-metadata.ts",
     "verify:corpus": "bun run scripts/verify-full-import.ts",
     "verify:full-import": "bun run verify:corpus",
     "verify:pronunciation": "bun run scripts/verify-pronunciation.ts"

@@ -45,8 +45,9 @@ Routes are split as follows:
 Prerequisites: [Bun 1.4.x](https://bun.sh/), Git, and no production Cloudflare credentials.
 
 Clone the three content sources outside this repository and pin the revisions used by the
-importers. `audio-cmn` remains outside the application repository; only the 429 conservatively
-mapped files are copied into the ignored local staging directory.
+importers. `audio-cmn` remains outside the application repository; only the 480 exactly mapped
+files are copied into the ignored local staging directory. Exact-reading recovery also uses the
+checked-in normalized SWAC metadata snapshot under `data/pronunciation/`.
 
 ```sh
 git clone https://github.com/drkameleon/complete-hsk-vocabulary.git /tmp/chinese-learning-complete-hsk-vocabulary
@@ -59,6 +60,23 @@ git clone --filter=blob:none --sparse https://github.com/hugolpz/audio-cmn.git /
 git -C /tmp/chinese-learning-audio-cmn sparse-checkout set 64k/hsk README.md
 git -C /tmp/chinese-learning-audio-cmn checkout ff9ed3d0c631195bd2c06f39450f3264c7124040
 ```
+
+The snapshot was generated from the pinned Yue Tan SWAC tag index. To reproduce it after obtaining
+the same read-only source artifact, download
+`https://fsi-languages.yojik.eu/audiocollections/detailled/cmn-caen-tan/flac/index.tags.txt`,
+verify SHA-256
+`b6dae2557ee6245d83bb12de1b4ea0ad3b10da9fc25e1e55b206b0c305cd2511`, then run:
+
+```sh
+bun run extract:pronunciation-metadata -- \
+  --index /tmp/chinese-learning-cmn-caen-tan-index.tags.txt \
+  --vocabulary-root /tmp/chinese-learning-complete-hsk-vocabulary \
+  --audio-root /tmp/chinese-learning-audio-cmn
+```
+
+The importer reads the snapshot and pinned checkouts locally; it never fetches the upstream
+metadata endpoint. The snapshot records the source URLs, artifact digest, selection revisions,
+trusted `SWAC_TEXT`/`SWAC_PRON_PHON` fields, and deterministic extraction method.
 
 Install, migrate a fresh local D1 database, and import the corpus:
 
@@ -206,14 +224,16 @@ links, the current scheduler, the single content-change marker, and the
 commit-plus-content-digest provenance identity.
 
 The pinned pronunciation sources produce 800 exact-reading pinyin cards in each direction, 435
-single-tone cards, 346 exact two-syllable tone-pair cards, 858 audio-perception cards, and 800
-production cards: 4,039 non-scheduled cards in total. Of 595 Hanzi-keyed source-audio lookups, 429
-are reliable, 140 are reading-ambiguous, and 26 are missing. The pronunciation verifier recreates
-both imports and a fresh D1 database, verifies every staged audio file against its pinned Git blob,
-and locks those coverage counts. Its JSON output lists every ambiguous and missing item for review.
-It also reports 141 multi-reading lexemes and 51 cases where the upstream first form is a capitalized
-proper-name reading (for example `还` starts with surname `Huán`), so source order is never treated as
-a verified beginner-reading choice.
+single-tone cards, 346 exact two-syllable tone-pair cards, 960 audio-perception cards, and 800
+production cards: 4,141 non-scheduled cards in total. Of 595 Hanzi-keyed source-audio lookups,
+569 have source bytes: 429 retain the conservative single-reading basis, 51 are newly recovered
+through exact source pronunciation evidence, 89 remain ambiguous, and 26 are missing. The
+pronunciation verifier recreates both imports and a fresh D1 database, verifies every staged audio
+file against its pinned Git blob, and locks those coverage counts. Its JSON output gives every
+recovered mapping and every unresolved or missing item with a reason. It also reports 141
+multi-reading lexemes and 51 cases where the upstream first form is a capitalized proper-name
+reading (for example `还` starts with surname `Huán`), so source order is never treated as a
+verified beginner-reading choice.
 
 ## Reading and grammar model
 
@@ -254,13 +274,20 @@ and tone `5` as neutral tone internally, and a tone pair is offered only when ex
 syllable tones can be derived. The UI calls these dictionary tones and gives a brief tone-sandhi
 warning rather than pretending to grade connected speech.
 
-The source audio is named by Hanzi, not reading. A recording is therefore mapped only when that
-lexeme has exactly one active reading in the imported corpus. A present file for a multi-reading
-lexeme is reported as ambiguous and receives neither a media mapping nor audio cards. Missing or
-unplayable audio does not block pinyin, tone, or production prompts; production falls back to a
-text comparison. Each accepted recording has a stable media ID derived from the pinned source
-commit, Hanzi identity, and byte digest. Cards and attempts reference the reading, while the media
-delivery key is replaceable later, keeping future R2 hosting outside learning identity.
+The source audio is named by Hanzi, not reading. The original conservative basis,
+`exact_hanzi_filename_single_active_reading`, remains for the 429 legacy mappings. For a
+multi-reading lexeme, the importer now additionally requires one source record whose exact
+`SWAC_TEXT` is the Hanzi and whose normalized `SWAC_PRON_PHON` matches exactly one active
+`lexeme_reading`; this uses the
+`exact_source_pronunciation_active_reading` basis. Source pronunciation normalization covers
+tone marks/numbers, neutral tone, `ü`/`u:`/`v`, Unicode and separator variants, without tone-sandhi
+inference. Zero or multiple canonical matches stay unresolved. The normalized evidence and its
+source/artifact digests are stored on the audio-to-reading relationship, while immutable audio
+bytes keep the existing `audio-cmn` provenance. Missing or unplayable audio does not block pinyin,
+tone, or production prompts; production falls back to a text comparison. Each accepted recording
+has a stable media ID derived from the pinned source commit, Hanzi identity, and byte digest.
+Cards and attempts reference the exact reading, while the media delivery key is replaceable later,
+keeping future R2 hosting outside learning identity.
 
 Every pronunciation activity in this milestone is ordinary, non-FSRS practice:
 `hanzi_to_pinyin`, `pinyin_to_hanzi`, `tone_identification`, `tone_pair_identification`,
@@ -269,11 +296,12 @@ binary correctness separately from the chosen answer; production persists only a
 None creates an FSRS review or mutates `card_state`. The existing vocabulary directions remain the
 only scheduled activities and continue to use Again/Hard/Good/Easy solely as FSRS ratings.
 Ordinary attempt history still provides lightweight rotation: least-practiced cards come first,
-then the oldest practice, single-reading lexemes, HSK level, and frequency. A session avoids
-repeating the same lexeme while alternatives exist. This keeps new sessions moving through useful
-beginner material without turning pronunciation into a scheduler. Multi-reading cards remain
-available with exact sense hints after the unambiguous foundation rather than being silently
-collapsed or promoted according to unreliable source ordering.
+then the oldest practice, HSK level, and frequency. Non-audio cards retain the single-reading
+preference, while an audio card with an exact media join is safe to order by its exact reading
+identity even when the lexeme has siblings. A session avoids repeating the same lexeme while
+alternatives exist. This keeps new sessions moving through useful beginner material without
+turning pronunciation into a scheduler. Unresolved multi-reading lexemes still have no audio
+cards, and are never silently collapsed or promoted according to unreliable source ordering.
 
 ## Vocabulary Quiz model
 

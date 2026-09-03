@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 const EXPECTED_VOCABULARY_REVISION = "7ac65bf1a6387d35f1ade478906172a19311c7f9";
 const EXPECTED_V1_REVISION = "6bd4b8dfc45a97fdeca20efeeab0d6d81d236847";
 const EXPECTED_AUDIO_REVISION = "ff9ed3d0c631195bd2c06f39450f3264c7124040";
+const EXPECTED_METADATA_SOURCE_ID = "shtooka:cmn-caen-tan";
+const EXPECTED_METADATA_ARTIFACT_SHA256 =
+  "b6dae2557ee6245d83bb12de1b4ea0ad3b10da9fc25e1e55b206b0c305cd2511";
+const EXPECTED_METADATA_SNAPSHOT_SHA256 =
+  "b3cb696adef27aa132aa9e219cd619a0baef6188b720ffa779d72e2813ea899b";
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
 interface PronunciationDatabaseSummary {
@@ -20,7 +25,14 @@ interface PronunciationDatabaseSummary {
   production_cards: number;
   media_assets: number;
   reading_media_mappings: number;
-  ambiguous_media_mappings: number;
+  legacy_single_reading_mappings: number;
+  recovered_exact_mappings: number;
+  retired_reading_media: number;
+  invalid_mapping_evidence: number;
+  metadata_provenance_mismatches: number;
+  source_pinyin_mismatches: number;
+  unrelated_source_text_mappings: number;
+  media_assets_with_multiple_mappings: number;
   audio_cards_without_media: number;
   pronunciation_card_states: number;
   pronunciation_fsrs_reviews: number;
@@ -45,8 +57,23 @@ interface PronunciationSourceReport {
   audioMissing: number;
   cards: number;
   staged: number;
-  ambiguous: string[];
-  missing: string[];
+  sourceAudioPresent: number;
+  existingReliable: number;
+  recoveredExact: number;
+  totalReliable: number;
+  stillAmbiguous: number;
+  missing: number;
+  pronunciationCards: number;
+  audioCards: number;
+  metadataSource: {
+    id: string;
+    artifactSha256: string;
+    snapshotSha256: string;
+    recordCount: number;
+  };
+  newlyRecovered: Array<Record<string, unknown>>;
+  unresolvedAmbiguous: Array<{ hanzi: string; reason: string }>;
+  missingAudio: Array<{ hanzi: string; reason: string }>;
 }
 
 if (import.meta.main) await main();
@@ -168,15 +195,22 @@ function assertDatabaseSummary(value: unknown): asserts value is PronunciationDa
     readings: 800,
     scheduled_vocabulary_cards: 1190,
     vocabulary_card_states: 1190,
-    pronunciation_cards: 4039,
+    pronunciation_cards: 4141,
     pinyin_cards: 1600,
     single_tone_cards: 435,
     tone_pair_cards: 346,
-    audio_cards: 858,
+    audio_cards: 960,
     production_cards: 800,
-    media_assets: 429,
-    reading_media_mappings: 429,
-    ambiguous_media_mappings: 0,
+    media_assets: 480,
+    reading_media_mappings: 480,
+    legacy_single_reading_mappings: 429,
+    recovered_exact_mappings: 51,
+    retired_reading_media: 0,
+    invalid_mapping_evidence: 0,
+    metadata_provenance_mismatches: 0,
+    source_pinyin_mismatches: 0,
+    unrelated_source_text_mappings: 0,
+    media_assets_with_multiple_mappings: 0,
     audio_cards_without_media: 0,
     pronunciation_card_states: 0,
     pronunciation_fsrs_reviews: 0,
@@ -191,7 +225,10 @@ function assertDatabaseSummary(value: unknown): asserts value is PronunciationDa
   }
   const prefix =
     `complete-hsk-vocabulary@${EXPECTED_VOCABULARY_REVISION};` +
-    `audio-cmn@${EXPECTED_AUDIO_REVISION};content-sha256:`;
+    `audio-cmn@${EXPECTED_AUDIO_REVISION};` +
+    `metadata-source@${EXPECTED_METADATA_SOURCE_ID};` +
+    `metadata-artifact-sha256:${EXPECTED_METADATA_ARTIFACT_SHA256};` +
+    `metadata-snapshot-sha256:${EXPECTED_METADATA_SNAPSHOT_SHA256};content-sha256:`;
   if (
     typeof summary.source_version !== "string" ||
     !summary.source_version.startsWith(prefix) ||
@@ -210,6 +247,14 @@ function assertSourceReport(value: PronunciationSourceReport): void {
     completeToneReadings: value.completeToneReadings,
     singleToneReadings: value.singleToneReadings,
     tonePairReadings: value.tonePairReadings,
+    sourceAudioPresent: value.sourceAudioPresent,
+    existingReliable: value.existingReliable,
+    recoveredExact: value.recoveredExact,
+    totalReliable: value.totalReliable,
+    stillAmbiguous: value.stillAmbiguous,
+    missing: value.missing,
+    pronunciationCards: value.pronunciationCards,
+    audioCards: value.audioCards,
     audioReliable: value.audioReliable,
     audioAmbiguous: value.audioAmbiguous,
     audioMissing: value.audioMissing,
@@ -224,11 +269,19 @@ function assertSourceReport(value: PronunciationSourceReport): void {
     completeToneReadings: 800,
     singleToneReadings: 435,
     tonePairReadings: 346,
-    audioReliable: 429,
-    audioAmbiguous: 140,
+    sourceAudioPresent: 569,
+    existingReliable: 429,
+    recoveredExact: 51,
+    totalReliable: 480,
+    stillAmbiguous: 89,
+    missing: 26,
+    pronunciationCards: 4141,
+    audioCards: 960,
+    audioReliable: 480,
+    audioAmbiguous: 89,
     audioMissing: 26,
-    cards: 4039,
-    staged: 429,
+    cards: 4141,
+    staged: 480,
   };
   for (const [field, count] of Object.entries(expected)) {
     if (actual[field] !== count) {
@@ -236,10 +289,15 @@ function assertSourceReport(value: PronunciationSourceReport): void {
     }
   }
   if (
-    value.ambiguous.length !== value.audioAmbiguous ||
-    value.missing.length !== value.audioMissing
+    value.metadataSource.id !== EXPECTED_METADATA_SOURCE_ID ||
+    value.metadataSource.artifactSha256 !== EXPECTED_METADATA_ARTIFACT_SHA256 ||
+    value.metadataSource.snapshotSha256 !== EXPECTED_METADATA_SNAPSHOT_SHA256 ||
+    value.metadataSource.recordCount !== 140 ||
+    value.newlyRecovered.length !== value.recoveredExact ||
+    value.unresolvedAmbiguous.length !== value.stillAmbiguous ||
+    value.missingAudio.length !== value.missing
   ) {
-    throw new Error("pronunciation source issue lists do not match their reported counts");
+    throw new Error("pronunciation source evidence report is inconsistent");
   }
 }
 
@@ -280,9 +338,69 @@ function verificationQuery(): string {
     (SELECT COUNT(*) FROM lexeme_reading_media) AS reading_media_mappings,
     (SELECT COUNT(*) FROM lexeme_reading_media rm
       JOIN lexeme_readings r ON r.id = rm.lexeme_reading_id
-      WHERE (SELECT COUNT(*) FROM lexeme_readings sibling
-        WHERE sibling.lexeme_id = r.lexeme_id AND sibling.retired_at IS NULL) <> 1)
-      AS ambiguous_media_mappings,
+      WHERE r.retired_at IS NOT NULL) AS retired_reading_media,
+    (SELECT COUNT(*) FROM lexeme_reading_media rm
+      WHERE (rm.mapping_basis = 'exact_source_pronunciation_active_reading'
+        AND (rm.source_text IS NULL OR rm.source_pronunciation IS NULL
+          OR rm.normalized_source_pinyin IS NULL OR rm.metadata_source_id IS NULL
+          OR rm.metadata_source_digest IS NULL OR rm.metadata_source_record_path IS NULL))
+        OR (rm.mapping_basis = 'exact_hanzi_filename_single_active_reading'
+          AND (rm.source_text IS NOT NULL OR rm.source_pronunciation IS NOT NULL
+            OR rm.normalized_source_pinyin IS NOT NULL OR rm.metadata_source_id IS NOT NULL
+            OR rm.metadata_source_digest IS NOT NULL OR rm.metadata_source_record_path IS NOT NULL)))
+      AS invalid_mapping_evidence,
+    (SELECT COUNT(*) FROM lexeme_reading_media rm
+      WHERE rm.mapping_basis = 'exact_source_pronunciation_active_reading'
+        AND (rm.metadata_source_id IS NULL
+          OR rm.metadata_source_id <> '${EXPECTED_METADATA_SOURCE_ID}'
+          OR rm.metadata_source_digest IS NULL
+          OR rm.metadata_source_digest <> '${EXPECTED_METADATA_ARTIFACT_SHA256}'))
+      AS metadata_provenance_mismatches,
+    (SELECT COUNT(*) FROM lexeme_reading_media rm
+      JOIN lexeme_readings r ON r.id = rm.lexeme_reading_id
+      WHERE rm.mapping_basis = 'exact_source_pronunciation_active_reading'
+        AND (
+          json_array_length(rm.normalized_source_pinyin) < 1
+          OR json_array_length(rm.normalized_source_pinyin) <> json_array_length(r.normalized_syllables_json)
+          OR EXISTS (
+            SELECT 1
+            FROM json_each(rm.normalized_source_pinyin) source_token
+            LEFT JOIN json_each(r.normalized_syllables_json) canonical_token
+              ON canonical_token.key = source_token.key
+            WHERE canonical_token.key IS NULL
+              OR typeof(source_token.value) <> 'text'
+              OR length(source_token.value) < 2
+              OR substr(source_token.value, -1) NOT IN ('1', '2', '3', '4', '5')
+              OR substr(source_token.value, 1, length(source_token.value) - 1)
+                <> json_extract(canonical_token.value, '$.syllable')
+              OR (
+                substr(source_token.value, -1) <> '5'
+                AND CAST(substr(source_token.value, -1) AS INTEGER)
+                  <> COALESCE(CAST(json_extract(canonical_token.value, '$.tone') AS INTEGER), 0)
+              )
+              OR (
+                substr(source_token.value, -1) = '5'
+                AND json_extract(canonical_token.value, '$.tone') IS NOT NULL
+                AND json_extract(canonical_token.value, '$.tone') <> 5
+              )
+          )
+        )) AS source_pinyin_mismatches,
+    (SELECT COUNT(*) FROM lexeme_reading_media rm
+      JOIN lexeme_readings r ON r.id = rm.lexeme_reading_id
+      JOIN lexemes l ON l.id = r.lexeme_id
+      WHERE rm.mapping_basis = 'exact_source_pronunciation_active_reading'
+        AND (rm.source_text IS NULL OR rm.source_text <> l.simplified))
+      AS unrelated_source_text_mappings,
+    (SELECT COUNT(*) FROM (
+      SELECT media_asset_id, role FROM lexeme_reading_media
+      GROUP BY media_asset_id, role HAVING COUNT(*) > 1
+    )) AS media_assets_with_multiple_mappings,
+    (SELECT COUNT(*) FROM lexeme_reading_media
+      WHERE mapping_basis = 'exact_hanzi_filename_single_active_reading')
+      AS legacy_single_reading_mappings,
+    (SELECT COUNT(*) FROM lexeme_reading_media
+      WHERE mapping_basis = 'exact_source_pronunciation_active_reading')
+      AS recovered_exact_mappings,
     (SELECT COUNT(*) FROM cards c
       LEFT JOIN lexeme_reading_media rm ON rm.lexeme_reading_id = c.lexeme_reading_id
       WHERE c.retired_at IS NULL

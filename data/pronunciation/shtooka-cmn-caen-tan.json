@@ -1,0 +1,1001 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "id": "shtooka:cmn-caen-tan",
+    "name": "cmn-caen-tan / Yue Tan / University of Caen",
+    "archiveUrl": "https://fsi-languages.yojik.eu/audiocollections/archives/cmn-caen-tan_flac.tar.xz",
+    "archiveBytes": 513222000,
+    "archiveEtag": "\"1e972570-5d81fd0393ded\"",
+    "metadataUrl": "https://fsi-languages.yojik.eu/audiocollections/detailled/cmn-caen-tan/flac/index.tags.txt",
+    "sourceReadmeUrl": "https://fsi-languages.yojik.eu/audiocollections/detailled/cmn-caen-tan/readme.txt",
+    "artifactBytes": 1222712,
+    "artifactSha256": "b6dae2557ee6245d83bb12de1b4ea0ad3b10da9fc25e1e55b206b0c305cd2511",
+    "audioCopyright": "(c) 2009 Yue Tan",
+    "audioLicense": "Creative Commons BY-SA 3.0 U.S",
+    "selectionRevision": "complete-hsk-vocabulary@7ac65bf1a6387d35f1ade478906172a19311c7f9;audio-cmn@ff9ed3d0c631195bd2c06f39450f3264c7124040",
+    "extractionMethod": "scripts/extract-pronunciation-metadata.ts parses SWAC index tags and selects active multi-reading lexemes with a tracked audio-cmn MP3; no network is used by import.",
+    "trustedFields": ["SWAC_TEXT", "SWAC_PRON_PHON"]
+  },
+  "records": [
+    {
+      "sourceText": "万",
+      "sourcePronunciation": "wàn",
+      "normalizedSourcePinyin": ["wan4"],
+      "sourcePath": "flac/cmn-0e6a935d.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "三",
+      "sourcePronunciation": "sān",
+      "normalizedSourcePinyin": ["san1"],
+      "sourcePath": "flac/cmn-e9d2be5a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "上",
+      "sourcePronunciation": "shàng",
+      "normalizedSourcePinyin": ["shang4"],
+      "sourcePath": "flac/cmn-70dbefe0.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "东",
+      "sourcePronunciation": "dōng",
+      "normalizedSourcePinyin": ["dong1"],
+      "sourcePath": "flac/cmn-840f5ab1.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "东西",
+      "sourcePronunciation": "dōngxi",
+      "normalizedSourcePinyin": ["dong1", "xi5"],
+      "sourcePath": "flac/cmn-c4698257.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "个",
+      "sourcePronunciation": "gè",
+      "normalizedSourcePinyin": ["ge4"],
+      "sourcePath": "flac/cmn-4bb5cf28.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "为",
+      "sourcePronunciation": "wèi",
+      "normalizedSourcePinyin": ["wei4"],
+      "sourcePath": "flac/cmn-5602df4c.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "也",
+      "sourcePronunciation": "yě",
+      "normalizedSourcePinyin": ["ye3"],
+      "sourcePath": "flac/cmn-041d3a4a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "书",
+      "sourcePronunciation": "shū",
+      "normalizedSourcePinyin": ["shu1"],
+      "sourcePath": "flac/cmn-5b18b242.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "了",
+      "sourcePronunciation": "liǎo",
+      "normalizedSourcePinyin": ["liao3"],
+      "sourcePath": "flac/cmn-4b5bc149.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "了解",
+      "sourcePronunciation": "liǎojiě",
+      "normalizedSourcePinyin": ["liao3", "jie3"],
+      "sourcePath": "flac/cmn-a73a5801.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "云",
+      "sourcePronunciation": "yún",
+      "normalizedSourcePinyin": ["yun2"],
+      "sourcePath": "flac/cmn-c888448e.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "从",
+      "sourcePronunciation": "cóng",
+      "normalizedSourcePinyin": ["cong2"],
+      "sourcePath": "flac/cmn-5c9b783a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "会",
+      "sourcePronunciation": "huì",
+      "normalizedSourcePinyin": ["hui4"],
+      "sourcePath": "flac/cmn-09003a80.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "伞",
+      "sourcePronunciation": "sǎn",
+      "normalizedSourcePinyin": ["san3"],
+      "sourcePath": "flac/cmn-0e6dfe99.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "你",
+      "sourcePronunciation": "nǐ",
+      "normalizedSourcePinyin": ["ni3"],
+      "sourcePath": "flac/cmn-d617d273.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "便宜",
+      "sourcePronunciation": "piányi",
+      "normalizedSourcePinyin": ["pian2", "yi5"],
+      "sourcePath": "flac/cmn-b0e54ccd.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "借",
+      "sourcePronunciation": "jiè",
+      "normalizedSourcePinyin": ["jie4"],
+      "sourcePath": "flac/cmn-0b5bddc7.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "元",
+      "sourcePronunciation": "yuán",
+      "normalizedSourcePinyin": ["yuan2"],
+      "sourcePath": "flac/cmn-622d75cd.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "关",
+      "sourcePronunciation": "guān",
+      "normalizedSourcePinyin": ["guan1"],
+      "sourcePath": "flac/cmn-44f44561.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "关系",
+      "sourcePronunciation": "guānxi",
+      "normalizedSourcePinyin": ["guan1", "xi5"],
+      "sourcePath": "flac/cmn-be7ca45e.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "冬",
+      "sourcePronunciation": "dōng",
+      "normalizedSourcePinyin": ["dong1"],
+      "sourcePath": "flac/cmn-e2d11b57.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "冷",
+      "sourcePronunciation": "lěng",
+      "normalizedSourcePinyin": ["leng3"],
+      "sourcePath": "flac/cmn-68b4d2bb.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "几",
+      "sourcePronunciation": "jǐ",
+      "normalizedSourcePinyin": ["ji3"],
+      "sourcePath": "flac/cmn-f27c663d.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "出",
+      "sourcePronunciation": "chū",
+      "normalizedSourcePinyin": ["chu1"],
+      "sourcePath": "flac/cmn-0f1e9f47.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "分",
+      "sourcePronunciation": "fēn",
+      "normalizedSourcePinyin": ["fen1"],
+      "sourcePath": "flac/cmn-a7e9ff0f.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "刚才",
+      "sourcePronunciation": "gāngcái",
+      "normalizedSourcePinyin": ["gang1", "cai2"],
+      "sourcePath": "flac/cmn-7007a18c.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "别",
+      "sourcePronunciation": "bié",
+      "normalizedSourcePinyin": ["bie2"],
+      "sourcePath": "flac/cmn-e236a37a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "刮",
+      "sourcePronunciation": "guā",
+      "normalizedSourcePinyin": ["gua1"],
+      "sourcePath": "flac/cmn-925c57f5.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "刷",
+      "sourcePronunciation": "shuā",
+      "normalizedSourcePinyin": ["shua1"],
+      "sourcePath": "flac/cmn-f637ff35.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "包",
+      "sourcePronunciation": "bāo",
+      "normalizedSourcePinyin": ["bao1"],
+      "sourcePath": "flac/cmn-5a8c6bb1.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "千",
+      "sourcePronunciation": "qiān",
+      "normalizedSourcePinyin": ["qian1"],
+      "sourcePath": "flac/cmn-aaf4ffc5.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "南",
+      "sourcePronunciation": "nán",
+      "normalizedSourcePinyin": ["nan2"],
+      "sourcePath": "flac/cmn-b02e2bb8.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "双",
+      "sourcePronunciation": "shuāng",
+      "normalizedSourcePinyin": ["shuang1"],
+      "sourcePath": "flac/cmn-087d80d6.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "只",
+      "sourcePronunciation": "zhǐ",
+      "normalizedSourcePinyin": ["zhi3"],
+      "sourcePath": "flac/cmn-da70052b.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "叫",
+      "sourcePronunciation": "jiào",
+      "normalizedSourcePinyin": ["jiao4"],
+      "sourcePath": "flac/cmn-ad7735bd.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "号",
+      "sourcePronunciation": "hào",
+      "normalizedSourcePinyin": ["hao4"],
+      "sourcePath": "flac/cmn-b97669f2.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "吃",
+      "sourcePronunciation": "chī",
+      "normalizedSourcePinyin": ["chi1"],
+      "sourcePath": "flac/cmn-559893d9.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "向",
+      "sourcePronunciation": "xiàng",
+      "normalizedSourcePinyin": ["xiang4"],
+      "sourcePath": "flac/cmn-a621e291.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "吗",
+      "sourcePronunciation": "ma",
+      "normalizedSourcePinyin": ["ma5"],
+      "sourcePath": "flac/cmn-4f4247a4.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "吧",
+      "sourcePronunciation": "ba",
+      "normalizedSourcePinyin": ["ba5"],
+      "sourcePath": "flac/cmn-699b7708.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "听",
+      "sourcePronunciation": "tīng",
+      "normalizedSourcePinyin": ["ting1"],
+      "sourcePath": "flac/cmn-fe49ae80.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "告诉",
+      "sourcePronunciation": "gàosu",
+      "normalizedSourcePinyin": ["gao4", "su5"],
+      "sourcePath": "flac/cmn-83c369d7.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "呢",
+      "sourcePronunciation": "ne",
+      "normalizedSourcePinyin": ["ne5"],
+      "sourcePath": "flac/cmn-00eab2c6.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "和",
+      "sourcePronunciation": "hé",
+      "normalizedSourcePinyin": ["he2"],
+      "sourcePath": "flac/cmn-f711ecca.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "哪",
+      "sourcePronunciation": "na",
+      "normalizedSourcePinyin": ["na5"],
+      "sourcePath": "flac/cmn-3c075876.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "啊",
+      "sourcePronunciation": "ā",
+      "normalizedSourcePinyin": ["a1"],
+      "sourcePath": "flac/cmn-5133df38.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "喂",
+      "sourcePronunciation": "wèi",
+      "normalizedSourcePinyin": ["wei4"],
+      "sourcePath": "flac/cmn-74c504c9.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "喝",
+      "sourcePronunciation": "hē",
+      "normalizedSourcePinyin": ["he1"],
+      "sourcePath": "flac/cmn-f9cd093c.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "回",
+      "sourcePronunciation": "huí",
+      "normalizedSourcePinyin": ["hui2"],
+      "sourcePath": "flac/cmn-d56a26cb.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "地",
+      "sourcePronunciation": "dì",
+      "normalizedSourcePinyin": ["di4"],
+      "sourcePath": "flac/cmn-46fdbdc3.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "地方",
+      "sourcePronunciation": "dìfang",
+      "normalizedSourcePinyin": ["di4", "fang5"],
+      "sourcePath": "flac/cmn-c60625bf.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "坐",
+      "sourcePronunciation": "zuò",
+      "normalizedSourcePinyin": ["zuo4"],
+      "sourcePath": "flac/cmn-6488ac4a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "复习",
+      "sourcePronunciation": "fùxí",
+      "normalizedSourcePinyin": ["fu4", "xi2"],
+      "sourcePath": "flac/cmn-20e5b247.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "夏",
+      "sourcePronunciation": "xià",
+      "normalizedSourcePinyin": ["xia4"],
+      "sourcePath": "flac/cmn-e7042c05.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "多少",
+      "sourcePronunciation": "duōshao",
+      "normalizedSourcePinyin": ["duo1", "shao5"],
+      "sourcePath": "flac/cmn-6cf50c25.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "大",
+      "sourcePronunciation": "dà",
+      "normalizedSourcePinyin": ["da4"],
+      "sourcePath": "flac/cmn-d2b184ff.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "女人",
+      "sourcePronunciation": "nǚrén",
+      "normalizedSourcePinyin": ["nv3", "ren2"],
+      "sourcePath": "flac/cmn-db3ebedc.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "好",
+      "sourcePronunciation": "hǎo",
+      "normalizedSourcePinyin": ["hao3"],
+      "sourcePath": "flac/cmn-36c84cc4.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "好吃",
+      "sourcePronunciation": "hǎochī",
+      "normalizedSourcePinyin": ["hao3", "chi1"],
+      "sourcePath": "flac/cmn-0a4de7f8.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "妻子",
+      "sourcePronunciation": "qīzi",
+      "normalizedSourcePinyin": ["qi1", "zi5"],
+      "sourcePath": "flac/cmn-86d0cb94.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "家",
+      "sourcePronunciation": "jiā",
+      "normalizedSourcePinyin": ["jia1"],
+      "sourcePath": "flac/cmn-42ee4c87.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "少",
+      "sourcePronunciation": "shǎo",
+      "normalizedSourcePinyin": ["shao3"],
+      "sourcePath": "flac/cmn-33a5c633.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "岁",
+      "sourcePronunciation": "suì",
+      "normalizedSourcePinyin": ["sui4"],
+      "sourcePath": "flac/cmn-1c24b4d5.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "差",
+      "sourcePronunciation": "chà",
+      "normalizedSourcePinyin": ["cha4"],
+      "sourcePath": "flac/cmn-ca827dc9.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "年",
+      "sourcePronunciation": "nián",
+      "normalizedSourcePinyin": ["nian2"],
+      "sourcePath": "flac/cmn-a963a93d.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "张",
+      "sourcePronunciation": "zhāng",
+      "normalizedSourcePinyin": ["zhang1"],
+      "sourcePath": "flac/cmn-cece8905.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "得",
+      "sourcePronunciation": "děi",
+      "normalizedSourcePinyin": ["dei3"],
+      "sourcePath": "flac/cmn-44454e88.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "怎么",
+      "sourcePronunciation": "zěnme",
+      "normalizedSourcePinyin": ["zen3", "me5"],
+      "sourcePath": "flac/cmn-b5304e39.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "才",
+      "sourcePronunciation": "cái",
+      "normalizedSourcePinyin": ["cai2"],
+      "sourcePath": "flac/cmn-2b66a99f.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "把",
+      "sourcePronunciation": "bǎ",
+      "normalizedSourcePinyin": ["ba3"],
+      "sourcePath": "flac/cmn-9e2f6fff.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "拿",
+      "sourcePronunciation": "ná",
+      "normalizedSourcePinyin": ["na2"],
+      "sourcePath": "flac/cmn-d1879a9d.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "故事",
+      "sourcePronunciation": "gùshi",
+      "normalizedSourcePinyin": ["gu4", "shi5"],
+      "sourcePath": "flac/cmn-7815d3b3.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "教",
+      "sourcePronunciation": "jiāo",
+      "normalizedSourcePinyin": ["jiao1"],
+      "sourcePath": "flac/cmn-d7cb20bf.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "新",
+      "sourcePronunciation": "xīn",
+      "normalizedSourcePinyin": ["xin1"],
+      "sourcePath": "flac/cmn-be54eb10.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "日",
+      "sourcePronunciation": "rì",
+      "normalizedSourcePinyin": ["ri4"],
+      "sourcePath": "flac/cmn-ca923eba.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "春",
+      "sourcePronunciation": "chūn",
+      "normalizedSourcePinyin": ["chun1"],
+      "sourcePath": "flac/cmn-4d0a2275.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "是",
+      "sourcePronunciation": "shì",
+      "normalizedSourcePinyin": ["shi4"],
+      "sourcePath": "flac/cmn-addfcb6b.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "更",
+      "sourcePronunciation": "gèng",
+      "normalizedSourcePinyin": ["geng4"],
+      "sourcePath": "flac/cmn-0c975144.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "最",
+      "sourcePronunciation": "zuì",
+      "normalizedSourcePinyin": ["zui4"],
+      "sourcePath": "flac/cmn-62623336.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "楼",
+      "sourcePronunciation": "lóu",
+      "normalizedSourcePinyin": ["lou2"],
+      "sourcePath": "flac/cmn-4389c20b.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "段",
+      "sourcePronunciation": "duàn",
+      "normalizedSourcePinyin": ["duan4"],
+      "sourcePath": "flac/cmn-d9a1a364.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "比",
+      "sourcePronunciation": "bǐ",
+      "normalizedSourcePinyin": ["bi3"],
+      "sourcePath": "flac/cmn-8cd3827b.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "水",
+      "sourcePronunciation": "shuǐ",
+      "normalizedSourcePinyin": ["shui3"],
+      "sourcePath": "flac/cmn-7ae7ac2d.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "没",
+      "sourcePronunciation": "méi",
+      "normalizedSourcePinyin": ["mei2"],
+      "sourcePath": "flac/cmn-250c2a44.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "班",
+      "sourcePronunciation": "bān",
+      "normalizedSourcePinyin": ["ban1"],
+      "sourcePath": "flac/cmn-479044e6.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "白",
+      "sourcePronunciation": "bái",
+      "normalizedSourcePinyin": ["bai2"],
+      "sourcePath": "flac/cmn-46bfe155.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "百",
+      "sourcePronunciation": "bǎi",
+      "normalizedSourcePinyin": ["bai3"],
+      "sourcePath": "flac/cmn-dfb6b0ef.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "的",
+      "sourcePronunciation": "de",
+      "normalizedSourcePinyin": ["de5"],
+      "sourcePath": "flac/cmn-32973a9e.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "看",
+      "sourcePronunciation": "kàn",
+      "normalizedSourcePinyin": ["kan4"],
+      "sourcePath": "flac/cmn-f4728089.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "着",
+      "sourcePronunciation": "zhe",
+      "normalizedSourcePinyin": ["zhe5"],
+      "sourcePath": "flac/cmn-7abb6840.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "碗",
+      "sourcePronunciation": "wǎn",
+      "normalizedSourcePinyin": ["wan3"],
+      "sourcePath": "flac/cmn-a1b6c7bb.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "祝",
+      "sourcePronunciation": "zhù",
+      "normalizedSourcePinyin": ["zhu4"],
+      "sourcePath": "flac/cmn-0e22b862.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "离",
+      "sourcePronunciation": "lí",
+      "normalizedSourcePinyin": ["li2"],
+      "sourcePath": "flac/cmn-f7026e5c.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "秋",
+      "sourcePronunciation": "qiū",
+      "normalizedSourcePinyin": ["qiu1"],
+      "sourcePath": "flac/cmn-c8c06fb1.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "种",
+      "sourcePronunciation": "zhǒng",
+      "normalizedSourcePinyin": ["zhong3"],
+      "sourcePath": "flac/cmn-21a3ca84.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "笑",
+      "sourcePronunciation": "xiào",
+      "normalizedSourcePinyin": ["xiao4"],
+      "sourcePath": "flac/cmn-d6564f00.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "米",
+      "sourcePronunciation": "mǐ",
+      "normalizedSourcePinyin": ["mi3"],
+      "sourcePath": "flac/cmn-fc5a62f8.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "糖",
+      "sourcePronunciation": "táng",
+      "normalizedSourcePinyin": ["tang2"],
+      "sourcePath": "flac/cmn-8568d43d.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "累",
+      "sourcePronunciation": "lèi",
+      "normalizedSourcePinyin": ["lei4"],
+      "sourcePath": "flac/cmn-952ccaf2.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "红",
+      "sourcePronunciation": "hóng",
+      "normalizedSourcePinyin": ["hong2"],
+      "sourcePath": "flac/cmn-751e9bc1.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "给",
+      "sourcePronunciation": "gěi",
+      "normalizedSourcePinyin": ["gei3"],
+      "sourcePath": "flac/cmn-dd0e43a4.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "胖",
+      "sourcePronunciation": "pàng",
+      "normalizedSourcePinyin": ["pang4"],
+      "sourcePath": "flac/cmn-5172a5f3.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "能",
+      "sourcePronunciation": "néng",
+      "normalizedSourcePinyin": ["neng2"],
+      "sourcePath": "flac/cmn-fdce5cb3.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "脚",
+      "sourcePronunciation": "jiǎo",
+      "normalizedSourcePinyin": ["jiao3"],
+      "sourcePath": "flac/cmn-17857f1f.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "腿",
+      "sourcePronunciation": "tuǐ",
+      "normalizedSourcePinyin": ["tui3"],
+      "sourcePath": "flac/cmn-459a9a19.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "船",
+      "sourcePronunciation": "chuán",
+      "normalizedSourcePinyin": ["chuan2"],
+      "sourcePath": "flac/cmn-19574161.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "花",
+      "sourcePronunciation": "huā",
+      "normalizedSourcePinyin": ["hua1"],
+      "sourcePath": "flac/cmn-25baabd1.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "草",
+      "sourcePronunciation": "cǎo",
+      "normalizedSourcePinyin": ["cao3"],
+      "sourcePath": "flac/cmn-42f98588.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "药",
+      "sourcePronunciation": "yào",
+      "normalizedSourcePinyin": ["yao4"],
+      "sourcePath": "flac/cmn-90f40075.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "蓝",
+      "sourcePronunciation": "lán",
+      "normalizedSourcePinyin": ["lan2"],
+      "sourcePath": "flac/cmn-8c626e2a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "裤子",
+      "sourcePronunciation": "kùzi",
+      "normalizedSourcePinyin": ["ku4", "zi5"],
+      "sourcePath": "flac/cmn-fad410f3.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "西",
+      "sourcePronunciation": "xī",
+      "normalizedSourcePinyin": ["xi1"],
+      "sourcePath": "flac/cmn-d01ebebb.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "要",
+      "sourcePronunciation": "yào",
+      "normalizedSourcePinyin": ["yao4"],
+      "sourcePath": "flac/cmn-3a52f0d3.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "角",
+      "sourcePronunciation": "jiǎo",
+      "normalizedSourcePinyin": ["jiao3"],
+      "sourcePath": "flac/cmn-a7f7804c.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "读",
+      "sourcePronunciation": "dú",
+      "normalizedSourcePinyin": ["du2"],
+      "sourcePath": "flac/cmn-2d9c9228.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "越",
+      "sourcePronunciation": "yuè",
+      "normalizedSourcePinyin": ["yue4"],
+      "sourcePath": "flac/cmn-e7423b0a.flac",
+      "sourceSection": "HSK niveau III"
+    },
+    {
+      "sourceText": "路",
+      "sourcePronunciation": "lù",
+      "normalizedSourcePinyin": ["lu4"],
+      "sourcePath": "flac/cmn-b55dde0c.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "过去",
+      "sourcePronunciation": "guòqù",
+      "normalizedSourcePinyin": ["guo4", "qu4"],
+      "sourcePath": "flac/cmn-ff56e481.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "还",
+      "sourcePronunciation": "huàn",
+      "normalizedSourcePinyin": ["huan4"],
+      "sourcePath": "flac/cmn-c539f10b.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "远",
+      "sourcePronunciation": "yuǎn",
+      "normalizedSourcePinyin": ["yuan3"],
+      "sourcePath": "flac/cmn-c2543512.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "那",
+      "sourcePronunciation": "nà",
+      "normalizedSourcePinyin": ["na4"],
+      "sourcePath": "flac/cmn-1f183aa6.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "都",
+      "sourcePronunciation": "dōu",
+      "normalizedSourcePinyin": ["dou1"],
+      "sourcePath": "flac/cmn-fc0c3684.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "里",
+      "sourcePronunciation": "lǐ",
+      "normalizedSourcePinyin": ["li3"],
+      "sourcePath": "flac/cmn-c9bef3ba.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "钱",
+      "sourcePronunciation": "qián",
+      "normalizedSourcePinyin": ["qian2"],
+      "sourcePath": "flac/cmn-a66359bf.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "错",
+      "sourcePronunciation": "cuò",
+      "normalizedSourcePinyin": ["cuo4"],
+      "sourcePath": "flac/cmn-c58c56c3.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "长",
+      "sourcePronunciation": "zhǎng",
+      "normalizedSourcePinyin": ["zhang3"],
+      "sourcePath": "flac/cmn-0e9ae27f.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "门",
+      "sourcePronunciation": "mén",
+      "normalizedSourcePinyin": ["men2"],
+      "sourcePath": "flac/cmn-bf7f053a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "阴",
+      "sourcePronunciation": "yīn",
+      "normalizedSourcePinyin": ["yin1"],
+      "sourcePath": "flac/cmn-2ce645ba.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "难",
+      "sourcePronunciation": "nán",
+      "normalizedSourcePinyin": ["nan2"],
+      "sourcePath": "flac/cmn-fe05ce26.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "雪",
+      "sourcePronunciation": "xuě",
+      "normalizedSourcePinyin": ["xue3"],
+      "sourcePath": "flac/cmn-fdc42b1a.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "鞋",
+      "sourcePronunciation": "xié",
+      "normalizedSourcePinyin": ["xie2"],
+      "sourcePath": "flac/cmn-ccdacf01.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "题",
+      "sourcePronunciation": "tí",
+      "normalizedSourcePinyin": ["ti2"],
+      "sourcePath": "flac/cmn-3b97f720.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "马",
+      "sourcePronunciation": "mǎ",
+      "normalizedSourcePinyin": ["ma3"],
+      "sourcePath": "flac/cmn-f9d7da5e.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "骑",
+      "sourcePronunciation": "qí",
+      "normalizedSourcePinyin": ["qi2"],
+      "sourcePath": "flac/cmn-8a92c58c.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "高",
+      "sourcePronunciation": "gāo",
+      "normalizedSourcePinyin": ["gao1"],
+      "sourcePath": "flac/cmn-ea554c69.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "鱼",
+      "sourcePronunciation": "yú",
+      "normalizedSourcePinyin": ["yu2"],
+      "sourcePath": "flac/cmn-667b5263.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "鸟",
+      "sourcePronunciation": "niǎo",
+      "normalizedSourcePinyin": ["niao3"],
+      "sourcePath": "flac/cmn-15de9858.flac",
+      "sourceSection": "HSK niveau II"
+    },
+    {
+      "sourceText": "黄",
+      "sourcePronunciation": "huáng",
+      "normalizedSourcePinyin": ["huang2"],
+      "sourcePath": "flac/cmn-b4960277.flac",
+      "sourceSection": "HSK niveau I"
+    },
+    {
+      "sourceText": "黑",
+      "sourcePronunciation": "hēi",
+      "normalizedSourcePinyin": ["hei1"],
+      "sourcePath": "flac/cmn-d94be69c.flac",
+      "sourceSection": "HSK niveau I"
+    }
+  ]
+}
