@@ -526,9 +526,18 @@ async function recordPresentedChoiceIds(
     const presentedChoiceIds = { ...context.presentedChoiceIds };
     let changed = false;
     for (const card of cards) {
-      if (presentedChoiceIds[card.cardId] !== undefined) continue;
-      presentedChoiceIds[card.cardId] = card.choices.map(({ id }) => id);
-      changed = true;
+      const existing = presentedChoiceIds[card.cardId];
+      const next = [...(existing ?? [])];
+      const seen = new Set(next);
+      for (const { id } of card.choices) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        next.push(id);
+      }
+      if (existing === undefined || next.length !== existing.length) {
+        presentedChoiceIds[card.cardId] = next;
+        changed = true;
+      }
     }
     if (!changed) return;
 

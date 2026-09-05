@@ -355,6 +355,7 @@ describe("pronunciation foundation", () => {
     await applyPronunciationFixture();
     const cached = await cardFor("爱", "pinyin_to_hanzi");
     if (!cached) throw new Error("missing cached objective pronunciation card");
+    const firstChoiceIds = cached.choices.map(({ id }) => id);
     const presentedWrong = cached.choices.find(({ id }) => id.includes("hang2"));
     if (!presentedWrong) {
       throw new Error(
@@ -382,9 +383,7 @@ describe("pronunciation foundation", () => {
 
     const currentChoices = await getCanonicalPronunciationChoiceIds(env.DB, cached.cardId);
     expect(currentChoices.has(presentedWrong.id)).toBe(false);
-    const currentOnly = [...currentChoices].find(
-      (choiceId) => !cached.choices.some(({ id }) => id === choiceId),
-    );
+    const currentOnly = [...currentChoices].find((choiceId) => !firstChoiceIds.includes(choiceId));
     if (!currentOnly) throw new Error("content revision did not change the distractor set");
 
     const activeCards = await env.DB.prepare(
@@ -396,6 +395,10 @@ describe("pronunciation foundation", () => {
     )
       .bind(cached.cardId)
       .run();
+
+    let refreshedCard: typeof cached | undefined;
+    let refreshedOnlyWrong: (typeof cached.choices)[number] | undefined;
+    let evidenceAfterRefresh: string[];
     try {
       const refreshed = await getOfflinePronunciationPack(
         env.DB,
@@ -404,6 +407,30 @@ describe("pronunciation foundation", () => {
         "direct-card:爱:pinyin_to_hanzi",
       );
       expect(refreshed.cards[0]?.cardId).toBe(cached.cardId);
+      refreshedCard = refreshed.cards[0];
+      if (!refreshedCard) throw new Error("missing re-prepared pronunciation card");
+      refreshedOnlyWrong = refreshedCard.choices.find(
+        ({ id }) => !firstChoiceIds.includes(id) && id !== refreshedCard?.answerChoiceId,
+      );
+      if (!refreshedOnlyWrong) {
+        throw new Error(
+          `re-prepared card did not present a new wrong choice: ${JSON.stringify(refreshedCard.choices)}`,
+        );
+      }
+
+      evidenceAfterRefresh = await pronunciationPresentationEvidence(cached.cardId);
+      expect(evidenceAfterRefresh).toEqual(expect.arrayContaining(firstChoiceIds));
+      expect(evidenceAfterRefresh).toContain(refreshedOnlyWrong.id);
+      expect(new Set(evidenceAfterRefresh).size).toBe(evidenceAfterRefresh.length);
+
+      const retried = await getOfflinePronunciationPack(
+        env.DB,
+        FIXED_OWNER_LEARNER_ID,
+        "direct-card:爱:pinyin_to_hanzi",
+        "direct-card:爱:pinyin_to_hanzi",
+      );
+      expect(retried.cards[0]?.choices).toEqual(refreshedCard.choices);
+      expect(await pronunciationPresentationEvidence(cached.cardId)).toEqual(evidenceAfterRefresh);
     } finally {
       await env.DB.batch(
         activeCards.results.map(({ id }) =>
@@ -440,12 +467,39 @@ describe("pronunciation foundation", () => {
       ),
     ).toBe(1);
 
+    if (!refreshedCard || !refreshedOnlyWrong) {
+      throw new Error("missing re-prepared pronunciation evidence");
+    }
+    const refreshedAttempt: AttemptInput = {
+      ...attempt,
+      eventId: "content-revised-reprepared-choice",
+      deviceSeq: 2,
+      metadata: {
+        ...attempt.metadata,
+        selectedChoiceId: refreshedOnlyWrong.id,
+        readingId: refreshedCard.readingId,
+      },
+    };
+    await expect(
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, refreshedAttempt),
+    ).resolves.toMatchObject({ disposition: "inserted" });
+    await expect(
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, refreshedAttempt),
+    ).resolves.toMatchObject({ disposition: "duplicate" });
+    expect(
+      await scalar(
+        "SELECT COUNT(*) FROM attempts WHERE event_id = 'content-revised-reprepared-choice'",
+      ),
+    ).toBe(1);
+
+    const fabricatedChoice = "reading:never-presented";
+    expect(evidenceAfterRefresh).not.toContain(fabricatedChoice);
     await expect(
       ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         ...attempt,
         eventId: "content-revised-unpresented-choice",
-        deviceSeq: 2,
-        metadata: { ...attempt.metadata, selectedChoiceId: currentOnly },
+        deviceSeq: 3,
+        metadata: { ...attempt.metadata, selectedChoiceId: fabricatedChoice },
       }),
     ).rejects.toThrow("canonical presented choice set");
   });
@@ -1156,6 +1210,23 @@ async function cardFor(
      WHERE subject_type = 'lexeme_reading' AND retired_at = created_at`,
   ).run();
   return card.card;
+}
+
+async function pronunciationPresentationEvidence(cardId: string): Promise<string[]> {
+  const row = await env.DB.prepare(
+    "SELECT context_json FROM study_sessions WHERE id = ? AND mode = 'pronunciation'",
+  )
+    .bind("direct-card:爱:pinyin_to_hanzi")
+    .first<{ context_json: string }>();
+  if (!row) throw new Error("missing pronunciation session context");
+  const context = JSON.parse(row.context_json) as {
+    presentedChoiceIds?: Record<string, unknown>;
+  };
+  const evidence = context.presentedChoiceIds?.[cardId];
+  if (!Array.isArray(evidence) || !evidence.every((choiceId) => typeof choiceId === "string")) {
+    throw new Error("missing pronunciation presentation evidence");
+  }
+  return evidence;
 }
 
 function fixtureLexemes(): V1SourceLexeme[] {

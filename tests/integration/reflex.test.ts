@@ -15,6 +15,10 @@ import {
 import { pullSyncChanges } from "../../src/db/sync";
 import { buildV1ImportStatements, type V1SourceLexeme } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
+import {
+  CURRENT_PRACTICE_CONTRACT_VERSIONS,
+  LEGACY_PRACTICE_CONTRACT_VERSIONS,
+} from "../../src/domain/practice-contract";
 import { REFLEX_INTERACTION, presentReflexQuestion } from "../../src/domain/reflex";
 import type { AttemptInput, ReflexCard } from "../../src/domain/types";
 
@@ -480,6 +484,55 @@ describe("Reflex automaticity foundation", () => {
 
     await retireFixtureLexemes(lexemes);
   }, 20_000);
+
+  test("keeps an unversioned persisted Reflex context on the legacy contract", async () => {
+    const lexemes = [lexeme("旧", "jiù", "jiu4", ["old"])];
+    await applyStatements(
+      await buildV1ImportStatements({
+        lexemes,
+        enrichments: [],
+        vocabularyVersion: "unversioned-reflex-context-vocabulary",
+        v1Version: "unversioned-reflex-context-v1",
+      }),
+    );
+    await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: "unversioned-reflex-context-session",
+      deviceId: "unversioned-reflex-context-device",
+      maxItems: 1,
+    });
+
+    const stored = await env.DB.prepare(
+      "SELECT context_json FROM study_sessions WHERE id = ? AND mode = 'reflex'",
+    )
+      .bind("unversioned-reflex-context-session")
+      .first<{ context_json: string }>();
+    if (!stored) throw new Error("missing persisted Reflex context");
+    const context = JSON.parse(stored.context_json) as Record<string, unknown>;
+    delete context.practiceContractVersion;
+    await env.DB.prepare("UPDATE study_sessions SET context_json = ? WHERE id = ?")
+      .bind(JSON.stringify(context), "unversioned-reflex-context-session")
+      .run();
+
+    const currentVersions = CURRENT_PRACTICE_CONTRACT_VERSIONS as unknown as Record<
+      "reflex",
+      number
+    >;
+    const currentVersion = currentVersions.reflex;
+    currentVersions.reflex = currentVersion + 1;
+    try {
+      const existing = await createReflexSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+        sessionId: "unversioned-reflex-context-session",
+        deviceId: "unversioned-reflex-context-device",
+        maxItems: 1,
+      });
+      expect(existing.session.practiceContractVersion).toBe(
+        LEGACY_PRACTICE_CONTRACT_VERSIONS.reflex,
+      );
+    } finally {
+      currentVersions.reflex = currentVersion;
+    }
+    await retireFixtureLexemes(lexemes);
+  });
 });
 
 function reflexAttempt(

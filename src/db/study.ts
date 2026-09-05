@@ -7,6 +7,7 @@ import {
 import {
   currentPracticeContractVersion,
   isCurrentPracticeContract,
+  legacyPracticeContractVersion,
 } from "../domain/practice-contract";
 import type {
   OfflineStudyPack,
@@ -744,7 +745,7 @@ function parseSessionContext(json: string): SessionContext {
       Number.isSafeInteger((value as Record<string, unknown>).practiceContractVersion) &&
       ((value as Record<string, unknown>).practiceContractVersion as number) >= 1
         ? ((value as Record<string, unknown>).practiceContractVersion as number)
-        : currentPracticeContractVersion("study"),
+        : legacyPracticeContractVersion("study"),
   };
 }
 

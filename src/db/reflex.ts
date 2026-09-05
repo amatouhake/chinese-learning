@@ -14,6 +14,7 @@ import {
 import {
   currentPracticeContractVersion,
   isCurrentPracticeContract,
+  legacyPracticeContractVersion,
 } from "../domain/practice-contract";
 import type {
   LearnerId,
@@ -750,7 +751,7 @@ function parseContext(json: string): ReflexSessionContext {
     practiceContractVersion:
       Number.isSafeInteger(practiceContractVersion) && (practiceContractVersion as number) >= 1
         ? (practiceContractVersion as number)
-        : currentPracticeContractVersion("reflex"),
+        : legacyPracticeContractVersion("reflex"),
     cards: record.cards as ReflexCard[],
   };
 }
