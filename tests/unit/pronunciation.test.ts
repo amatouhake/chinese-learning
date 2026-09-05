@@ -14,6 +14,7 @@ import {
   type PronunciationImportInput,
 } from "../../src/db/pronunciation-import";
 import {
+  activitiesForFocus,
   classifyWordAudioMapping,
   deriveTonePair,
   normalizeNumericPinyin,
@@ -26,6 +27,18 @@ import {
 import { uniqueReadings } from "../../src/db/v1-import";
 
 describe("pronunciation normalization", () => {
+  test("keeps focused tone pairs and production out of the default mixed inventory", () => {
+    expect(activitiesForFocus("mixed")).toEqual([
+      "hanzi_to_pinyin",
+      "pinyin_to_hanzi",
+      "audio_to_hanzi",
+      "audio_to_meaning",
+      "tone_identification",
+    ]);
+    expect(activitiesForFocus("tones")).toContain("tone_pair_identification");
+    expect(activitiesForFocus("speaking")).toEqual(["pronunciation_production"]);
+  });
+
   test("normalizes tone 0 and tone 5 to the neutral tone without losing ü", () => {
     expect(normalizeNumericPinyin("ma0 ma5 lü4 lu:4 nv3")).toEqual([
       { syllable: "ma", tone: 5 },

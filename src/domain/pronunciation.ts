@@ -20,12 +20,23 @@ export const PRONUNCIATION_ACTIVITY_TYPES = [
 
 export type PronunciationActivityType = (typeof PRONUNCIATION_ACTIVITY_TYPES)[number];
 
+/** The low-friction default mix deliberately excludes the two focused drills. */
+export const PRONUNCIATION_MIXED_ACTIVITY_TYPES = [
+  "hanzi_to_pinyin",
+  "pinyin_to_hanzi",
+  "audio_to_hanzi",
+  "audio_to_meaning",
+  "tone_identification",
+] as const satisfies readonly PronunciationActivityType[];
+
 export const PRONUNCIATION_FOCUSES = ["mixed", "pinyin", "tones", "listening", "speaking"] as const;
 
 export type PronunciationFocus = (typeof PRONUNCIATION_FOCUSES)[number];
 
 export const PRONUNCIATION_AUDIO_SKIP_INTERACTION = "skip-uncached-audio";
 export const PRONUNCIATION_AUDIO_SKIP_REASON = "audio-not-cached";
+export const PRONUNCIATION_PRODUCTION_INTERACTION = "speak-compare";
+export const PRONUNCIATION_LEGACY_PRODUCTION_INTERACTION = "speak-compare-self-rate";
 
 export type WordAudioMappingStatus = "reliable" | "ambiguous" | "missing";
 
@@ -183,7 +194,7 @@ export function activitiesForFocus(focus: PronunciationFocus): PronunciationActi
     case "speaking":
       return ["pronunciation_production"];
     case "mixed":
-      return [...PRONUNCIATION_ACTIVITY_TYPES];
+      return [...PRONUNCIATION_MIXED_ACTIVITY_TYPES];
   }
 }
 

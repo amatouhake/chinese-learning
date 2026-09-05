@@ -732,8 +732,7 @@ kbd {
 
 .rating-grid,
 .choice-grid,
-.binary-grid,
-.production-ratings {
+.binary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem;
@@ -742,7 +741,6 @@ kbd {
 .rating,
 .choice-grid button,
 .binary-grid button,
-.production-ratings button,
 .secondary-button,
 .text-button {
   border: 1px solid var(--paper-muted);
@@ -767,7 +765,6 @@ kbd {
   .rating:hover,
   .choice-grid button:hover,
   .binary-grid button:hover,
-  .production-ratings button:hover,
   .secondary-button:hover,
   .text-button:hover {
     border-color: var(--red);
@@ -782,14 +779,12 @@ kbd {
   background: var(--paper-soft);
 }
 
-.rating strong,
-.production-ratings strong {
+.rating strong {
   font-size: 0.78rem;
   font-weight: 850;
 }
 
-.rating span,
-.production-ratings span {
+.rating span {
   color: var(--paper-muted-ink);
   font-size: 0.62rem;
 }
@@ -1951,15 +1946,21 @@ kbd {
   line-height: 1.25;
 }
 
-.choice-grid.pair-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.35rem;
+.tone-pair-stage {
+  display: grid;
+  gap: 0.45rem;
 }
 
-.choice-grid.pair-grid button {
-  min-height: 2.75rem;
-  padding: 0.25rem 0.1rem;
-  font-size: 0.62rem;
+.tone-pair-instruction {
+  margin: 0;
+  color: var(--paper-muted-ink);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.tone-pair-choices button {
+  min-height: 3.35rem;
 }
 
 .pronunciation-answer {
@@ -1990,23 +1991,14 @@ kbd {
   background: var(--correct-wash);
 }
 
-.binary-grid,
-.production-ratings {
+.binary-grid {
   margin-top: 0.1rem;
 }
 
-.binary-grid button,
-.production-ratings button {
+.binary-grid button {
   min-height: 3.35rem;
   font-size: 0.72rem;
   font-weight: 850;
-}
-
-.production-ratings button {
-  display: grid;
-  gap: 0.12rem;
-  padding: 0.6rem;
-  text-align: left;
 }
 
 .continue-button {
@@ -2233,6 +2225,18 @@ code {
   margin-top: 0.65rem;
 }
 
+.guided-completion {
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.7rem;
+}
+
+.guided-completion > p {
+  margin: 0;
+  color: var(--paper-muted-ink);
+  font-size: 0.7rem;
+}
+
 .staged-reveal small {
   color: rgb(255 247 239 / 72%);
 }
@@ -2244,7 +2248,7 @@ code {
 
 [data-reveal-stage],
 .staged-reveal,
-.reading-card .rating-area {
+.reading-card .staged-completion {
   scroll-margin-block: 0.75rem;
 }
 
@@ -2718,12 +2722,12 @@ code {
     text-align: center;
   }
 
-  .choice-grid:not(.pair-grid) {
+  .choice-grid:not(.tone-pair-choices) {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .production-ratings {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .choice-grid.tone-pair-choices {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .reference-content {

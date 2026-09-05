@@ -87,6 +87,9 @@
     if (item.evidence.averageSelfRating !== undefined) {
       bits.push(`平均評価 ${formatRating(item.evidence.averageSelfRating)}`);
     }
+    if (item.evidence.selfReportedRecallMisses !== undefined) {
+      bits.push(`自己申告の想起ミス ${item.evidence.selfReportedRecallMisses}件`);
+    }
     return bits.join(" · ");
   }
 </script>
@@ -207,8 +210,13 @@
                 <strong>
                   {#if activity.correctness}
                     正答率 {formatPercent(activity.correctness)}
+                  {:else if activity.selfReportedRecall}
+                    自己申告 {activity.selfReportedRecall.remembered} / {activity.selfReportedRecall
+                      .responses}
                   {:else if activity.selfRatings}
-                    自己評価 {formatRating(activity.selfRatings.average)}
+                    過去の自己評価 {formatRating(activity.selfRatings.average)}
+                  {:else if activity.responses > 0}
+                    練習完了 {activity.responses}
                   {:else}
                     スキップ {activity.skips}
                   {/if}
@@ -226,10 +234,12 @@
               <p>読解</p>
               <h4>{snapshot.reading.recentSentences}例文</h4>
             </div>
-            <strong>{formatRating(snapshot.reading.comprehension.average)}</strong>
+            <strong>{snapshot.reading.comprehension ? "過去評価あり" : "完了のみ"}</strong>
           </div>
           <p class="mode-detail">
-            理解度の記録 {snapshot.reading.recentResponses}件 · 正誤は判定しません
+            段階読みの完了 {snapshot.reading.recentResponses}件 · 正答率は記録しません
+            {#if snapshot.reading.comprehension}
+              · 旧式評価 {formatRating(snapshot.reading.comprehension.average)}{/if}
           </p>
         </article>
 
@@ -237,17 +247,19 @@
           <div class="mode-card-heading">
             <div>
               <p>文法</p>
-              <h4>定着 {snapshot.grammar.topicCounts.comfortable}</h4>
+              <h4>{formatPercent(snapshot.grammar.correctness)} 正答率</h4>
             </div>
-            <strong>学習中 {snapshot.grammar.topicCounts.learning}</strong>
+            <strong>{snapshot.grammar.recentResponses}回答</strong>
           </div>
-          <div class="dual-metric">
-            <span><strong>{formatPercent(snapshot.grammar.correctness)}</strong> 正答率</span>
-            <span><strong>{formatRating(snapshot.grammar.confidence.average)}</strong> 理解度</span>
+          <div class="compact-metrics">
+            <span><strong>{snapshot.grammar.topicCounts.comfortable}</strong> 定着</span>
+            <span><strong>{snapshot.grammar.topicCounts.learning}</strong> 学習中</span>
+            <span><strong>{snapshot.grammar.topicCounts.introduced}</strong> 導入済み</span>
           </div>
           <p class="mode-detail">
-            導入済み {snapshot.grammar.topicCounts.introduced} · 未導入
-            {snapshot.grammar.topicCounts.notIntroduced}
+            客観的な選択問題の記録 · 未導入 {snapshot.grammar.topicCounts.notIntroduced}
+            {#if snapshot.grammar.confidence}
+              · 旧式自信度 {formatRating(snapshot.grammar.confidence.average)}{/if}
           </p>
         </article>
 
@@ -291,7 +303,7 @@
         <article class="dashboard-card empty-dashboard-card">
           <h4>要確認の項目はまだありません</h4>
           <p>
-            「もう一度」「あやふや」、誤答、遅いクイズ回答、低い理解度や自己評価が、出題元とともに表示されます。
+            「もう一度」「あやふや」、誤答、自己申告で思い出せなかった項目、遅いクイズ回答、過去の低い評価が、出題元とともに表示されます。
           </p>
         </article>
       {:else}
@@ -321,7 +333,7 @@
     </section>
 
     <p class="snapshot-boundary-note">
-      集計は実際に練習した時刻を基準にしています。音声スキップは回答に数えず、読解は正誤を推定せず、文法は正答率と理解度を分け、単語クイズは復習予定の外で記録します。
+      集計は実際に練習した時刻を基準にしています。音声スキップは回答に数えず、読解は完了のみ、文法は客観的な正答率を中心に記録し、過去の評価は別に扱います。単語クイズは復習予定の外で記録します。
     </p>
   {/if}
 </section>

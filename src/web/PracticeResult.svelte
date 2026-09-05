@@ -107,9 +107,24 @@
         </div>
       {/if}
     </dl>
+    {#if summary.evidence.selfReportedRecall}
+      <section class="result-evidence" aria-label="自己申告の想起">
+        <h3>自己申告の想起</h3>
+        <dl class="result-metrics">
+          <div>
+            <dt>思い出せた</dt>
+            <dd>
+              {summary.evidence.selfReportedRecall.remembered} / {summary.evidence
+                .selfReportedRecall.responses}
+            </dd>
+          </div>
+        </dl>
+        <p class="result-note">漢字→ピンインの自己確認です。客観的な発音正答率ではありません。</p>
+      </section>
+    {/if}
     {#if summary.evidence.selfRatings}
-      <section class="result-evidence" aria-label="自己評価の内訳">
-        <h3>自己評価</h3>
+      <section class="result-evidence" aria-label="過去の発話自己評価">
+        <h3>過去の発話自己評価</h3>
         <dl class="result-metrics rating-metrics">
           <div>
             <dt>もう一度</dt>
@@ -128,39 +143,45 @@
             <dd>{summary.evidence.selfRatings.distribution[4]}</dd>
           </div>
         </dl>
+        <p class="result-note">
+          これは旧式の発話自己評価の履歴です。新しい発話練習は評価を求めません。
+        </p>
       </section>
     {/if}
     <p class="result-configuration">
       フォーカス: {pronunciationFocusLabel(summary.configuration.focus)}
     </p>
   {:else if summary.practice === "reading"}
-    <section class="result-evidence" aria-label="理解度の内訳">
-      <h3>理解度</h3>
-      <dl class="result-metrics rating-metrics">
-        <div>
-          <dt>読み直す</dt>
-          <dd>{summary.evidence.comprehension.distribution[1]}</dd>
-        </div>
-        <div>
-          <dt>手がかり</dt>
-          <dd>{summary.evidence.comprehension.distribution[2]}</dd>
-        </div>
-        <div>
-          <dt>だいたい</dt>
-          <dd>{summary.evidence.comprehension.distribution[3]}</dd>
-        </div>
-        <div>
-          <dt>理解した</dt>
-          <dd>{summary.evidence.comprehension.distribution[4]}</dd>
-        </div>
-      </dl>
-    </section>
+    {#if summary.evidence.comprehension}
+      <section class="result-evidence" aria-label="過去の理解度評価の内訳">
+        <h3>過去の理解度評価</h3>
+        <dl class="result-metrics rating-metrics">
+          <div>
+            <dt>読み直す</dt>
+            <dd>{summary.evidence.comprehension.distribution[1]}</dd>
+          </div>
+          <div>
+            <dt>手がかり</dt>
+            <dd>{summary.evidence.comprehension.distribution[2]}</dd>
+          </div>
+          <div>
+            <dt>だいたい</dt>
+            <dd>{summary.evidence.comprehension.distribution[3]}</dd>
+          </div>
+          <div>
+            <dt>理解した</dt>
+            <dd>{summary.evidence.comprehension.distribution[4]}</dd>
+          </div>
+        </dl>
+        <p class="result-note">これは旧式の読解評価の履歴です。</p>
+      </section>
+    {/if}
     {#if summary.evidence.grammarTopics.length > 0}
       <p class="result-configuration">
         文法: {summary.evidence.grammarTopics.map(({ title }) => title).join(" · ")}
       </p>
     {/if}
-    <p class="result-note">段階読みには客観正答がないため、正答率は表示しません。</p>
+    <p class="result-note">段階読みは完了のみを記録します。正答率や新しい評価はありません。</p>
   {:else}
     <dl class="result-metrics">
       <div>
@@ -168,32 +189,36 @@
         <dd>{summary.evidence.correctness.correct} / {summary.evidence.correctness.responses}</dd>
       </div>
     </dl>
-    <section class="result-evidence" aria-label="理解度の内訳">
-      <h3>理解度</h3>
-      <dl class="result-metrics rating-metrics">
-        <div>
-          <dt>忘れた</dt>
-          <dd>{summary.evidence.confidence.distribution[1]}</dd>
-        </div>
-        <div>
-          <dt>手がかり</dt>
-          <dd>{summary.evidence.confidence.distribution[2]}</dd>
-        </div>
-        <div>
-          <dt>だいたい</dt>
-          <dd>{summary.evidence.confidence.distribution[3]}</dd>
-        </div>
-        <div>
-          <dt>理解した</dt>
-          <dd>{summary.evidence.confidence.distribution[4]}</dd>
-        </div>
-      </dl>
-    </section>
+    {#if summary.evidence.confidence}
+      <section class="result-evidence" aria-label="過去の文法自信度の内訳">
+        <h3>過去の文法自信度</h3>
+        <dl class="result-metrics rating-metrics">
+          <div>
+            <dt>忘れた</dt>
+            <dd>{summary.evidence.confidence.distribution[1]}</dd>
+          </div>
+          <div>
+            <dt>手がかり</dt>
+            <dd>{summary.evidence.confidence.distribution[2]}</dd>
+          </div>
+          <div>
+            <dt>だいたい</dt>
+            <dd>{summary.evidence.confidence.distribution[3]}</dd>
+          </div>
+          <div>
+            <dt>理解した</dt>
+            <dd>{summary.evidence.confidence.distribution[4]}</dd>
+          </div>
+        </dl>
+        <p class="result-note">これは旧式の文法自信度の履歴です。</p>
+      </section>
+    {/if}
     {#if summary.evidence.grammarTopics.length > 0}
       <p class="result-configuration">
         {summary.evidence.grammarTopics.map(({ title }) => title).join(" · ")}
       </p>
     {/if}
+    <p class="result-note">新しい文法練習は、選択問題の客観的な正誤だけを記録します。</p>
   {/if}
 
   {#if summary.attentionItems.length > 0}

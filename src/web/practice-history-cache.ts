@@ -123,6 +123,9 @@ function isSummary(value: unknown): value is PracticeSessionSummary {
         isInteger(configuration.requestedItems) &&
         isRecord(evidence.activities) &&
         (evidence.correctness === null || isCorrectnessEvidence(evidence.correctness)) &&
+        (evidence.selfReportedRecall === undefined ||
+          evidence.selfReportedRecall === null ||
+          isRecallEvidence(evidence.selfReportedRecall)) &&
         (evidence.selfRatings === null || isRatingEvidence(evidence.selfRatings)) &&
         isInteger(evidence.skipped)
       );
@@ -130,7 +133,9 @@ function isSummary(value: unknown): value is PracticeSessionSummary {
       return (
         value.mode === "reading" &&
         isInteger(configuration.requestedItems) &&
-        isRatingEvidence(evidence.comprehension) &&
+        (evidence.comprehension === undefined ||
+          evidence.comprehension === null ||
+          isRatingEvidence(evidence.comprehension)) &&
         isTopicList(evidence.grammarTopics)
       );
     case "grammar":
@@ -139,7 +144,9 @@ function isSummary(value: unknown): value is PracticeSessionSummary {
         isInteger(configuration.requestedItems) &&
         (configuration.focusTopicId === null || isText(configuration.focusTopicId)) &&
         isCorrectnessEvidence(evidence.correctness) &&
-        isRatingEvidence(evidence.confidence) &&
+        (evidence.confidence === undefined ||
+          evidence.confidence === null ||
+          isRatingEvidence(evidence.confidence)) &&
         isTopicList(evidence.grammarTopics)
       );
     default:
@@ -196,6 +203,15 @@ function isCorrectnessEvidence(value: unknown): boolean {
     isInteger(value.responses) &&
     isInteger(value.correct) &&
     (value.rate === null || typeof value.rate === "number")
+  );
+}
+
+function isRecallEvidence(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isInteger(value.responses) &&
+    isInteger(value.remembered) &&
+    value.remembered <= value.responses
   );
 }
 

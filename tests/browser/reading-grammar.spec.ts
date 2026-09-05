@@ -43,12 +43,13 @@ test.describe("reading and grammar dogfood", () => {
     await page.getByRole("button", { name: /文法を表示/ }).click();
     await expect(page.getByLabel("文法の説明")).toBeVisible();
     await expect(page.locator(".grammar-reveal code")).toBeVisible();
-    await expect.poll(() => isInViewport(page, ".reading-card .rating-area")).toBe(true);
+    await expect.poll(() => isInViewport(page, ".reading-card .staged-completion")).toBe(true);
+    await expect(page.locator(".reading-card .rating-area")).toHaveCount(0);
     await expect.poll(() => captured.reading).not.toBeNull();
     expect(
       captured.reading?.vocabulary.every((hint) => hint.readingId.startsWith("reading:")),
     ).toBe(true);
-    await page.getByRole("button", { name: /だいたい/ }).click();
+    await page.getByRole("button", { name: "この文を完了" }).click();
     await expect(page.locator(".reading-prompt h2")).toBeVisible();
 
     await page.getByRole("button", { name: "文法コース", exact: true }).click();
@@ -68,7 +69,8 @@ test.describe("reading and grammar dogfood", () => {
     await context.setOffline(true);
     await page.getByRole("button", { name: grammarAnswer.label, exact: true }).click();
     await expect(page.getByText("正解", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: /手がかりあり/ }).click();
+    await expect(page.locator(".grammar-card .rating-area")).toHaveCount(0);
+    await page.getByRole("button", { name: "この問題を完了" }).click();
     await expect(page.getByRole("button", { name: "このパターンを練習する" })).toBeVisible();
 
     await page.getByRole("button", { name: "例文を読む" }).click();
@@ -76,7 +78,7 @@ test.describe("reading and grammar dogfood", () => {
     for (const label of ["単語を表示", "ピンインを表示", "意味を表示", "文法を表示"]) {
       await page.getByRole("button", { name: new RegExp(label) }).click();
     }
-    await page.getByRole("button", { name: /手がかりあり/ }).click();
+    await page.getByRole("button", { name: "この文を完了" }).click();
     await expect.poll(() => outboxCount(page)).toBe(2);
 
     await page.reload();
@@ -85,6 +87,7 @@ test.describe("reading and grammar dogfood", () => {
     const queued = await readOutbox(page);
     expect(queued.map(({ mode }) => mode).sort()).toEqual(["grammar", "reading"]);
     expect(queued.every((attempt) => attempt.fsrsReview === undefined)).toBe(true);
+    expect(queued.every((attempt) => attempt.selfRating === undefined)).toBe(true);
     expect(queued.find(({ mode }) => mode === "grammar")?.metadata?.practiceVersionId).toBe(
       captured.grammar?.practiceVersionId,
     );
@@ -180,7 +183,7 @@ test.describe("reading and grammar dogfood", () => {
       for (const label of ["単語を表示", "ピンインを表示", "意味を表示", "文法を表示"]) {
         await page.getByRole("button", { name: new RegExp(label) }).click();
       }
-      await page.getByRole("button", { name: /だいたい/ }).click();
+      await page.getByRole("button", { name: "この文を完了" }).click();
       if (index < 4) await expect(page.locator(".reading-prompt h2")).toBeVisible();
     }
 

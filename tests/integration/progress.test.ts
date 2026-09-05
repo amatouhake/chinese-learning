@@ -104,6 +104,32 @@ describe("canonical progress snapshot", () => {
       metadata: { interaction: "choice" },
     });
     await insertCanonicalAttempt({
+      eventId: "pronunciation-recall-remembered",
+      deviceSeq: 6,
+      occurredAt: NOW - 4 * 60 * 60 * 1_000,
+      receivedAt: NOW - 3 * 60 * 60 * 1_000,
+      cardId: fixture.recallCardId,
+      studySessionId: "progress-pronunciation-session",
+      mode: "pronunciation",
+      activityType: "hanzi_to_pinyin",
+      correct: true,
+      responseMs: 900,
+      metadata: { interaction: "reveal-and-self-check" },
+    });
+    await insertCanonicalAttempt({
+      eventId: "pronunciation-recall-missed",
+      deviceSeq: 7,
+      occurredAt: NOW - 3 * 60 * 60 * 1_000,
+      receivedAt: NOW - 2 * 60 * 60 * 1_000,
+      cardId: fixture.recallCardId,
+      studySessionId: "progress-pronunciation-session",
+      mode: "pronunciation",
+      activityType: "hanzi_to_pinyin",
+      correct: false,
+      responseMs: 1_000,
+      metadata: { interaction: "reveal-and-self-check" },
+    });
+    await insertCanonicalAttempt({
       eventId: "pronunciation-objective-error",
       deviceSeq: 2,
       occurredAt: Date.parse("2026-08-30T15:30:00Z"),
@@ -143,7 +169,7 @@ describe("canonical progress snapshot", () => {
       metadata: { interaction: "skip-uncached-audio" },
     });
 
-    for (const [index, selfRating] of [1, 2].entries()) {
+    for (const index of [0, 1]) {
       await insertCanonicalAttempt({
         eventId: `reading-low-${index + 1}`,
         deviceSeq: index + 1,
@@ -153,15 +179,11 @@ describe("canonical progress snapshot", () => {
         studySessionId: "progress-reading-session",
         mode: "reading",
         activityType: "sentence_reading",
-        selfRating,
         responseMs: 7_000,
         metadata: { interaction: "staged-sentence-reading" },
       });
     }
-    for (const [index, values] of [
-      { correct: false, selfRating: 2 },
-      { correct: true, selfRating: 3 },
-    ].entries()) {
+    for (const [index, correct] of [false, true].entries()) {
       await insertCanonicalAttempt({
         eventId: `grammar-practice-${index + 1}`,
         deviceSeq: index + 1,
@@ -171,8 +193,7 @@ describe("canonical progress snapshot", () => {
         studySessionId: "progress-grammar-session",
         mode: "grammar",
         activityType: "sentence_reading",
-        correct: values.correct,
-        selfRating: values.selfRating,
+        correct,
         responseMs: 4_000,
         metadata: { interaction: "grammar-choice" },
       });
@@ -212,6 +233,16 @@ describe("canonical progress snapshot", () => {
     expect(objective).toMatchObject({
       responses: 2,
       correctness: { responses: 2, correct: 1, rate: 0.5 },
+      selfReportedRecall: null,
+      selfRatings: null,
+    });
+    const recall = snapshot.pronunciation.byActivity.find(
+      ({ activityType }) => activityType === "hanzi_to_pinyin",
+    );
+    expect(recall).toMatchObject({
+      responses: 2,
+      correctness: null,
+      selfReportedRecall: { responses: 2, remembered: 1 },
       selfRatings: null,
     });
     expect(production).toMatchObject({
@@ -226,20 +257,18 @@ describe("canonical progress snapshot", () => {
       correctness: null,
       averageResponseMs: null,
     });
-    expect(snapshot.pronunciation).toMatchObject({ recentResponses: 4, recentSkips: 1 });
+    expect(snapshot.pronunciation).toMatchObject({ recentResponses: 6, recentSkips: 1 });
 
     expect(snapshot.reading).toMatchObject({
       recentResponses: 2,
       recentSentences: 1,
-      comprehension: { responses: 2, average: 1.5, low: 2 },
+      comprehension: null,
     });
-    expect(snapshot.reading.difficultSentences[0]?.reasons.join(" ")).toContain(
-      "low comprehension",
-    );
+    expect(snapshot.reading.difficultSentences).toEqual([]);
     expect(snapshot.grammar).toMatchObject({
       recentResponses: 2,
       correctness: { responses: 2, correct: 1, rate: 0.5 },
-      confidence: { responses: 2, average: 2.5, low: 1 },
+      confidence: null,
       topicCounts: { learning: 1 },
     });
     expect(snapshot.reflex).toMatchObject({
@@ -260,7 +289,7 @@ describe("canonical progress snapshot", () => {
       ],
     });
     expect(new Set(snapshot.troublesomeItems.map(({ mode }) => mode))).toEqual(
-      new Set(["study", "pronunciation", "reading", "grammar", "reflex"]),
+      new Set(["study", "pronunciation", "grammar", "reflex"]),
     );
     expect(snapshot.overall.last7Days.activeDays).toBeGreaterThanOrEqual(2);
     expect(snapshot.overall.last30Days.sessions).toBe(4);
@@ -556,6 +585,7 @@ const DAY = 24 * 60 * 60 * 1_000;
 
 async function prepareMixedModeFixture(): Promise<{
   objectiveCardId: string;
+  recallCardId: string;
   productionCardId: string;
   audioCardId: string;
   readingCardId: string;
@@ -595,6 +625,12 @@ async function prepareMixedModeFixture(): Promise<{
       `INSERT INTO cards
           (id, subject_type, lexeme_reading_id, activity_type, scheduler_eligible,
            content_revision, created_at)
+         VALUES (?, 'lexeme_reading', ?, 'hanzi_to_pinyin', 0, ?, ?)`,
+    ).bind("progress-pronunciation-recall", reading.id, revision, NOW - DAY),
+    env.DB.prepare(
+      `INSERT INTO cards
+          (id, subject_type, lexeme_reading_id, activity_type, scheduler_eligible,
+           content_revision, created_at)
          VALUES (?, 'lexeme_reading', ?, 'pronunciation_production', 0, ?, ?)`,
     ).bind("progress-pronunciation-production", reading.id, revision, NOW - DAY),
     env.DB.prepare(
@@ -626,6 +662,7 @@ async function prepareMixedModeFixture(): Promise<{
   ]);
   return {
     objectiveCardId: "progress-pronunciation-objective",
+    recallCardId: "progress-pronunciation-recall",
     productionCardId: "progress-pronunciation-production",
     audioCardId: "progress-pronunciation-audio",
     readingCardId: readingCard.id,

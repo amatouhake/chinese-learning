@@ -5,13 +5,13 @@ setup/result copy. `src/domain/practice-catalog.ts` is the executable copy autho
 remain deliberately sparse; purpose and evidence descriptions belong on setup or compact help
 surfaces.
 
-| Practice     | Internal identity | Purpose and interaction                                               | Recorded evidence                                                   | Intentionally not measured                   | FSRS | Use it when                                           |
-| ------------ | ----------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------- | ---- | ----------------------------------------------------- |
-| 単語・復習   | `study`           | Free recall, then reveal and rate the recall                          | immutable attempt, due/new source, direction, FSRS rating           | multiple-choice accuracy or automaticity     | Yes  | retaining vocabulary over time                        |
-| 単語・クイズ | `reflex`          | Objective 4- or 9-choice recognition/retrieval                        | activity, choice count, correctness, valid uninterrupted latency    | free recall or long-term retention           | No   | making introduced words faster and easier to identify |
-| 発音         | `pronunciation`   | Activity-specific listening, reading, tone, or production practice    | focus, activity, objective correctness or self-rating as applicable | one synthetic pronunciation score            | No   | connecting exact readings, sound, and production      |
-| 読解         | `reading`         | Staged sentence reading with learner comprehension rating             | completed sentence, self-rating, grammar topics encountered         | fabricated objective accuracy                | No   | understanding vocabulary and grammar in context       |
-| 読解・文法   | `grammar`         | Topic explanation, examples, objective choice, then confidence rating | topic, correctness, self-rating                                     | free composition or a combined reading score | No   | checking a grammar pattern and its discrimination     |
+| Practice     | Internal identity | Purpose and interaction                                                                                 | Recorded evidence                                                                  | Intentionally not measured                                          | FSRS | Use it when                                           |
+| ------------ | ----------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---- | ----------------------------------------------------- |
+| 単語・復習   | `study`           | Free recall, then reveal and rate the recall                                                            | immutable attempt, due/new source, direction, FSRS rating                          | multiple-choice accuracy or automaticity                            | Yes  | retaining vocabulary over time                        |
+| 単語・クイズ | `reflex`          | Objective 4- or 9-choice recognition/retrieval                                                          | activity, choice count, correctness, valid uninterrupted latency                   | free recall or long-term retention                                  | No   | making introduced words faster and easier to identify |
+| 発音         | `pronunciation`   | Mixed low-friction listening, reading, and tone practice; focused two-stage tone pairs or speak-compare | focus, activity, objective correctness, self-reported recall, completed practice   | one synthetic pronunciation score or automatic speech grade         | No   | connecting exact readings, sound, and production      |
+| 読解         | `reading`         | Staged sentence reading, then completion                                                                | completed sentence, grammar topics encountered; old self-ratings remain historical | fabricated objective accuracy or replacement rating                 | No   | understanding vocabulary and grammar in context       |
+| 読解・文法   | `grammar`         | Topic explanation, examples, objective choice, feedback, then completion                                | topic, objective correctness; old confidence remains historical                    | free composition, confidence requirement, or combined reading score | No   | checking a grammar pattern and its discrimination     |
 
 ## Review and Quiz are different evidence
 
@@ -58,3 +58,18 @@ Session History answers “what did I practice, with which settings, and how did
 Progress remains the canonical accumulated learner-state projection from `getProgressSnapshot()`.
 History is bounded and session-shaped; Progress is longitudinal and projection-shaped. Future
 Notion/MCP projections continue to use Progress rather than transient UI or cached result state.
+
+## Practice semantics repair
+
+The default pronunciation mix contains `hanzi_to_pinyin`, `pinyin_to_hanzi`, the two audio
+activities, and `tone_identification`. `tone_pair_identification` remains focused practice and
+asks for two bounded Tone 1–5 choices in sequence; its persisted answer remains the canonical pair
+such as `3-3`, not a 25-button matrix. `pronunciation_production` remains focused practice with a
+Hanzi prompt, speak-compare reveal, and exact-reading audio when available. New production attempts
+are ungraded; historical production self-ratings remain readable.
+
+`hanzi_to_pinyin` records self-reported recall separately from objectively graded pronunciation
+activities. Reading records staged completion without a comprehension rating. Grammar records the
+objective choice result and feedback without a confidence question; the nullable grammar topic
+confidence projection and old confidence evidence remain for historical compatibility. No mode
+creates a synthetic cross-activity practice score.

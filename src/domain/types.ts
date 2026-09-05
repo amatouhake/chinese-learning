@@ -227,6 +227,12 @@ export interface PracticeCorrectnessEvidence {
   rate: number | null;
 }
 
+/** Binary recall reported by the learner, not objectively graded correctness. */
+export interface PracticeRecallEvidence {
+  responses: number;
+  remembered: number;
+}
+
 export interface PracticeSessionTrend {
   label: string;
   unit: "percent";
@@ -292,6 +298,7 @@ export interface PronunciationSessionSummary extends PracticeSessionSummaryBase 
   evidence: {
     activities: Partial<Record<PronunciationActivityType, number>>;
     correctness: PracticeCorrectnessEvidence | null;
+    selfReportedRecall: PracticeRecallEvidence | null;
     selfRatings: PracticeRatingEvidence | null;
     skipped: number;
   };
@@ -302,7 +309,7 @@ export interface ReadingSessionSummary extends PracticeSessionSummaryBase {
   practice: "reading";
   configuration: { requestedItems: number };
   evidence: {
-    comprehension: PracticeRatingEvidence;
+    comprehension: PracticeRatingEvidence | null;
     grammarTopics: Array<{ id: string; title: string }>;
   };
 }
@@ -313,7 +320,7 @@ export interface GrammarSessionSummary extends PracticeSessionSummaryBase {
   configuration: { requestedItems: number; focusTopicId: string | null };
   evidence: {
     correctness: PracticeCorrectnessEvidence;
-    confidence: PracticeRatingEvidence;
+    confidence: PracticeRatingEvidence | null;
     grammarTopics: Array<{ id: string; title: string }>;
   };
 }
@@ -532,6 +539,12 @@ export interface ProgressSelfRatings {
   distribution: Record<FsrsRating, number>;
 }
 
+/** Binary recall reported by the learner, kept separate from objective accuracy. */
+export interface ProgressSelfReportedRecall {
+  responses: number;
+  remembered: number;
+}
+
 export interface ProgressTroubleItem {
   id: string;
   cardId: string;
@@ -545,6 +558,7 @@ export interface ProgressTroubleItem {
   reasons: string[];
   evidence: {
     errors?: number;
+    selfReportedRecallMisses?: number;
     slowResponses?: number;
     averageResponseMs?: number | null;
     selfRatings?: number;
@@ -561,6 +575,7 @@ export interface PronunciationProgressActivity {
   skips: number;
   distinctItems: number;
   correctness: ProgressCorrectness | null;
+  selfReportedRecall: ProgressSelfReportedRecall | null;
   selfRatings: ProgressSelfRatings | null;
   averageResponseMs: number | null;
   lastPracticedAt: number | null;
@@ -600,7 +615,7 @@ export interface ProgressSnapshot {
   reading: {
     recentResponses: number;
     recentSentences: number;
-    comprehension: ProgressSelfRatings;
+    comprehension: ProgressSelfRatings | null;
     lastPracticedAt: number | null;
     difficultSentences: ProgressTroubleItem[];
   };
@@ -621,7 +636,7 @@ export interface ProgressSnapshot {
     }>;
     recentResponses: number;
     correctness: ProgressCorrectness;
-    confidence: ProgressSelfRatings;
+    confidence: ProgressSelfRatings | null;
     lastPracticedAt: number | null;
     troublesomeTopics: ProgressTroubleItem[];
   };

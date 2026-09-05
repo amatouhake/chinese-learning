@@ -18,6 +18,8 @@ import { getPreparedReflexItem } from "./reflex";
 import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
+  PRONUNCIATION_LEGACY_PRODUCTION_INTERACTION,
+  PRONUNCIATION_PRODUCTION_INTERACTION,
   deriveTonePair,
   isPronunciationActivity,
   normalizeNumericPinyin,
@@ -307,9 +309,6 @@ async function insertGrammarAttempt(
   receivedAt: number,
   options: IngestOptions,
 ): Promise<void> {
-  if (input.selfRating === undefined) {
-    throw new InvalidInputError("grammar practice requires an explicit confidence rating");
-  }
   const attemptChangeId = `attempt:${input.eventId}`;
   const stateChangeId = `grammar-topic-state:${input.eventId}`;
   const orderKey = semanticEventOrderKey({
@@ -318,8 +317,15 @@ async function insertGrammarAttempt(
     deviceSeq: input.deviceSeq,
     occurredAt,
   });
-  const status =
-    input.selfRating === 1 ? "introduced" : input.selfRating === 4 ? "comfortable" : "learning";
+  const selfConfidence = input.selfRating === undefined ? null : input.selfRating / 4;
+  const hasHistoricalConfidence = input.selfRating !== undefined;
+  const status = hasHistoricalConfidence
+    ? input.selfRating === 1
+      ? "introduced"
+      : input.selfRating === 4
+        ? "comfortable"
+        : "learning"
+    : "introduced";
   const metadata = canonicalJson({ lastPracticeOrderKey: orderKey });
   const statements = [
     db
@@ -348,11 +354,15 @@ async function insertGrammarAttempt(
            introduced_at = MIN(grammar_topic_state.introduced_at, excluded.introduced_at),
            last_studied_at = MAX(grammar_topic_state.last_studied_at, excluded.last_studied_at),
            status = CASE
+             WHEN excluded.self_confidence IS NULL
+             THEN COALESCE(grammar_topic_state.status, excluded.status)
              WHEN json_extract(excluded.metadata_json, '$.lastPracticeOrderKey') >=
                COALESCE(json_extract(grammar_topic_state.metadata_json, '$.lastPracticeOrderKey'), '')
              THEN excluded.status ELSE grammar_topic_state.status
            END,
            self_confidence = CASE
+             WHEN excluded.self_confidence IS NULL
+             THEN grammar_topic_state.self_confidence
              WHEN json_extract(excluded.metadata_json, '$.lastPracticeOrderKey') >=
                COALESCE(json_extract(grammar_topic_state.metadata_json, '$.lastPracticeOrderKey'), '')
              THEN excluded.self_confidence ELSE grammar_topic_state.self_confidence
@@ -371,7 +381,7 @@ async function insertGrammarAttempt(
         status,
         occurredAt,
         occurredAt,
-        input.selfRating / 4,
+        selfConfidence,
         stateChangeId,
         metadata,
       ),
@@ -781,12 +791,26 @@ async function validatePronunciationAttempt(
   }
 
   if (input.activityType === "pronunciation_production") {
-    if (input.selfRating === undefined) {
-      throw new InvalidInputError("pronunciation production requires a self-rating");
-    }
     if (input.correct !== undefined || input.score !== undefined) {
       throw new InvalidInputError(
-        "pronunciation production keeps self-rating separate from correctness and score",
+        "pronunciation production is ungraded and keeps correctness and score unset",
+      );
+    }
+    if (
+      input.selfRating !== undefined &&
+      input.metadata?.interaction !== PRONUNCIATION_LEGACY_PRODUCTION_INTERACTION &&
+      input.metadata?.interaction !== undefined
+    ) {
+      throw new InvalidInputError(
+        "new pronunciation production uses ungraded speak-compare evidence",
+      );
+    }
+    if (
+      input.selfRating === undefined &&
+      input.metadata?.interaction !== PRONUNCIATION_PRODUCTION_INTERACTION
+    ) {
+      throw new InvalidInputError(
+        "ungraded pronunciation production requires speak-compare interaction",
       );
     }
     return;
@@ -805,7 +829,20 @@ async function validatePronunciationAttempt(
   if (card.lexeme_reading_id === null) {
     throw new InvalidInputError("pronunciation cards must reference an exact reading");
   }
-  const selectedChoiceId = input.metadata?.selectedChoiceId;
+  let selectedChoiceId = input.metadata?.selectedChoiceId;
+  if (input.activityType === "tone_pair_identification") {
+    const selectedTonePair = input.metadata?.selectedTonePair;
+    if (typeof selectedTonePair === "string") {
+      if (!/^[1-5]-[1-5]$/u.test(selectedTonePair)) {
+        throw new InvalidInputError("tone-pair attempts require two tones from 1 to 5");
+      }
+      const canonicalSelectedChoiceId = `tone-pair:${selectedTonePair}`;
+      if (selectedChoiceId !== undefined && selectedChoiceId !== canonicalSelectedChoiceId) {
+        throw new InvalidInputError("tone-pair choices disagree with their canonical pair");
+      }
+      selectedChoiceId = canonicalSelectedChoiceId;
+    }
+  }
   if (typeof selectedChoiceId !== "string" || selectedChoiceId.length === 0) {
     throw new InvalidInputError("objective pronunciation attempts require a selected choice");
   }
@@ -959,9 +996,6 @@ async function validateReadingGrammarAttempt(
   ) {
     throw new InvalidInputError("reading and grammar practice must not mutate FSRS state");
   }
-  if (input.selfRating === undefined) {
-    throw new InvalidInputError("reading and grammar practice requires a self-rating");
-  }
   if (input.score !== undefined) {
     throw new InvalidInputError("reading and grammar practice keeps score unset");
   }
@@ -971,7 +1005,7 @@ async function validateReadingGrammarAttempt(
       throw new InvalidInputError("reading mode requires a sentence card");
     }
     if (input.correct !== undefined) {
-      throw new InvalidInputError("sentence reading keeps self-rating separate from correctness");
+      throw new InvalidInputError("sentence reading keeps correctness unset");
     }
     if (
       input.metadata?.interaction !== "staged-sentence-reading" ||

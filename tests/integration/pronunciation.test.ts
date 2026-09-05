@@ -253,7 +253,35 @@ describe("pronunciation foundation", () => {
       answerChoiceId: "tone-pair:3-3",
       reading: { tonePair: [3, 3], untonedPinyin: "ni hao" },
     });
+    expect(pairCard?.choices).toHaveLength(5);
+    expect(pairCard?.choices.map(({ id }) => id)).toEqual([
+      "tone:1",
+      "tone:2",
+      "tone:3",
+      "tone:4",
+      "tone:5",
+    ]);
     if (!neutralCard) throw new Error("missing neutral-tone card");
+    if (!pairCard) throw new Error("missing tone-pair card");
+    await expect(
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
+        eventId: "tone-pair-two-stage",
+        deviceId: "direct-card:你好:tone_pair_identification",
+        deviceSeq: 1,
+        occurredAt: "2026-08-30T02:59:00Z",
+        cardId: pairCard.cardId,
+        studySessionId: "direct-card:你好:tone_pair_identification",
+        mode: "pronunciation",
+        activityType: "tone_pair_identification",
+        correct: true,
+        metadata: {
+          interaction: "choice",
+          selectedChoiceId: "tone-pair:3-3",
+          selectedTonePair: "3-3",
+          readingId: pairCard.readingId,
+        },
+      }),
+    ).resolves.toMatchObject({ reviewCreated: false, cardState: null });
     await expect(
       ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         eventId: "false-objective-correctness",
@@ -493,7 +521,7 @@ describe("pronunciation foundation", () => {
     }
   });
 
-  test("persists perception correctness and production self-rating without FSRS mutation", async () => {
+  test("persists objective perception and ungraded production without FSRS mutation", async () => {
     await applyPronunciationFixture();
     const vocabularyStateBefore = await env.DB.prepare(
       `SELECT card_id, version, due_at, reps FROM card_state ORDER BY card_id LIMIT 1`,
@@ -523,16 +551,15 @@ describe("pronunciation foundation", () => {
       studySessionId: "attempt-session",
       mode: "pronunciation",
       activityType: "pronunciation_production",
-      selfRating: 3,
       responseMs: 900,
-      metadata: { interaction: "speak-compare-self-rate", readingId: production.card.readingId },
+      metadata: { interaction: "speak-compare", readingId: production.card.readingId },
     });
     expect(saved).toMatchObject({ reviewCreated: false, cardState: null });
 
     const persisted = await env.DB.prepare(
       `SELECT correct, score, self_rating FROM attempts WHERE event_id = 'production-event'`,
     ).first<{ correct: number | null; score: number | null; self_rating: number | null }>();
-    expect(persisted).toEqual({ correct: null, score: null, self_rating: 3 });
+    expect(persisted).toEqual({ correct: null, score: null, self_rating: null });
     expect(
       await scalar("SELECT COUNT(*) FROM fsrs_reviews WHERE attempt_id = 'production-event'"),
     ).toBe(0);
@@ -544,24 +571,48 @@ describe("pronunciation foundation", () => {
 
     await expect(
       ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
-        eventId: "invalid-production-event",
+        eventId: "historical-production-event",
         deviceId: "attempt-device",
         deviceSeq: 2,
+        occurredAt: "2026-08-30T04:00:30Z",
+        cardId: production.card.cardId,
+        studySessionId: "attempt-session",
+        mode: "pronunciation",
+        activityType: "pronunciation_production",
+        selfRating: 3,
+        responseMs: 900,
+        metadata: {
+          interaction: "speak-compare-self-rate",
+          readingId: production.card.readingId,
+        },
+      }),
+    ).resolves.toMatchObject({ reviewCreated: false, cardState: null });
+    await expect(
+      env.DB.prepare(
+        `SELECT correct, score, self_rating FROM attempts WHERE event_id = 'historical-production-event'`,
+      ).first(),
+    ).resolves.toEqual({ correct: null, score: null, self_rating: 3 });
+
+    await expect(
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
+        eventId: "invalid-production-event",
+        deviceId: "attempt-device",
+        deviceSeq: 3,
         occurredAt: "2026-08-30T04:01:00Z",
         cardId: production.card.cardId,
         studySessionId: "attempt-session",
         mode: "pronunciation",
         activityType: "pronunciation_production",
         correct: true,
-        selfRating: 3,
+        metadata: { interaction: "speak-compare", readingId: production.card.readingId },
       }),
-    ).rejects.toThrow("keeps self-rating separate");
+    ).rejects.toThrow("ungraded");
 
     await expect(
       ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
         eventId: "invalid-production-mode",
         deviceId: "attempt-device",
-        deviceSeq: 2,
+        deviceSeq: 4,
         occurredAt: "2026-08-30T04:01:00Z",
         cardId: production.card.cardId,
         mode: "reflex",

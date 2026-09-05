@@ -409,13 +409,15 @@ async function buildChoices(
   if (row.activity_type === "tone_pair_identification") {
     const pair = deriveTonePair(syllables);
     if (pair === null) throw new Error(`tone-pair card has no pair: ${row.card_id}`);
-    const choices: PronunciationChoice[] = [];
-    for (const first of [1, 2, 3, 4, 5] as Tone[]) {
-      for (const second of [1, 2, 3, 4, 5] as Tone[]) {
-        choices.push({ id: `tone-pair:${first}-${second}`, label: `${first}–${second}` });
-      }
-    }
-    return { choices, answerChoiceId: `tone-pair:${pair[0]}-${pair[1]}` };
+    return {
+      // The learner picks each syllable's tone in its own bounded stage. Keep
+      // the canonical pair only as the objective answer identity.
+      choices: TONES.map((tone) => ({
+        id: `tone:${tone}`,
+        label: tone === 5 ? "Neutral" : `Tone ${tone}`,
+      })),
+      answerChoiceId: `tone-pair:${pair[0]}-${pair[1]}`,
+    };
   }
   if (row.activity_type === "hanzi_to_pinyin" || row.activity_type === "pronunciation_production") {
     return { choices: [], answerChoiceId: null };
