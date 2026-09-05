@@ -5,6 +5,7 @@
   import type {
     GrammarCard,
     GrammarSessionSummary,
+    GrammarTopicStateView,
     GuidedSessionView,
     ReadingCard,
     ReadingSessionSummary,
@@ -406,6 +407,19 @@
     else grammarPhase = showLoading ? "loading" : "advancing";
   }
 
+  function grammarStateLabel(state: GrammarTopicStateView | null): string {
+    if (!state || state.status === null) return "新しい項目";
+    if (state.selfConfidence !== null) return "過去評価あり";
+    switch (state.status) {
+      case "introduced":
+        return "導入済み";
+      case "learning":
+        return "学習中";
+      case "comfortable":
+        return "定着";
+    }
+  }
+
   function missingCacheError(kind: SurfaceMode): Error {
     return new Error(
       isOffline
@@ -622,7 +636,7 @@
   <section class="study-card grammar-card" aria-live="polite">
     <div class="card-meta">
       <span class="queue-badge grammar-badge">文法 {grammarCard.topic.sequence}</span>
-      <span>{grammarCard.topic.state?.status ?? "新しい項目"}</span>
+      <span>{grammarStateLabel(grammarCard.topic.state)}</span>
     </div>
     <div class="grammar-heading">
       <h2>{grammarCard.topic.title}</h2>

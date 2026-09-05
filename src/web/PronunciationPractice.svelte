@@ -617,11 +617,21 @@
         <p class="tone-pair-instruction">
           {tonePairStage === 0 ? "1音節目の声調を選ぶ" : "2音節目の声調を選ぶ"}
         </p>
+        {#if tonePairStage === 1 && tonePairFirst !== null}<p
+            class="tone-pair-selected"
+            aria-live="polite"
+          >
+            1音節目: {toneLabel(tonePairFirst)}
+          </p>{/if}
         <div class="choice-grid tone-pair-choices">
-          {#each TONES as tone}<button
-              aria-pressed={tonePairStage === 1 && tonePairFirst === tone}
-              onclick={() => void selectTonePairTone(tone)}>{toneLabel(tone)}</button
-            >{/each}
+          {#each TONES as tone}
+            {#if tonePairStage === 0}<button
+                aria-pressed={tonePairFirst === tone}
+                onclick={() => void selectTonePairTone(tone)}>{toneLabel(tone)}</button
+              >{:else}<button onclick={() => void selectTonePairTone(tone)}
+                >{toneLabel(tone)}</button
+              >{/if}
+          {/each}
         </div>
       </div>
     {:else if phase === "prompt" && card.choices.length > 0}

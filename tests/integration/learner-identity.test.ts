@@ -133,7 +133,13 @@ describe("learner identity foundation", () => {
     expect(progressB.overall.last7Days.attempts).toBe(1);
     expect(progressA.vocabulary.recentScheduledReviews).toBe(2);
     expect(progressB.vocabulary.recentScheduledReviews).toBe(1);
-    expect(progressA.grammar.topicCounts.learning).toBe(1);
+    expect(progressA.grammar.topicCounts).toMatchObject({
+      practiced: 1,
+      introduced: 0,
+      learning: 0,
+      comfortable: 0,
+      historicalConfidence: 1,
+    });
     expect(progressB.grammar.topicCounts.notIntroduced).toBe(1);
 
     const [phoneA, desktopA, phoneB] = await Promise.all([

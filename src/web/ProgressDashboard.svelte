@@ -84,9 +84,6 @@
     if (item.evidence.averageResponseMs !== undefined) {
       bits.push(`平均 ${formatLatency(item.evidence.averageResponseMs)}`);
     }
-    if (item.evidence.averageSelfRating !== undefined) {
-      bits.push(`平均評価 ${formatRating(item.evidence.averageSelfRating)}`);
-    }
     if (item.evidence.selfReportedRecallMisses !== undefined) {
       bits.push(`自己申告の想起ミス ${item.evidence.selfReportedRecallMisses}件`);
     }
@@ -252,12 +249,14 @@
             <strong>{snapshot.grammar.recentResponses}回答</strong>
           </div>
           <div class="compact-metrics">
-            <span><strong>{snapshot.grammar.topicCounts.comfortable}</strong> 定着</span>
-            <span><strong>{snapshot.grammar.topicCounts.learning}</strong> 学習中</span>
+            <span><strong>{snapshot.grammar.topicCounts.practiced}</strong> 実施済み</span>
             <span><strong>{snapshot.grammar.topicCounts.introduced}</strong> 導入済み</span>
+            <span><strong>{snapshot.grammar.topicCounts.notIntroduced}</strong> 未導入</span>
           </div>
           <p class="mode-detail">
-            客観的な選択問題の記録 · 未導入 {snapshot.grammar.topicCounts.notIntroduced}
+            客観的な選択問題の記録
+            {#if snapshot.grammar.topicCounts.historicalConfidence > 0}
+              · 旧式評価のある項目 {snapshot.grammar.topicCounts.historicalConfidence}{/if}
             {#if snapshot.grammar.confidence}
               · 旧式自信度 {formatRating(snapshot.grammar.confidence.average)}{/if}
           </p>
@@ -303,7 +302,7 @@
         <article class="dashboard-card empty-dashboard-card">
           <h4>要確認の項目はまだありません</h4>
           <p>
-            「もう一度」「あやふや」、誤答、自己申告で思い出せなかった項目、遅いクイズ回答、過去の低い評価が、出題元とともに表示されます。
+            「もう一度」「あやふや」、誤答、自己申告で思い出せなかった項目、遅いクイズ回答が、出題元とともに表示されます。
           </p>
         </article>
       {:else}

@@ -15,6 +15,7 @@ import { normalizeUtcInstant, semanticEventOrderKey, semanticOrderKey } from "..
 import { parseGrammarPracticeMetadata } from "../domain/reading-grammar";
 import { REFLEX_INTERACTION, isReflexActivity, parseReflexAttemptMetadata } from "../domain/reflex";
 import { getPreparedReflexItem } from "./reflex";
+import { getCanonicalPronunciationChoiceIds } from "./pronunciation";
 import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
@@ -798,11 +799,10 @@ async function validatePronunciationAttempt(
     }
     if (
       input.selfRating !== undefined &&
-      input.metadata?.interaction !== PRONUNCIATION_LEGACY_PRODUCTION_INTERACTION &&
-      input.metadata?.interaction !== undefined
+      input.metadata?.interaction !== PRONUNCIATION_LEGACY_PRODUCTION_INTERACTION
     ) {
       throw new InvalidInputError(
-        "new pronunciation production uses ungraded speak-compare evidence",
+        "production self-ratings require the legacy speak-compare-self-rate interaction",
       );
     }
     if (
@@ -832,8 +832,8 @@ async function validatePronunciationAttempt(
   let selectedChoiceId = input.metadata?.selectedChoiceId;
   if (input.activityType === "tone_pair_identification") {
     const selectedTonePair = input.metadata?.selectedTonePair;
-    if (typeof selectedTonePair === "string") {
-      if (!/^[1-5]-[1-5]$/u.test(selectedTonePair)) {
+    if (selectedTonePair !== undefined) {
+      if (typeof selectedTonePair !== "string" || !/^[1-5]-[1-5]$/u.test(selectedTonePair)) {
         throw new InvalidInputError("tone-pair attempts require two tones from 1 to 5");
       }
       const canonicalSelectedChoiceId = `tone-pair:${selectedTonePair}`;
@@ -841,10 +841,24 @@ async function validatePronunciationAttempt(
         throw new InvalidInputError("tone-pair choices disagree with their canonical pair");
       }
       selectedChoiceId = canonicalSelectedChoiceId;
+    } else if (
+      typeof selectedChoiceId !== "string" ||
+      !/^tone-pair:[1-5]-[1-5]$/u.test(selectedChoiceId)
+    ) {
+      throw new InvalidInputError("tone-pair attempts require a canonical pair choice");
     }
   }
   if (typeof selectedChoiceId !== "string" || selectedChoiceId.length === 0) {
     throw new InvalidInputError("objective pronunciation attempts require a selected choice");
+  }
+
+  if (usesCanonicalPresentedChoices(input.activityType)) {
+    const presentedChoiceIds = await getCanonicalPronunciationChoiceIds(db, input.cardId);
+    if (!presentedChoiceIds.has(selectedChoiceId)) {
+      throw new InvalidInputError(
+        "selected pronunciation choice was not in the canonical presented choice set",
+      );
+    }
   }
 
   let answerChoiceId = card.lexeme_reading_id;
@@ -873,6 +887,15 @@ async function validatePronunciationAttempt(
   if (input.correct !== (selectedChoiceId === answerChoiceId)) {
     throw new InvalidInputError("pronunciation correctness disagrees with the selected choice");
   }
+}
+
+function usesCanonicalPresentedChoices(activityType: AttemptInput["activityType"]): boolean {
+  return (
+    activityType === "tone_identification" ||
+    activityType === "pinyin_to_hanzi" ||
+    activityType === "audio_to_hanzi" ||
+    activityType === "audio_to_meaning"
+  );
 }
 
 async function validateReflexAttempt(

@@ -1959,6 +1959,14 @@ kbd {
   text-align: center;
 }
 
+.tone-pair-selected {
+  margin: 0;
+  color: var(--paper-ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+
 .tone-pair-choices button {
   min-height: 3.35rem;
 }

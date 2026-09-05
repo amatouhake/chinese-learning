@@ -58,7 +58,10 @@ test.describe("local progress dashboard dogfood", () => {
     await expect(page.getByText("自己申告 5 / 6", { exact: true })).toBeVisible();
     await expect(page.getByText("過去の自己評価 2.8 / 4", { exact: true })).toBeVisible();
     await expect(page.getByText(/正答率は記録しません/)).toBeVisible();
-    await expect(page.getByText(/選択問題の記録です/)).toBeVisible();
+    await expect(page.getByText(/客観的な選択問題の記録/)).toBeVisible();
+    await expect(page.getByText("4 実施済み", { exact: true })).toBeVisible();
+    await expect(page.getByText(/旧式評価のある項目 3/)).toBeVisible();
+    await expect(page.getByText("定着", { exact: true })).toHaveCount(0);
     await expect(page.getByText("好", { exact: true })).toBeVisible();
     await expect(page.getByText(/2.5秒以上/)).toBeVisible();
     await expect(page.getByText(/集計は実際に練習した時刻/)).toBeVisible();
@@ -362,7 +365,15 @@ const snapshot: ProgressSnapshot = {
     difficultSentences: [],
   },
   grammar: {
-    topicCounts: { total: 5, notIntroduced: 1, introduced: 1, learning: 2, comfortable: 1 },
+    topicCounts: {
+      total: 5,
+      notIntroduced: 1,
+      practiced: 4,
+      introduced: 1,
+      learning: 0,
+      comfortable: 0,
+      historicalConfidence: 3,
+    },
     topics: [
       {
         id: "grammar:fixture",
@@ -416,18 +427,6 @@ const snapshot: ProgressSnapshot = {
       lastPracticedAt: Date.parse("2026-08-31T11:28:30Z"),
       reasons: ["1 incorrect response recently", "1 response at or above 2.5s"],
       evidence: { errors: 1, slowResponses: 1, averageResponseMs: 2_650 },
-    },
-    {
-      id: "reading:fixture-sentence",
-      cardId: "fixture-sentence",
-      mode: "reading",
-      activityType: "sentence_reading",
-      label: "你好吗？",
-      detail: "Nǐ hǎo ma?",
-      recentAttempts: 2,
-      lastPracticedAt: Date.parse("2026-08-30T10:00:00Z"),
-      reasons: ["2 historical low comprehension ratings"],
-      evidence: { selfRatings: 2, averageSelfRating: 1.5 },
     },
   ],
 };

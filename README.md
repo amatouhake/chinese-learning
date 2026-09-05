@@ -501,7 +501,9 @@ selected choice and server-derived correctness, without a confidence question. B
 cached card, so a delayed offline answer is validated against that historical choice set even after
 new teaching content is imported. Grammar additionally materializes the existing
 `grammar_topic_state` projection as `introduced`, `learning`, or `comfortable`; new objective practice
-does not manufacture a confidence value. Late-arriving events
+does not manufacture a confidence value. Raw confidence-era state remains readable for historical
+compatibility, while current Progress treats it as practiced/introduced evidence rather than current
+objective mastery. Late-arriving events
 remain immutable, while that durable projection follows canonical semantic event order rather than
 network receive order.
 
@@ -685,9 +687,11 @@ The version-1 snapshot includes:
 - pronunciation results per activated activity, keeping objective correctness, self-reported recall,
   historical production self-ratings, and non-answer audio skips separate;
 - sentence-reading completion volume without inferred correctness or a replacement rating;
-- grammar topic state and objective practice correctness, with historical confidence kept separate;
+- grammar objective practice correctness plus practiced/introduced topic evidence, with raw
+  confidence-era state and historical confidence kept separate;
 - Quiz correctness and valid uninterrupted latency/slow-response evidence without feeding FSRS; and
-- a deterministic, bounded cross-mode trouble list whose reasons and source activity remain visible.
+- a deterministic, bounded cross-mode trouble list whose reasons and source activity remain visible;
+  retired subjective ratings do not create current trouble candidates.
 
 Rolling activity windows are selected by `attempts.occurred_at`. Active calendar days are formatted
 in the configured learner IANA timezone (`Asia/Tokyo` by default). Freshness/data-through metadata

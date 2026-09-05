@@ -127,6 +127,14 @@ test.describe("pronunciation dogfood", () => {
       .click();
     await expect(page.locator(".tone-pair-stage")).toHaveAttribute("data-tone-pair-stage", "2");
     await expect(page.locator(".tone-pair-choices button")).toHaveCount(5);
+    await expect(page.locator(".tone-pair-selected")).toHaveText(
+      new RegExp(`1音節目: Tone ${firstTone}`),
+    );
+    expect(
+      await page
+        .locator(".tone-pair-choices button")
+        .evaluateAll((buttons) => buttons.every((button) => !button.hasAttribute("aria-pressed"))),
+    ).toBe(true);
     await page
       .locator(".tone-pair-choices button")
       .filter({ hasText: `Tone ${secondTone}` })

@@ -561,8 +561,6 @@ export interface ProgressTroubleItem {
     selfReportedRecallMisses?: number;
     slowResponses?: number;
     averageResponseMs?: number | null;
-    selfRatings?: number;
-    averageSelfRating?: number | null;
     fsrsRatings?: Record<FsrsRating, number>;
     lapses?: number;
     dueAt?: number;
@@ -623,9 +621,15 @@ export interface ProgressSnapshot {
     topicCounts: {
       total: number;
       notIntroduced: number;
+      /** Topics with any persisted study state, including historical confidence-era state. */
+      practiced: number;
+      /** Current objective-era topics whose raw state is introduced. */
       introduced: number;
+      /** Current objective-era status buckets; confidence-era rows are excluded. */
       learning: number;
       comfortable: number;
+      /** Raw topic rows carrying legacy confidence evidence. */
+      historicalConfidence: number;
     };
     topics: Array<{
       id: string;

@@ -59,6 +59,27 @@ interface DistractorRow {
   sense_scope: string | null;
 }
 
+const PRONUNCIATION_CARD_COLUMNS = `
+  c.id AS card_id,
+  c.activity_type,
+  l.id AS lexeme_id,
+  r.id AS reading_id,
+  r.pinyin,
+  r.numeric_pinyin,
+  r.normalized_syllables_json,
+  r.sense_scope,
+  l.simplified,
+  l.traditional,
+  (
+    SELECT MIN(CAST(substr(t.label, 7) AS INTEGER))
+    FROM lexeme_tags lt JOIN tags t ON t.id = lt.tag_id
+    WHERE lt.lexeme_id = l.id AND t.kind = 'hsk-2.0'
+  ) AS hsk_level,
+  m.id AS media_id,
+  m.delivery_key,
+  m.license,
+  m.attribution`;
+
 export interface PronunciationServiceOptions {
   now?: () => number;
 }
@@ -212,6 +233,36 @@ export async function getOfflinePronunciationPack(
   };
 }
 
+/**
+ * Rebuild the choice identities from canonical content for ingestion.
+ * Client-provided option lists are presentation data, not an authority for
+ * whether a selected objective choice was actually presented.
+ */
+export async function getCanonicalPronunciationChoiceIds(
+  db: D1Database,
+  cardId: string,
+): Promise<ReadonlySet<string>> {
+  const row = await db
+    .prepare(
+      `SELECT ${PRONUNCIATION_CARD_COLUMNS}
+       FROM cards c
+       JOIN lexeme_readings r ON r.id = c.lexeme_reading_id
+       JOIN lexemes l ON l.id = r.lexeme_id
+       LEFT JOIN lexeme_reading_media rm
+         ON rm.lexeme_reading_id = r.id AND rm.role = 'word_pronunciation'
+       LEFT JOIN media_assets m ON m.id = rm.media_asset_id
+       WHERE c.id = ? AND c.subject_type = 'lexeme_reading'`,
+    )
+    .bind(cardId)
+    .first<PronunciationCardRow>();
+  if (!row) throw new ReferenceNotFoundError("pronunciation card", cardId);
+
+  const syllables = parseSyllables(row.normalized_syllables_json, row.numeric_pinyin);
+  const meanings = parseReadingMeanings(row.sense_scope);
+  const { choices } = await buildChoices(db, row, meanings, syllables);
+  return new Set(choices.map(({ id }) => id));
+}
+
 async function selectForFocus(
   db: D1Database,
   learnerId: LearnerId,
@@ -262,25 +313,7 @@ async function selectCard(
   return db
     .prepare(
       `SELECT
-        c.id AS card_id,
-        c.activity_type,
-        l.id AS lexeme_id,
-        r.id AS reading_id,
-        r.pinyin,
-        r.numeric_pinyin,
-        r.normalized_syllables_json,
-        r.sense_scope,
-        l.simplified,
-        l.traditional,
-        (
-          SELECT MIN(CAST(substr(t.label, 7) AS INTEGER))
-          FROM lexeme_tags lt JOIN tags t ON t.id = lt.tag_id
-          WHERE lt.lexeme_id = l.id AND t.kind = 'hsk-2.0'
-        ) AS hsk_level,
-        m.id AS media_id,
-        m.delivery_key,
-        m.license,
-        m.attribution
+        ${PRONUNCIATION_CARD_COLUMNS}
        FROM cards c
        JOIN lexeme_readings r ON r.id = c.lexeme_reading_id
        JOIN lexemes l ON l.id = r.lexeme_id

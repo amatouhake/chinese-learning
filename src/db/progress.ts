@@ -95,9 +95,6 @@ interface TroubleRow {
   slow_responses: number;
   response_time_responses: number;
   average_response_ms: number | null;
-  self_ratings: number;
-  average_self_rating: number | null;
-  low_self_ratings: number;
   fsrs_1: number;
   fsrs_2: number;
   fsrs_3: number;
@@ -265,9 +262,6 @@ export async function getProgressSnapshot(
            0 AS slow_responses,
            SUM(CASE WHEN a.response_ms IS NOT NULL THEN 1 ELSE 0 END) AS response_time_responses,
            AVG(a.response_ms) AS average_response_ms,
-           0 AS self_ratings,
-           NULL AS average_self_rating,
-           0 AS low_self_ratings,
            SUM(CASE WHEN review.rating = 1 THEN 1 ELSE 0 END) AS fsrs_1,
            SUM(CASE WHEN review.rating = 2 THEN 1 ELSE 0 END) AS fsrs_2,
            SUM(CASE WHEN review.rating = 3 THEN 1 ELSE 0 END) AS fsrs_3,
@@ -346,9 +340,6 @@ export async function getProgressSnapshot(
            END) AS slow_responses,
            SUM(CASE WHEN a.response_ms IS NOT NULL THEN 1 ELSE 0 END) AS response_time_responses,
            AVG(a.response_ms) AS average_response_ms,
-           SUM(CASE WHEN a.self_rating IS NOT NULL THEN 1 ELSE 0 END) AS self_ratings,
-           AVG(a.self_rating) AS average_self_rating,
-           SUM(CASE WHEN a.self_rating IN (1, 2) THEN 1 ELSE 0 END) AS low_self_ratings,
            0 AS fsrs_1,
            0 AS fsrs_2,
            0 AS fsrs_3,
@@ -369,7 +360,6 @@ export async function getProgressSnapshot(
                  AND a.activity_type = 'hanzi_to_pinyin'
                  AND a.correct = 0 THEN 3 ELSE 0 END
              )
-             + SUM(CASE WHEN a.self_rating IN (1, 2) THEN 3 ELSE 0 END)
              + SUM(CASE
                WHEN a.mode = 'reflex'
                  AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
@@ -403,7 +393,6 @@ export async function getProgressSnapshot(
                AND a.correct = 0
              THEN 1 ELSE 0 END
            ) > 0
-           OR SUM(CASE WHEN a.self_rating IN (1, 2) THEN 1 ELSE 0 END) > 0
            OR SUM(CASE
              WHEN a.mode = 'reflex'
                AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
@@ -650,12 +639,18 @@ function buildWindow(
 function grammarTopicCounts(
   topics: readonly GrammarTopicRow[],
 ): ProgressSnapshot["grammar"]["topicCounts"] {
+  // A non-null confidence marks a row whose status came from the old
+  // confidence-era interaction. Keep that raw state readable, but do not
+  // project it as current objective-era mastery.
+  const currentObjectiveTopics = topics.filter(({ self_confidence }) => self_confidence === null);
   return {
     total: topics.length,
     notIntroduced: topics.filter(({ status }) => status === null).length,
-    introduced: topics.filter(({ status }) => status === "introduced").length,
-    learning: topics.filter(({ status }) => status === "learning").length,
-    comfortable: topics.filter(({ status }) => status === "comfortable").length,
+    practiced: topics.filter(({ status }) => status !== null).length,
+    introduced: currentObjectiveTopics.filter(({ status }) => status === "introduced").length,
+    learning: currentObjectiveTopics.filter(({ status }) => status === "learning").length,
+    comfortable: currentObjectiveTopics.filter(({ status }) => status === "comfortable").length,
+    historicalConfidence: topics.filter(({ self_confidence }) => self_confidence !== null).length,
   };
 }
 
@@ -771,21 +766,8 @@ function rankPracticeTrouble(row: TroubleRow): RankedTroubleItem {
       `${row.slow_responses} response${plural(row.slow_responses)} at or above ${REFLEX_SLOW_RESPONSE_MS / 1_000}s`,
     );
   }
-  if (row.low_self_ratings > 0) {
-    const kind =
-      row.mode === "reading"
-        ? "historical low comprehension rating"
-        : row.mode === "grammar"
-          ? "historical low confidence rating"
-          : "historical low self-rating";
-    reasons.push(`${row.low_self_ratings} ${kind}${plural(row.low_self_ratings)}`);
-  }
   return {
-    priority:
-      row.errors * 4 +
-      row.self_reported_recall_misses * 3 +
-      row.slow_responses * 2 +
-      row.low_self_ratings * 3,
+    priority: row.errors * 4 + row.self_reported_recall_misses * 3 + row.slow_responses * 2,
     item: {
       id: `${row.mode}:${row.card_id}${choiceCount === null ? "" : `:${choiceCount}`}`,
       cardId: row.card_id,
@@ -805,12 +787,6 @@ function rankPracticeTrouble(row: TroubleRow): RankedTroubleItem {
         ...(row.slow_responses > 0 ? { slowResponses: row.slow_responses } : {}),
         ...(row.response_time_responses > 0
           ? { averageResponseMs: roundNullable(row.average_response_ms, 0) }
-          : {}),
-        ...(row.self_ratings > 0
-          ? {
-              selfRatings: row.self_ratings,
-              averageSelfRating: roundNullable(row.average_self_rating, 2),
-            }
           : {}),
       },
     },

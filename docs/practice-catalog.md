@@ -71,5 +71,8 @@ are ungraded; historical production self-ratings remain readable.
 `hanzi_to_pinyin` records self-reported recall separately from objectively graded pronunciation
 activities. Reading records staged completion without a comprehension rating. Grammar records the
 objective choice result and feedback without a confidence question; the nullable grammar topic
-confidence projection and old confidence evidence remain for historical compatibility. No mode
-creates a synthetic cross-activity practice score.
+confidence projection and old confidence evidence remain for historical compatibility. Current
+Progress uses objective correctness plus practiced/introduced topic evidence; confidence-era
+`learning`/`comfortable` state is not presented as current objective mastery. Retired subjective
+ratings remain readable in history but do not create current trouble candidates. No mode creates a
+synthetic cross-activity practice score.

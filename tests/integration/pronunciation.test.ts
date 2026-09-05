@@ -298,6 +298,57 @@ describe("pronunciation foundation", () => {
     ).rejects.toThrow("correctness disagrees");
   });
 
+  test("rejects fabricated pronunciation choices instead of recording ordinary wrong answers", async () => {
+    await applyPronunciationFixture();
+    const cases = [
+      { simplified: "吗", activityType: "tone_identification" as const, fabricated: "tone:6" },
+      {
+        simplified: "爱",
+        activityType: "pinyin_to_hanzi" as const,
+        fabricated: "reading:not-presented",
+      },
+      {
+        simplified: "爱",
+        activityType: "audio_to_hanzi" as const,
+        fabricated: "reading:not-presented",
+      },
+      {
+        simplified: "爱",
+        activityType: "audio_to_meaning" as const,
+        fabricated: "reading:not-presented",
+      },
+    ];
+
+    for (const [index, candidate] of cases.entries()) {
+      const card = await cardFor(candidate.simplified, candidate.activityType);
+      if (!card) throw new Error(`missing ${candidate.activityType} card`);
+      const eventId = `fabricated-pronunciation-choice-${index + 1}`;
+      await expect(
+        ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
+          eventId,
+          deviceId: `direct-card:${candidate.simplified}:${candidate.activityType}`,
+          deviceSeq: 1,
+          occurredAt: `2026-08-30T03:1${index}:00Z`,
+          cardId: card.cardId,
+          studySessionId: `direct-card:${candidate.simplified}:${candidate.activityType}`,
+          mode: "pronunciation",
+          activityType: candidate.activityType,
+          correct: false,
+          metadata: {
+            interaction: "choice",
+            selectedChoiceId: candidate.fabricated,
+            readingId: card.readingId,
+          },
+        }),
+      ).rejects.toThrow("canonical presented choice set");
+      await expect(
+        env.DB.prepare("SELECT COUNT(*) AS count FROM attempts WHERE event_id = ?")
+          .bind(eventId)
+          .first<{ count: number }>(),
+      ).resolves.toEqual({ count: 0 });
+    }
+  });
+
   test("reruns the same pronunciation import as a complete identity no-op", async () => {
     await applyPronunciationFixture();
     const before = await importIdentitySummary();
@@ -592,6 +643,46 @@ describe("pronunciation foundation", () => {
         `SELECT correct, score, self_rating FROM attempts WHERE event_id = 'historical-production-event'`,
       ).first(),
     ).resolves.toEqual({ correct: null, score: null, self_rating: 3 });
+
+    await expect(
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
+        eventId: "unmarked-production-rating",
+        deviceId: "attempt-device",
+        deviceSeq: 5,
+        occurredAt: "2026-08-30T04:00:45Z",
+        cardId: production.card.cardId,
+        studySessionId: "attempt-session",
+        mode: "pronunciation",
+        activityType: "pronunciation_production",
+        selfRating: 2,
+        responseMs: 900,
+        metadata: { readingId: production.card.readingId },
+      }),
+    ).rejects.toThrow("legacy speak-compare-self-rate");
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM attempts WHERE event_id = ?")
+        .bind("unmarked-production-rating")
+        .first<{ count: number }>(),
+    ).resolves.toEqual({ count: 0 });
+
+    await expect(
+      ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
+        eventId: "new-production-rating",
+        deviceId: "attempt-device",
+        deviceSeq: 6,
+        occurredAt: "2026-08-30T04:00:50Z",
+        cardId: production.card.cardId,
+        studySessionId: "attempt-session",
+        mode: "pronunciation",
+        activityType: "pronunciation_production",
+        selfRating: 2,
+        responseMs: 900,
+        metadata: {
+          interaction: "speak-compare",
+          readingId: production.card.readingId,
+        },
+      }),
+    ).rejects.toThrow("legacy speak-compare-self-rate");
 
     await expect(
       ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {

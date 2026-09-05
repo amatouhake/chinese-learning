@@ -81,7 +81,7 @@ export const PRACTICE_CATALOG = {
     doesNotMeasure: ["客観問題がない例文の正答率", "読む速さを能力点として扱うこと"],
     affectsFsrs: false,
     configuration: ["文数"],
-    resultMetrics: ["完了文数", "文法トピック", "要確認の例文"],
+    resultMetrics: ["完了文数", "文法トピック"],
     useWhen: "単語や文法を、短い中国語の文脈で理解したいとき。",
     setupDescription: "例文を段階的に読み、単語と文法を文脈でつなぎます。",
   },

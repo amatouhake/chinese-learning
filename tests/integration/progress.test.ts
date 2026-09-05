@@ -198,6 +198,19 @@ describe("canonical progress snapshot", () => {
         metadata: { interaction: "grammar-choice" },
       });
     }
+    await insertCanonicalAttempt({
+      eventId: "grammar-historical-confidence-only",
+      deviceSeq: 3,
+      occurredAt: NOW - 18 * 60 * 60 * 1_000,
+      receivedAt: NOW - 17 * 60 * 60 * 1_000,
+      cardId: fixture.historicalGrammarCardId,
+      studySessionId: "progress-grammar-session",
+      mode: "grammar",
+      activityType: "sentence_reading",
+      selfRating: 1,
+      responseMs: 4_000,
+      metadata: { interaction: "grammar-choice" },
+    });
     for (const [index, values] of [
       { correct: false, responseMs: 3_200 },
       { correct: true, responseMs: 1_800 },
@@ -266,10 +279,16 @@ describe("canonical progress snapshot", () => {
     });
     expect(snapshot.reading.difficultSentences).toEqual([]);
     expect(snapshot.grammar).toMatchObject({
-      recentResponses: 2,
+      recentResponses: 3,
       correctness: { responses: 2, correct: 1, rate: 0.5 },
-      confidence: null,
-      topicCounts: { learning: 1 },
+      confidence: { responses: 1, average: 1, low: 1 },
+      topicCounts: {
+        practiced: 1,
+        introduced: 0,
+        learning: 0,
+        comfortable: 0,
+        historicalConfidence: 1,
+      },
     });
     expect(snapshot.reflex).toMatchObject({
       recentResponses: 2,
@@ -291,6 +310,21 @@ describe("canonical progress snapshot", () => {
     expect(new Set(snapshot.troublesomeItems.map(({ mode }) => mode))).toEqual(
       new Set(["study", "pronunciation", "grammar", "reflex"]),
     );
+    expect(
+      snapshot.pronunciation.troublesomeItems.some(
+        ({ activityType }) => activityType === "pronunciation_production",
+      ),
+    ).toBe(false);
+    expect(
+      snapshot.grammar.troublesomeTopics.every(({ reasons }) =>
+        reasons.every((reason) => !reason.includes("historical")),
+      ),
+    ).toBe(true);
+    expect(
+      snapshot.grammar.troublesomeTopics.some(
+        ({ cardId }) => cardId === fixture.historicalGrammarCardId,
+      ),
+    ).toBe(false);
     expect(snapshot.overall.last7Days.activeDays).toBeGreaterThanOrEqual(2);
     expect(snapshot.overall.last30Days.sessions).toBe(4);
     expect(stateAfter).toEqual(stateBefore);
@@ -482,14 +516,12 @@ describe("canonical progress snapshot", () => {
 
     const snapshot = await getProgressSnapshot(env.DB, FIXED_OWNER_LEARNER_ID, { now: () => NOW });
     expect(snapshot.reflex.troublesomeItems).toHaveLength(5);
-    expect(
-      snapshot.reading.difficultSentences.some(({ cardId }) => cardId === sentenceCard.id),
-    ).toBe(true);
+    expect(snapshot.reading.difficultSentences).toEqual([]);
     expect(
       snapshot.troublesomeItems.some(
         ({ cardId, mode }) => cardId === sentenceCard.id && mode === "reading",
       ),
-    ).toBe(true);
+    ).toBe(false);
   }, 15_000);
 
   test("excludes future-dated attempts from rolling activity and trouble", async () => {
@@ -590,6 +622,7 @@ async function prepareMixedModeFixture(): Promise<{
   audioCardId: string;
   readingCardId: string;
   grammarCardId: string;
+  historicalGrammarCardId: string;
   reflexCardId: string;
   reflexActivity: "hanzi_to_meaning" | "meaning_to_hanzi";
 }> {
@@ -610,6 +643,14 @@ async function prepareMixedModeFixture(): Promise<{
   if (revision === null || !reading || !readingCard || !grammarCard) {
     throw new Error("mixed progress fixture content is incomplete");
   }
+  const historicalGrammarCard = await env.DB.prepare(
+    `SELECT id FROM cards
+     WHERE subject_type = 'grammar_topic' AND retired_at IS NULL AND id <> ?
+     ORDER BY id LIMIT 1`,
+  )
+    .bind(grammarCard.id)
+    .first<{ id: string }>();
+  if (!historicalGrammarCard) throw new Error("mixed progress fixture needs two grammar cards");
   for (const mode of ["pronunciation", "reading", "grammar", "reflex"] as const) {
     await registerLearnerDevice(env.DB, FIXED_OWNER_LEARNER_ID, `progress-device-${mode}`);
   }
@@ -667,6 +708,7 @@ async function prepareMixedModeFixture(): Promise<{
     audioCardId: "progress-pronunciation-audio",
     readingCardId: readingCard.id,
     grammarCardId: grammarCard.id,
+    historicalGrammarCardId: historicalGrammarCard.id,
     reflexCardId: reflexCard.id,
     reflexActivity: reflexCard.activity_type,
   };
