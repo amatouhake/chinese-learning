@@ -27,11 +27,26 @@ without a marker is therefore interpreted as legacy, never as implicitly current
 
 On opening `chinese-learning.offline.v1`, the existing IndexedDB metadata and session records are
 normalized under the existing browser storage lock. For an unfinished session whose contract is no
-longer current, only its unanswered prepared card records are removed and the mode is marked
-“practice update required”. The session record, completed-item floors, local reviews/answers,
-attempt evidence, queued outbox events, card state/FSRS evidence, result pointers, and Cache
-Storage media remain. The localStorage bridge contains no contract field and therefore cannot
-downgrade or erase the IndexedDB marker.
+longer current, the mode is marked “practice update required” but its unanswered prepared card
+rows remain physically present. This protects an already-running older tab that shares the same
+database. The new UI gates those rows and never renders or translates them. After pending events
+have succeeded, a current-contract pull replaces the unanswered pack atomically; only then are
+obsolete rows removed. The session record, completed-item floors, local reviews/answers, attempt
+evidence, queued outbox events, card state/FSRS evidence, result pointers, and Cache Storage media
+remain throughout.
+
+Pronunciation objective cards also persist the server-generated choice IDs shown for each prepared
+card in the existing pronunciation session context. That evidence is append-only for a card:
+re-preparing after a content revision cannot overwrite the original set. Delayed attempts are
+checked against that immutable presentation evidence, so a valid wrong choice remains ingestible
+if a later content revision changes distractors. Sessions prepared before this evidence existed use
+the canonical current-set fallback solely for historical compatibility; the client-supplied choice
+list is never authoritative.
+
+The localStorage bridge contains no contract field and therefore cannot downgrade or erase the
+IndexedDB marker. A sync response that withholds a pack for a stale client likewise leaves the
+local mode blocked (or marks an unknown future server version); the marker advances only when a
+current-contract pack is accepted locally.
 
 The UI uses one shared Japanese state:
 

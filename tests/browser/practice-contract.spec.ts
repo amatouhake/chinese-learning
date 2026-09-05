@@ -38,7 +38,7 @@ test.describe("offline practice contract upgrades", () => {
     await expect(page.locator(".choice-grid")).toHaveCount(0);
     expect(await readOutbox(page)).toEqual(queuedLegacy);
     expect((await readMeta(page)).practiceContractVersions).toMatchObject({ pronunciation: 1 });
-    expect(await cachedPronunciationCardCount(page, sessionId as string)).toBe(0);
+    expect(await cachedPronunciationCardCount(page, sessionId as string)).toBeGreaterThan(0);
     expect(await cachedPronunciationProgress(page, sessionId as string)).toBe(1);
 
     let failedPush = true;
@@ -59,10 +59,35 @@ test.describe("offline practice contract upgrades", () => {
     await expect(page.getByText("練習内容が更新されました", { exact: true })).toBeVisible();
     expect((await readMeta(page)).practiceContractVersions).toMatchObject({ pronunciation: 1 });
     await expect(page.locator(".pronunciation-card")).toHaveCount(0);
+    expect(await cachedPronunciationCardCount(page, sessionId as string)).toBeGreaterThan(0);
 
     failedPush = false;
+    let withheldRefresh = true;
+    await page.route("**/api/sync/pull", async (route) => {
+      if (!withheldRefresh) {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      const body = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          pronunciationPack: null,
+          practiceUpdateRequiredModes: ["pronunciation"],
+        },
+      });
+      withheldRefresh = false;
+    });
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => readOutbox(page), { timeout: 20_000 }).toHaveLength(0);
+    expect((await readMeta(page)).practiceContractVersions).toMatchObject({ pronunciation: 1 });
+    await expect(page.getByText("練習内容が更新されました", { exact: true })).toBeVisible();
+    await expect(page.locator(".pronunciation-card")).toHaveCount(0);
+    expect(await cachedPronunciationCardCount(page, sessionId as string)).toBeGreaterThan(0);
+
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt", {
       timeout: 20_000,
     });
@@ -76,6 +101,39 @@ test.describe("offline practice contract upgrades", () => {
       timeout: 20_000,
     });
     await expect(page.getByText("練習内容が更新されました", { exact: true })).toHaveCount(0);
+  });
+
+  test("keeps stale prepared rows for an already-running tab until replacement", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/#pronunciation");
+    await page.getByRole("button", { name: "発話" }).click();
+    await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt", {
+      timeout: 20_000,
+    });
+
+    const sessionId = (await readMeta(page)).activePronunciationSessionId;
+    expect(typeof sessionId).toBe("string");
+    const newTab = await context.newPage();
+    try {
+      await newTab.goto("/#pronunciation");
+      await context.setOffline(true);
+      await seedLegacyProductionCache(newTab, sessionId as string);
+
+      await newTab.reload();
+      await expect(newTab.getByText("練習内容が更新されました", { exact: true })).toBeVisible();
+      await expect(newTab.locator(".pronunciation-card")).toHaveCount(0);
+      await expect(newTab.locator(".choice-grid")).toHaveCount(0);
+      expect(await cachedPronunciationCardCount(newTab, sessionId as string)).toBeGreaterThan(0);
+
+      await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt");
+      await page.getByRole("button", { name: "発音した — 答えと比べる" }).click();
+      await expect(page.getByRole("button", { name: "次へ" })).toBeVisible();
+    } finally {
+      await newTab.close();
+    }
   });
 });
 

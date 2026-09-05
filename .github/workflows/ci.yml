@@ -99,6 +99,14 @@ jobs:
           --v1-root .generated/sources/v1-source
           --audio-root .generated/sources/audio-cmn
 
+      - name: Upload browser Wrangler diagnostic
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-wrangler-log
+          path: .generated/browser-test/wrangler.log
+          if-no-files-found: ignore
+
   corpus:
     name: Corpus integrity
     runs-on: ubuntu-latest

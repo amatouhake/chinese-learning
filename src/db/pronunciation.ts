@@ -44,6 +44,8 @@ interface PronunciationSessionContext {
   focus: PronunciationFocus;
   maxItems: number;
   practiceContractVersion: number;
+  /** Server-generated evidence for the exact objective choices shown to the learner. */
+  presentedChoiceIds: Record<string, string[]>;
 }
 
 interface PronunciationCardRow {
@@ -121,6 +123,7 @@ export async function createPronunciationSession(
     focus: input.focus,
     maxItems: input.maxItems,
     practiceContractVersion,
+    presentedChoiceIds: {},
   } satisfies PronunciationSessionContext);
 
   try {
@@ -198,10 +201,12 @@ export async function getNextPronunciationCard(
     };
   }
 
+  const card = await mapCard(db, selected);
+  await recordPresentedChoiceIds(db, learnerId, sessionId, [card]);
   return {
     status: "card",
     session: sessionView,
-    card: await mapCard(db, selected),
+    card,
   };
 }
 
@@ -268,11 +273,13 @@ export async function getOfflinePronunciationPack(
       cards: [],
     };
   }
+  const cards = await Promise.all(rows.map((row) => mapCard(db, row)));
+  await recordPresentedChoiceIds(db, learnerId, sessionId, cards);
   return {
     status: "cards",
     practiceContractVersion,
     session: sessionView,
-    cards: await Promise.all(rows.map((row) => mapCard(db, row))),
+    cards,
   };
 }
 
@@ -304,6 +311,37 @@ export async function getCanonicalPronunciationChoiceIds(
   const meanings = parseReadingMeanings(row.sense_scope);
   const { choices } = await buildChoices(db, row, meanings, syllables);
   return new Set(choices.map(({ id }) => id));
+}
+
+/**
+ * Resolve the choice set that was actually prepared for a delayed attempt.
+ *
+ * New pronunciation sessions keep server-generated presentation evidence in
+ * their existing session context. That evidence remains valid when a later
+ * content import changes the current distractors. Sessions prepared before
+ * this evidence existed deliberately fall back to the canonical set for
+ * historical ingestion compatibility.
+ */
+export async function getPronunciationChoiceIdsForAttempt(
+  db: D1Database,
+  cardId: string,
+  studySessionId: string | undefined,
+): Promise<ReadonlySet<string>> {
+  if (studySessionId !== undefined) {
+    const session = await db
+      .prepare(
+        `SELECT context_json
+         FROM study_sessions
+         WHERE id = ? AND mode = 'pronunciation'`,
+      )
+      .bind(studySessionId)
+      .first<{ context_json: string }>();
+    if (session) {
+      const evidence = parseSessionContext(session.context_json).presentedChoiceIds[cardId];
+      if (evidence !== undefined) return new Set(evidence);
+    }
+  }
+  return getCanonicalPronunciationChoiceIds(db, cardId);
 }
 
 async function selectForFocus(
@@ -463,6 +501,52 @@ async function mapCard(db: D1Database, row: PronunciationCardRow): Promise<Pronu
     choices,
     answerChoiceId,
   };
+}
+
+async function recordPresentedChoiceIds(
+  db: D1Database,
+  learnerId: LearnerId,
+  sessionId: string,
+  cards: readonly PronunciationCard[],
+): Promise<void> {
+  if (cards.length === 0) return;
+  for (let retry = 0; retry < 3; retry += 1) {
+    const current = await db
+      .prepare(
+        `SELECT context_json
+         FROM study_sessions
+         WHERE learner_id = ? AND id = ? AND mode = 'pronunciation'`,
+      )
+      .bind(learnerId, sessionId)
+      .first<{ context_json: string }>();
+    if (!current) throw new ReferenceNotFoundError("pronunciation session", sessionId);
+
+    const value: unknown = JSON.parse(current.context_json);
+    const context = parseSessionContextValue(value);
+    const presentedChoiceIds = { ...context.presentedChoiceIds };
+    let changed = false;
+    for (const card of cards) {
+      if (presentedChoiceIds[card.cardId] !== undefined) continue;
+      presentedChoiceIds[card.cardId] = card.choices.map(({ id }) => id);
+      changed = true;
+    }
+    if (!changed) return;
+
+    const nextContext = JSON.stringify({
+      ...(value as Record<string, unknown>),
+      presentedChoiceIds,
+    });
+    const result = await db
+      .prepare(
+        `UPDATE study_sessions
+         SET context_json = ?
+         WHERE learner_id = ? AND id = ? AND mode = 'pronunciation' AND context_json = ?`,
+      )
+      .bind(nextContext, learnerId, sessionId, current.context_json)
+      .run();
+    if (result.meta.changes === 1) return;
+  }
+  throw new ConflictError("pronunciation presentation evidence changed during preparation");
 }
 
 async function buildChoices(
@@ -630,7 +714,10 @@ async function completeSession(
 }
 
 function parseSessionContext(json: string): PronunciationSessionContext {
-  const value: unknown = JSON.parse(json);
+  return parseSessionContextValue(JSON.parse(json));
+}
+
+function parseSessionContextValue(value: unknown): PronunciationSessionContext {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("persisted pronunciation session context is invalid");
   }
@@ -650,7 +737,27 @@ function parseSessionContext(json: string): PronunciationSessionContext {
       (record.practiceContractVersion as number) >= 1
         ? (record.practiceContractVersion as number)
         : legacyPracticeContractVersion("pronunciation"),
+    presentedChoiceIds: parsePresentedChoiceIds(record.presentedChoiceIds),
   };
+}
+
+function parsePresentedChoiceIds(value: unknown): Record<string, string[]> {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("persisted pronunciation presentation evidence is invalid");
+  }
+  const result: Record<string, string[]> = {};
+  for (const [cardId, choices] of Object.entries(value)) {
+    if (
+      cardId.length === 0 ||
+      !Array.isArray(choices) ||
+      !choices.every((choice) => typeof choice === "string" && choice.length > 0)
+    ) {
+      throw new Error("persisted pronunciation presentation evidence is invalid");
+    }
+    result[cardId] = [...choices];
+  }
+  return result;
 }
 
 function requireCurrentContract(mode: "pronunciation", version: number): void {

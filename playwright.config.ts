@@ -1,4 +1,7 @@
+import { resolve } from "node:path";
 import { defineConfig } from "@playwright/test";
+
+const browserTestRoot = resolve(".generated/browser-test");
 
 export default defineConfig({
   testDir: "./tests/browser",
@@ -20,7 +23,8 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ...process.env,
-      XDG_CONFIG_HOME: "/tmp/chinese-learning-wrangler-config",
+      WRANGLER_LOG_PATH: resolve(browserTestRoot, "wrangler.log"),
+      XDG_CONFIG_HOME: resolve(browserTestRoot, "config"),
     },
   },
 });

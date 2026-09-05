@@ -642,7 +642,8 @@ export class OfflineLearningStore {
         nextPracticeContracts[mode] =
           typeof serverVersion === "number" &&
           Number.isSafeInteger(serverVersion) &&
-          serverVersion >= 1
+          serverVersion >= 1 &&
+          serverVersion !== currentPracticeContractVersion(mode)
             ? serverVersion
             : legacyPracticeContractVersion(mode);
       }
@@ -878,13 +879,6 @@ export class OfflineLearningStore {
         oldSessionVersion !== session.practiceContractVersion
       ) {
         transaction.objectStore(SESSION_STORE).put(session);
-      }
-
-      if (!isCurrentPracticeContract(session.mode, session.practiceContractVersion)) {
-        await deleteSessionCards(
-          transaction.objectStore(cardStoreName(session.mode)),
-          session.session.id,
-        );
       }
 
       if (
@@ -1536,10 +1530,6 @@ function isUnfinishedSession(session: CachedSession): boolean {
   return (
     session.session.endedAt === null && session.session.completedItems < session.session.maxItems
   );
-}
-
-function cardStoreName(mode: PracticeMode): string {
-  return mode === "study" ? STUDY_CARD_STORE : PRONUNCIATION_CARD_STORE;
 }
 
 function preparedPackContractVersion(
