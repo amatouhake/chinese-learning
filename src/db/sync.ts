@@ -3,7 +3,13 @@ import { getOfflineReflexPack } from "./reflex";
 import { getOfflineStudyPack } from "./study";
 import { getOfflineGrammarPack, getOfflineReadingPack } from "./reading-grammar";
 import type { SyncPullInput } from "../domain/sync-validation";
-import type { LearnerId, SyncLearnerChange, SyncPullResponse } from "../domain/types";
+import {
+  CURRENT_PRACTICE_CONTRACT_VERSIONS,
+  currentPracticeContractVersion,
+  isCurrentPracticeContract,
+  type PracticeContractVersions,
+} from "../domain/practice-contract";
+import type { LearnerId, PracticeMode, SyncLearnerChange, SyncPullResponse } from "../domain/types";
 
 const PULL_LIMIT = 100;
 
@@ -50,6 +56,12 @@ export async function pullSyncChanges(
   learnerId: LearnerId,
   input: SyncPullInput,
 ): Promise<SyncPullResponse> {
+  // Direct server callers are trusted current code. HTTP callers are parsed
+  // first, where an omitted map is deliberately normalized to legacy.
+  const practiceContracts: PracticeContractVersions = input.practiceContracts ?? {
+    ...CURRENT_PRACTICE_CONTRACT_VERSIONS,
+  };
+  const practiceUpdateRequiredModes = practiceModesWithStaleClient(input, practiceContracts);
   const highWater =
     (await db.prepare("SELECT MAX(seq) AS seq FROM server_changes").first<number>("seq")) ?? 0;
   const [changeResult, settings] = await Promise.all([
@@ -137,20 +149,31 @@ export async function pullSyncChanges(
 
   const currentContentRevision = settings?.current_content_revision ?? null;
   const [studyPack, reflexPack, pronunciationPack, readingPack, grammarPack] = await Promise.all([
-    input.studySessionId
-      ? getOfflineStudyPack(db, learnerId, input.studySessionId, input.deviceId)
+    input.studySessionId && isCurrentPracticeContract("study", practiceContracts.study)
+      ? getOfflineStudyPack(db, learnerId, input.studySessionId, input.deviceId, {
+          practiceContractVersion: practiceContracts.study,
+        })
       : Promise.resolve(null),
-    input.reflexSessionId
-      ? getOfflineReflexPack(db, learnerId, input.reflexSessionId, input.deviceId)
+    input.reflexSessionId && isCurrentPracticeContract("reflex", practiceContracts.reflex)
+      ? getOfflineReflexPack(db, learnerId, input.reflexSessionId, input.deviceId, {
+          practiceContractVersion: practiceContracts.reflex,
+        })
       : Promise.resolve(null),
-    input.pronunciationSessionId
-      ? getOfflinePronunciationPack(db, learnerId, input.pronunciationSessionId, input.deviceId)
+    input.pronunciationSessionId &&
+    isCurrentPracticeContract("pronunciation", practiceContracts.pronunciation)
+      ? getOfflinePronunciationPack(db, learnerId, input.pronunciationSessionId, input.deviceId, {
+          practiceContractVersion: practiceContracts.pronunciation,
+        })
       : Promise.resolve(null),
-    input.readingSessionId
-      ? getOfflineReadingPack(db, learnerId, input.readingSessionId, input.deviceId)
+    input.readingSessionId && isCurrentPracticeContract("reading", practiceContracts.reading)
+      ? getOfflineReadingPack(db, learnerId, input.readingSessionId, input.deviceId, {
+          practiceContractVersion: practiceContracts.reading,
+        })
       : Promise.resolve(null),
-    input.grammarSessionId
-      ? getOfflineGrammarPack(db, learnerId, input.grammarSessionId, input.deviceId)
+    input.grammarSessionId && isCurrentPracticeContract("grammar", practiceContracts.grammar)
+      ? getOfflineGrammarPack(db, learnerId, input.grammarSessionId, input.deviceId, {
+          practiceContractVersion: practiceContracts.grammar,
+        })
       : Promise.resolve(null),
   ]);
 
@@ -160,6 +183,8 @@ export async function pullSyncChanges(
     hasMore: changeResult.results.length > PULL_LIMIT,
     currentContentRevision,
     contentChanged: input.contentRevision !== currentContentRevision,
+    currentPracticeContracts: { ...CURRENT_PRACTICE_CONTRACT_VERSIONS },
+    practiceUpdateRequiredModes,
     learnerChanges,
     contentChanges,
     studyPack,
@@ -168,6 +193,25 @@ export async function pullSyncChanges(
     readingPack,
     grammarPack,
   };
+}
+
+function practiceModesWithStaleClient(
+  input: SyncPullInput,
+  contracts: PracticeContractVersions,
+): PracticeMode[] {
+  const sessions: Array<[PracticeMode, string | undefined]> = [
+    ["study", input.studySessionId],
+    ["reflex", input.reflexSessionId],
+    ["pronunciation", input.pronunciationSessionId],
+    ["reading", input.readingSessionId],
+    ["grammar", input.grammarSessionId],
+  ];
+  return sessions
+    .filter(
+      ([mode, sessionId]) =>
+        sessionId !== undefined && contracts[mode] !== currentPracticeContractVersion(mode),
+    )
+    .map(([mode]) => mode);
 }
 
 function mapLearnerChange(row: ChangeRow): SyncLearnerChange {

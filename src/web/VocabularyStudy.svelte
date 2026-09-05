@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
 
   import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import { currentPracticeContractVersion } from "../domain/practice-contract";
   import type {
     FsrsRating,
     StudyCard,
@@ -28,9 +29,18 @@
   import { localReviewSummary } from "./local-session-summary";
   import { cachePracticeSummary } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
+  import PracticeUpdateRequired from "./PracticeUpdateRequired.svelte";
 
   type Phase =
-    "loading" | "choose" | "prompt" | "revealed" | "advancing" | "empty" | "completed" | "error";
+    | "loading"
+    | "choose"
+    | "prompt"
+    | "revealed"
+    | "advancing"
+    | "empty"
+    | "completed"
+    | "update-required"
+    | "error";
 
   interface RatingOption {
     rating: FsrsRating;
@@ -174,6 +184,7 @@
       deviceId,
       maxCards: selected.size,
       direction: selected.direction,
+      practiceContractVersion: currentPracticeContractVersion("study"),
     });
     session = result.session;
     if (!store) throw new Error("オフライン保存を準備できませんでした。");
@@ -183,6 +194,11 @@
   async function loadNextCard(showLoading = true): Promise<void> {
     if (!store || !browserState?.activeSessionId) {
       throw new Error("単語セッションがありません。");
+    }
+    if (browserState.practiceUpdateRequired.includes("study")) {
+      card = null;
+      phase = "update-required";
+      return;
     }
     phase = showLoading ? "loading" : "advancing";
     const sessionId = browserState.activeSessionId;
@@ -266,6 +282,11 @@
     const result = await synchronizeLearning(store);
     browserState = result.state;
     isOffline = browserOffline || result.networkUnavailable;
+    if (browserState.practiceUpdateRequired.includes("study")) {
+      card = null;
+      phase = "update-required";
+      return;
+    }
     if (result.error) {
       syncMessage = `${result.pending}件を同期待ちにしています`;
       return;
@@ -556,6 +577,12 @@
       ></button
     >
   </section>
+{:else if phase === "update-required"}
+  <PracticeUpdateRequired
+    offline={browserOffline || isOffline}
+    pendingCount={browserState?.pendingCount ?? 0}
+    onRetry={() => void initializeStudy()}
+  />
 {:else if phase === "error"}
   <section class="status-panel error-panel" role="alert">
     <p class="status-kicker">練習を一時停止しました</p>

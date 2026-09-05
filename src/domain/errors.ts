@@ -1,4 +1,5 @@
-export type ClientDomainErrorCode = "invalid_input" | "reference_not_found" | "conflict";
+export type ClientDomainErrorCode =
+  "invalid_input" | "reference_not_found" | "conflict" | "practice_contract_mismatch";
 
 export abstract class ClientDomainError extends Error {
   abstract readonly code: ClientDomainErrorCode;
@@ -23,7 +24,7 @@ export class ReferenceNotFoundError extends ClientDomainError {
 }
 
 export class ConflictError extends ClientDomainError {
-  readonly code = "conflict" as const;
+  readonly code: "conflict" | "practice_contract_mismatch" = "conflict";
 
   constructor(message: string) {
     super(message);
@@ -35,5 +36,14 @@ export class ConcurrencyConflictError extends ConflictError {
   constructor(message: string) {
     super(message);
     this.name = "ConcurrencyConflictError";
+  }
+}
+
+export class PracticeContractMismatchError extends ConflictError {
+  readonly code = "practice_contract_mismatch" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "PracticeContractMismatchError";
   }
 }

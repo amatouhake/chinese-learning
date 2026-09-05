@@ -1,4 +1,9 @@
-import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
+import {
+  ConflictError,
+  InvalidInputError,
+  PracticeContractMismatchError,
+  ReferenceNotFoundError,
+} from "../domain/errors";
 import {
   parseGrammarPracticeMetadata,
   parseGrammarTeachingMetadata,
@@ -7,6 +12,11 @@ import type {
   CreateGrammarSessionInput,
   CreateReadingSessionInput,
 } from "../domain/reading-grammar-validation";
+import {
+  currentPracticeContractVersion,
+  isCurrentPracticeContract,
+  legacyPracticeContractVersion,
+} from "../domain/practice-contract";
 import type {
   GrammarCard,
   GrammarNextResult,
@@ -38,6 +48,7 @@ interface GuidedSessionRow {
 interface GuidedSessionContext {
   maxItems: number;
   focusTopicId: string | null;
+  practiceContractVersion: number;
 }
 
 interface ReadingCardRow {
@@ -97,6 +108,7 @@ interface ExampleRow {
 
 export interface GuidedServiceOptions {
   now?: () => number;
+  practiceContractVersion?: number;
 }
 
 export interface CreateGuidedSessionResult {
@@ -135,8 +147,17 @@ export async function getNextReadingCard(
   sessionId: string,
   deviceId: string,
   options: GuidedServiceOptions = {},
+  requestedPracticeContractVersion?: number,
 ): Promise<ReadingNextResult> {
-  const result = await nextGuidedCard(db, learnerId, "reading", sessionId, deviceId, options);
+  const result = await nextGuidedCard(
+    db,
+    learnerId,
+    "reading",
+    sessionId,
+    deviceId,
+    options,
+    requestedPracticeContractVersion,
+  );
   return { ...result, card: result.card as ReadingCard | null };
 }
 
@@ -146,8 +167,17 @@ export async function getNextGrammarCard(
   sessionId: string,
   deviceId: string,
   options: GuidedServiceOptions = {},
+  requestedPracticeContractVersion?: number,
 ): Promise<GrammarNextResult> {
-  const result = await nextGuidedCard(db, learnerId, "grammar", sessionId, deviceId, options);
+  const result = await nextGuidedCard(
+    db,
+    learnerId,
+    "grammar",
+    sessionId,
+    deviceId,
+    options,
+    requestedPracticeContractVersion,
+  );
   return { ...result, card: result.card as GrammarCard | null };
 }
 
@@ -184,11 +214,16 @@ async function createGuidedSession(
   const existing = await loadSession(db, learnerId, input.sessionId, mode);
   if (existing) return existingSessionResult(db, existing, input);
 
+  const practiceContractVersion =
+    input.practiceContractVersion ?? currentPracticeContractVersion(mode);
+  requireCurrentContract(mode, practiceContractVersion);
+
   const now = serverTime(options);
   const changeId = `${mode}-session:start:${input.sessionId}`;
   const context = {
     maxItems: input.maxItems,
     focusTopicId: mode === "grammar" ? (input.topicId ?? null) : null,
+    practiceContractVersion,
   } satisfies GuidedSessionContext;
   try {
     await db.batch([
@@ -223,7 +258,10 @@ async function createGuidedSession(
   }
   const created = await loadSession(db, learnerId, input.sessionId, mode);
   if (!created) throw new Error(`created ${mode} session could not be reloaded`);
-  return { disposition: "created", session: await mapSession(db, created) };
+  return {
+    disposition: "created",
+    session: await mapSession(db, created, practiceContractVersion),
+  };
 }
 
 async function nextGuidedCard(
@@ -233,18 +271,28 @@ async function nextGuidedCard(
   sessionId: string,
   deviceId: string,
   options: GuidedServiceOptions,
+  requestedPracticeContractVersion?: number,
 ): Promise<{
   status: "card" | "empty" | "completed";
   session: GuidedSessionView;
   card: ReadingCard | GrammarCard | null;
 }> {
   const row = await loadOwnedSession(db, learnerId, sessionId, deviceId, mode);
-  const session = await mapSession(db, row);
+  const practiceContractVersion =
+    requestedPracticeContractVersion ??
+    options.practiceContractVersion ??
+    currentPracticeContractVersion(mode);
+  requireCurrentContract(mode, practiceContractVersion);
+  const session = await mapSession(db, row, practiceContractVersion);
   if (row.ended_at !== null || session.completedItems >= session.maxItems) {
     if (row.ended_at === null) await completeSession(db, row, session, options);
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row),
+      session: await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId, mode)) ?? row,
+        practiceContractVersion,
+      ),
       card: null,
     };
   }
@@ -253,7 +301,11 @@ async function nextGuidedCard(
     await completeSession(db, row, session, options);
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row),
+      session: await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId, mode)) ?? row,
+        practiceContractVersion,
+      ),
       card: null,
     };
   }
@@ -276,18 +328,27 @@ async function offlineGuidedPack(
   options: GuidedServiceOptions,
 ): Promise<{
   status: "cards" | "empty" | "completed";
+  practiceContractVersion: number;
   session: GuidedSessionView;
   cards: Array<ReadingCard | GrammarCard>;
 }> {
   const row = await loadOwnedSession(db, learnerId, sessionId, deviceId, mode);
-  let session = await mapSession(db, row);
+  const practiceContractVersion =
+    options.practiceContractVersion ?? currentPracticeContractVersion(mode);
+  requireCurrentContract(mode, practiceContractVersion);
+  let session = await mapSession(db, row, practiceContractVersion);
   if (row.ended_at !== null || session.completedItems >= session.maxItems) {
     if (row.ended_at === null) {
       await completeSession(db, row, session, options);
-      session = await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row);
+      session = await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId, mode)) ?? row,
+        practiceContractVersion,
+      );
     }
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
+      practiceContractVersion,
       session,
       cards: [],
     };
@@ -311,9 +372,14 @@ async function offlineGuidedPack(
   }
   if (selectedRows.length === 0) {
     await completeSession(db, row, session, options);
-    session = await mapSession(db, (await loadSession(db, learnerId, sessionId, mode)) ?? row);
+    session = await mapSession(
+      db,
+      (await loadSession(db, learnerId, sessionId, mode)) ?? row,
+      practiceContractVersion,
+    );
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
+      practiceContractVersion,
       session,
       cards: [],
     };
@@ -325,7 +391,7 @@ async function offlineGuidedPack(
         : mapGrammarCard(db, selected as GrammarCardRow),
     ),
   );
-  return { status: "cards", session, cards };
+  return { status: "cards", practiceContractVersion, session, cards };
 }
 
 function selectCard(
@@ -610,7 +676,7 @@ async function existingSessionResult(
   if (row.device_id !== input.deviceId) {
     throw new ConflictError(`${row.mode} session ${row.id} belongs to another device`);
   }
-  const context = parseSessionContext(row.context_json);
+  const context = parseSessionContext(row.context_json, row.mode);
   if (
     context.maxItems !== input.maxItems ||
     context.focusTopicId !== (row.mode === "grammar" ? (input.topicId ?? null) : null)
@@ -620,8 +686,12 @@ async function existingSessionResult(
   return { disposition: "existing", session: await mapSession(db, row) };
 }
 
-async function mapSession(db: D1Database, row: GuidedSessionRow): Promise<GuidedSessionView> {
-  const context = parseSessionContext(row.context_json);
+async function mapSession(
+  db: D1Database,
+  row: GuidedSessionRow,
+  servedPracticeContractVersion?: number,
+): Promise<GuidedSessionView> {
+  const context = parseSessionContext(row.context_json, row.mode);
   const completed = await db
     .prepare(
       `SELECT COUNT(*) AS count FROM attempts
@@ -633,6 +703,7 @@ async function mapSession(db: D1Database, row: GuidedSessionRow): Promise<Guided
     id: row.id,
     deviceId: row.device_id,
     mode: row.mode,
+    practiceContractVersion: servedPracticeContractVersion ?? context.practiceContractVersion,
     maxItems: context.maxItems,
     completedItems: completed?.count ?? 0,
     focusTopicId: context.focusTopicId,
@@ -674,7 +745,7 @@ async function completeSession(
   ]);
 }
 
-function parseSessionContext(json: string): GuidedSessionContext {
+function parseSessionContext(json: string, mode: GuidedMode): GuidedSessionContext {
   const value: unknown = JSON.parse(json);
   if (
     typeof value !== "object" ||
@@ -688,7 +759,24 @@ function parseSessionContext(json: string): GuidedSessionContext {
   ) {
     throw new Error("persisted guided session context is invalid");
   }
-  return value as GuidedSessionContext;
+  const record = value as Record<string, unknown>;
+  return {
+    maxItems: record.maxItems as number,
+    focusTopicId: record.focusTopicId as string | null,
+    practiceContractVersion:
+      Number.isSafeInteger(record.practiceContractVersion) &&
+      (record.practiceContractVersion as number) >= 1
+        ? (record.practiceContractVersion as number)
+        : legacyPracticeContractVersion(mode),
+  };
+}
+
+function requireCurrentContract(mode: GuidedMode, version: number): void {
+  if (!isCurrentPracticeContract(mode, version)) {
+    throw new PracticeContractMismatchError(
+      `the ${mode} practice format has been updated; reload the app before preparing new cards`,
+    );
+  }
 }
 
 function parseMeanings(json: string): StudyMeaning[] {

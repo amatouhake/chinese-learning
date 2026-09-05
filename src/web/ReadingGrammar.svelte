@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
 
   import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import { currentPracticeContractVersion } from "../domain/practice-contract";
   import type {
     GrammarCard,
     GrammarSessionSummary,
@@ -17,9 +18,11 @@
   import { hasCompletedLocalResult, localGuidedSummary } from "./local-session-summary";
   import { cachePracticeSummary } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
+  import PracticeUpdateRequired from "./PracticeUpdateRequired.svelte";
 
   type SurfaceMode = "reading" | "grammar";
-  type ReadingPhase = "loading" | "prompt" | "advancing" | "empty" | "completed" | "error";
+  type ReadingPhase =
+    "loading" | "prompt" | "advancing" | "empty" | "completed" | "update-required" | "error";
   type GrammarPhase =
     | "loading"
     | "introduction"
@@ -28,6 +31,7 @@
     | "advancing"
     | "empty"
     | "completed"
+    | "update-required"
     | "error";
 
   let mode: SurfaceMode = "reading";
@@ -154,7 +158,12 @@
   }
 
   async function ensureSession(sessionId: string, deviceId: string): Promise<void> {
-    const body: Record<string, unknown> = { sessionId, deviceId, maxItems: 5 };
+    const body: Record<string, unknown> = {
+      sessionId,
+      deviceId,
+      maxItems: 5,
+      practiceContractVersion: currentPracticeContractVersion(mode),
+    };
     if (mode === "grammar" && browserState?.activeGrammarTopicId) {
       body.topicId = browserState.activeGrammarTopicId;
     }
@@ -169,6 +178,13 @@
     const activeId = activeSessionId();
     if (!activeId) {
       throw new Error(`${mode === "reading" ? "読解" : "文法"}セッションがありません。`);
+    }
+    if (browserState?.practiceUpdateRequired.includes(mode)) {
+      readingCard = null;
+      grammarCard = null;
+      if (mode === "reading") readingPhase = "update-required";
+      else grammarPhase = "update-required";
+      return;
     }
     setLoading(showLoading);
     if (mode === "reading") {
@@ -354,6 +370,13 @@
     const result = await synchronizeLearning(store);
     browserState = result.state;
     isOffline = browserOffline || result.networkUnavailable;
+    if (browserState.practiceUpdateRequired.includes(mode)) {
+      readingCard = null;
+      grammarCard = null;
+      if (mode === "reading") readingPhase = "update-required";
+      else grammarPhase = "update-required";
+      return;
+    }
     syncMessage = result.error
       ? `${result.pending}件を同期待ちにしています`
       : result.pending === 0
@@ -526,6 +549,12 @@
         : PRACTICE_CATALOG.grammar.setupDescription}
     </p>
   </section>
+{:else if (mode === "reading" && readingPhase === "update-required") || (mode === "grammar" && grammarPhase === "update-required")}
+  <PracticeUpdateRequired
+    offline={browserOffline || isOffline}
+    pendingCount={browserState?.pendingCount ?? 0}
+    onRetry={() => void initializeMode()}
+  />
 {:else if (mode === "reading" && readingPhase === "error") || (mode === "grammar" && grammarPhase === "error")}
   <section class="status-panel error-panel" role="alert">
     <p class="status-kicker">練習を一時停止しました</p>

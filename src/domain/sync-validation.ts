@@ -1,9 +1,11 @@
 import { InvalidInputError } from "./errors";
+import { parsePracticeContractVersions, type PracticeContractVersions } from "./practice-contract";
 
 export interface SyncPullInput {
   cursor: number;
   contentRevision: number | null;
   deviceId: string;
+  practiceContracts?: PracticeContractVersions;
   studySessionId?: string;
   reflexSessionId?: string;
   pronunciationSessionId?: string;
@@ -30,6 +32,7 @@ export function parseSyncPullInput(value: unknown): SyncPullInput {
     cursor: record.cursor as number,
     contentRevision: record.contentRevision as number | null,
     deviceId: requiredText(record.deviceId, "deviceId"),
+    practiceContracts: parsePracticeContractVersions(record.practiceContracts),
   };
   if (record.studySessionId !== undefined) {
     input.studySessionId = requiredText(record.studySessionId, "studySessionId");

@@ -1,4 +1,8 @@
-import { ConflictError, ReferenceNotFoundError } from "../domain/errors";
+import {
+  ConflictError,
+  PracticeContractMismatchError,
+  ReferenceNotFoundError,
+} from "../domain/errors";
 import {
   DEFAULT_REFLEX_POOL_SIZE,
   QUIZ_SELECTION_STRATEGY,
@@ -7,6 +11,10 @@ import {
   selectReflexPool,
   type CreateReflexSessionInput,
 } from "../domain/reflex";
+import {
+  currentPracticeContractVersion,
+  isCurrentPracticeContract,
+} from "../domain/practice-contract";
 import type {
   LearnerId,
   OfflineReflexPack,
@@ -58,6 +66,7 @@ interface ReflexSessionContext {
   activityType: QuizActivity;
   choiceCount: QuizChoiceCount;
   selectionStrategy: typeof QUIZ_SELECTION_STRATEGY;
+  practiceContractVersion: number;
   cards: ReflexCard[];
 }
 
@@ -72,6 +81,7 @@ interface CandidateModel {
 
 export interface ReflexServiceOptions {
   now?: () => number;
+  practiceContractVersion?: number;
 }
 
 export interface CreateReflexSessionResult {
@@ -88,6 +98,14 @@ export async function createReflexSession(
   await registerLearnerDevice(db, learnerId, input.deviceId);
   const existing = await loadSession(db, learnerId, input.sessionId);
   if (existing) return existingSessionResult(db, existing, input.deviceId, input);
+
+  const practiceContractVersion =
+    input.practiceContractVersion ?? currentPracticeContractVersion("reflex");
+  if (!isCurrentPracticeContract("reflex", practiceContractVersion)) {
+    throw new PracticeContractMismatchError(
+      "the reflex practice format is not supported by this server",
+    );
+  }
 
   const now = serverTime(options);
   const activityType = input.activityType ?? "mixed";
@@ -107,6 +125,7 @@ export async function createReflexSession(
     activityType,
     choiceCount,
     selectionStrategy: QUIZ_SELECTION_STRATEGY,
+    practiceContractVersion,
     cards,
   } satisfies ReflexSessionContext);
   const changeId = `reflex-session:start:${input.sessionId}`;
@@ -149,7 +168,10 @@ export async function getOfflineReflexPack(
 ): Promise<OfflineReflexPack> {
   const row = await loadOwnedSession(db, learnerId, sessionId, deviceId);
   const context = parseContext(row.context_json);
-  let session = await mapSession(db, row);
+  const practiceContractVersion =
+    options.practiceContractVersion ?? currentPracticeContractVersion("reflex");
+  requireCurrentContract("reflex", practiceContractVersion);
+  let session = await mapSession(db, row, practiceContractVersion);
   if (
     row.ended_at !== null ||
     session.completedItems >= session.maxItems ||
@@ -157,15 +179,20 @@ export async function getOfflineReflexPack(
   ) {
     if (row.ended_at === null) {
       await completeSession(db, row, session, options);
-      session = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? row);
+      session = await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId)) ?? row,
+        practiceContractVersion,
+      );
     }
     return {
       status: session.completedItems === 0 ? "empty" : "completed",
+      practiceContractVersion,
       session,
       cards: [],
     };
   }
-  return { status: "cards", session, cards: context.cards };
+  return { status: "cards", practiceContractVersion, session, cards: context.cards };
 }
 
 export async function getPreparedReflexItem(
@@ -602,11 +629,16 @@ async function existingSessionResult(
   return { disposition: "existing", session: await mapSession(db, row) };
 }
 
-async function mapSession(db: D1Database, row: ReflexSessionRow): Promise<ReflexSessionView> {
+async function mapSession(
+  db: D1Database,
+  row: ReflexSessionRow,
+  servedPracticeContractVersion?: number,
+): Promise<ReflexSessionView> {
   const context = parseContext(row.context_json);
   return {
     id: row.id,
     deviceId: row.device_id,
+    practiceContractVersion: servedPracticeContractVersion ?? context.practiceContractVersion,
     maxItems: context.maxItems,
     completedItems: await canonicalAttemptCount(db, row.learner_id, row.id),
     poolSize: context.cards.length,
@@ -698,6 +730,7 @@ function parseContext(json: string): ReflexSessionContext {
   const activityType = record.activityType ?? "mixed";
   const choiceCount = record.choiceCount ?? 4;
   const selectionStrategy = record.selectionStrategy ?? QUIZ_SELECTION_STRATEGY;
+  const practiceContractVersion = record.practiceContractVersion;
   if (
     !(activityType === "mixed" || typeof activityType === "string") ||
     (activityType !== "mixed" &&
@@ -714,6 +747,10 @@ function parseContext(json: string): ReflexSessionContext {
     activityType: activityType as QuizActivity,
     choiceCount,
     selectionStrategy,
+    practiceContractVersion:
+      Number.isSafeInteger(practiceContractVersion) && (practiceContractVersion as number) >= 1
+        ? (practiceContractVersion as number)
+        : currentPracticeContractVersion("reflex"),
     cards: record.cards as ReflexCard[],
   };
 }
@@ -766,6 +803,14 @@ function stableHash(value: string): number {
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
+}
+
+function requireCurrentContract(mode: "reflex", version: number): void {
+  if (!isCurrentPracticeContract(mode, version)) {
+    throw new PracticeContractMismatchError(
+      `the ${mode} practice format has been updated; reload the app before preparing new cards`,
+    );
+  }
 }
 
 function serverTime(options: ReflexServiceOptions): number {

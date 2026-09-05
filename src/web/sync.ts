@@ -1,4 +1,9 @@
 import type { IngestResult, SyncPullResponse } from "../domain/types";
+import {
+  CURRENT_PRACTICE_CONTRACT_VERSIONS,
+  isCurrentPracticeContract,
+  legacyPracticeContractVersion,
+} from "../domain/practice-contract";
 import { cachePronunciationAudio } from "./audio-cache";
 import { ApiError, postJson } from "./api";
 import { OfflineLearningStore, type BrowserOfflineState } from "./offline-store";
@@ -71,6 +76,7 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
           cursor: state.learnerCursor,
           contentRevision: state.contentRevision,
           deviceId: state.deviceId,
+          practiceContracts: { ...CURRENT_PRACTICE_CONTRACT_VERSIONS },
           studySessionId,
           reflexSessionId,
           pronunciationSessionId,
@@ -92,9 +98,11 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
       }
 
       const audioCards = [
-        ...(pull.studyPack?.cards ?? []),
-        ...(pull.reflexPack?.cards ?? []),
-        ...(pull.pronunciationPack?.cards ?? []),
+        ...(isCurrentPack("study", pull.studyPack) ? (pull.studyPack?.cards ?? []) : []),
+        ...(isCurrentPack("reflex", pull.reflexPack) ? (pull.reflexPack?.cards ?? []) : []),
+        ...(isCurrentPack("pronunciation", pull.pronunciationPack)
+          ? (pull.pronunciationPack?.cards ?? [])
+          : []),
       ];
       if (audioCards.length > 0) {
         const audio = await cachePronunciationAudio(audioCards);
@@ -116,4 +124,20 @@ export function synchronizeLearning(store: OfflineLearningStore): Promise<Learni
     }
     throw new Error("sync pull exceeded the bounded page limit");
   });
+}
+
+function isCurrentPack(
+  mode: "study" | "reflex" | "pronunciation",
+  pack: {
+    practiceContractVersion?: number;
+    session: { practiceContractVersion?: number };
+  } | null,
+): boolean {
+  if (!pack) return false;
+  return isCurrentPracticeContract(
+    mode,
+    pack.practiceContractVersion ??
+      pack.session.practiceContractVersion ??
+      legacyPracticeContractVersion(mode),
+  );
 }

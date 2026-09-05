@@ -5,6 +5,7 @@ import type {
   PronunciationFocus,
   Tone,
 } from "./pronunciation";
+import type { PracticeContractVersions } from "./practice-contract";
 
 export const ACTIVITY_TYPES = [
   "hanzi_to_meaning",
@@ -139,6 +140,8 @@ export interface StudyCard {
 export interface StudySessionView {
   id: string;
   deviceId: string;
+  /** The contract of the prepared interaction currently cached for this session. */
+  practiceContractVersion?: number;
   maxCards: number;
   direction: StudyDirection;
   reviewedCards: number;
@@ -185,6 +188,7 @@ export interface ReflexCard {
 export interface ReflexSessionView {
   id: string;
   deviceId: string;
+  practiceContractVersion?: number;
   maxItems: number;
   completedItems: number;
   poolSize: number;
@@ -375,6 +379,7 @@ export interface PronunciationCard {
 export interface PronunciationSessionView {
   id: string;
   deviceId: string;
+  practiceContractVersion?: number;
   focus: PronunciationFocus;
   maxItems: number;
   completedItems: number;
@@ -467,6 +472,7 @@ export interface GuidedSessionView {
   id: string;
   deviceId: string;
   mode: "reading" | "grammar";
+  practiceContractVersion?: number;
   maxItems: number;
   completedItems: number;
   focusTopicId: string | null;
@@ -488,30 +494,35 @@ export interface GrammarNextResult {
 
 export interface OfflineStudyPack {
   status: "cards" | "empty" | "completed";
+  practiceContractVersion?: number;
   session: StudySessionView;
   cards: StudyCard[];
 }
 
 export interface OfflinePronunciationPack {
   status: "cards" | "empty" | "completed";
+  practiceContractVersion?: number;
   session: PronunciationSessionView;
   cards: PronunciationCard[];
 }
 
 export interface OfflineReflexPack {
   status: "cards" | "empty" | "completed";
+  practiceContractVersion?: number;
   session: ReflexSessionView;
   cards: ReflexCard[];
 }
 
 export interface OfflineReadingPack {
   status: "cards" | "empty" | "completed";
+  practiceContractVersion?: number;
   session: GuidedSessionView;
   cards: ReadingCard[];
 }
 
 export interface OfflineGrammarPack {
   status: "cards" | "empty" | "completed";
+  practiceContractVersion?: number;
   session: GuidedSessionView;
   cards: GrammarCard[];
 }
@@ -709,6 +720,10 @@ export interface SyncPullResponse {
   hasMore: boolean;
   currentContentRevision: number | null;
   contentChanged: boolean;
+  /** Server contract versions, separate from contentRevision. */
+  currentPracticeContracts?: PracticeContractVersions;
+  /** Modes whose requested prepared pack was withheld for an older client. */
+  practiceUpdateRequiredModes?: PracticeMode[];
   learnerChanges: SyncLearnerChange[];
   contentChanges: SyncContentChange[];
   studyPack: OfflineStudyPack | null;

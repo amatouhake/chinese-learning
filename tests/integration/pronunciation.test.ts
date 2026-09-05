@@ -19,6 +19,7 @@ import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
 } from "../../src/domain/pronunciation";
+import { currentPracticeContractVersion } from "../../src/domain/practice-contract";
 import { normalizeSourcePinyin, normalizedPinyinTokens } from "../../src/domain/pronunciation";
 import {
   buildV1ImportStatements,
@@ -875,17 +876,20 @@ describe("pronunciation foundation", () => {
       deviceId: "reload-device",
       focus: "pinyin",
       maxItems: 2,
+      practiceContractVersion: currentPracticeContractVersion("pronunciation"),
     });
     expect(created.status).toBe(201);
 
     const first = (await (
       await localJson("/api/pronunciation/sessions/reload-session/next", {
         deviceId: "reload-device",
+        practiceContractVersion: currentPracticeContractVersion("pronunciation"),
       })
     ).json()) as PronunciationNextResult;
     const reload = (await (
       await localJson("/api/pronunciation/sessions/reload-session/next", {
         deviceId: "reload-device",
+        practiceContractVersion: currentPracticeContractVersion("pronunciation"),
       })
     ).json()) as PronunciationNextResult;
     expect(reload.card).toEqual(first.card);
@@ -904,6 +908,7 @@ describe("pronunciation foundation", () => {
     const second = (await (
       await localJson("/api/pronunciation/sessions/reload-session/next", {
         deviceId: "reload-device",
+        practiceContractVersion: currentPracticeContractVersion("pronunciation"),
       })
     ).json()) as PronunciationNextResult;
     expect(second.card?.cardId).not.toBe(first.card.cardId);
@@ -928,6 +933,7 @@ describe("pronunciation foundation", () => {
     const completed = (await (
       await localJson("/api/pronunciation/sessions/reload-session/next", {
         deviceId: "reload-device",
+        practiceContractVersion: currentPracticeContractVersion("pronunciation"),
       })
     ).json()) as PronunciationNextResult;
     expect(completed).toMatchObject({

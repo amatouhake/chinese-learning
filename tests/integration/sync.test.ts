@@ -4,9 +4,15 @@ import { FIXED_OWNER_LEARNER_ID } from "../../src/worker/current-learner";
 
 import { ingestAttempt } from "../../src/db/ingestion";
 import { createStudySession } from "../../src/db/study";
+import { createPronunciationSession } from "../../src/db/pronunciation";
+import { buildPronunciationImportStatements } from "../../src/db/pronunciation-import";
 import { pullSyncChanges } from "../../src/db/sync";
 import { buildV1ImportStatements, type V1ImportInput } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
+import {
+  CURRENT_PRACTICE_CONTRACT_VERSIONS,
+  LEGACY_PRACTICE_CONTRACT_VERSIONS,
+} from "../../src/domain/practice-contract";
 import type { AttemptInput, StudyCard } from "../../src/domain/types";
 
 describe("offline sync contract", () => {
@@ -295,6 +301,79 @@ describe("offline sync contract", () => {
         },
       ],
     });
+  });
+
+  test("handshakes practice contracts independently from content revision", async () => {
+    const contractLexemes = [lexeme("游标一", 1), lexeme("游标二", 2)];
+    await applyImport("contract", contractLexemes);
+    await env.DB.batch(
+      (
+        await buildPronunciationImportStatements({
+          lexemes: contractLexemes,
+          vocabularyVersion: "contract-vocabulary",
+          audioVersion: "contract-audio",
+          audioItems: contractLexemes.map((item) => ({
+            simplified: item.simplified,
+            status: "missing" as const,
+          })),
+        })
+      )
+        .filter((statement) => !statement.startsWith("PRAGMA"))
+        .map((statement) => env.DB.prepare(statement)),
+    );
+    await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: "contract-study-session",
+      deviceId: "contract-device",
+      maxCards: 1,
+    });
+    await createPronunciationSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: "contract-pronunciation-session",
+      deviceId: "contract-device",
+      focus: "pinyin",
+      maxItems: 1,
+      practiceContractVersion: CURRENT_PRACTICE_CONTRACT_VERSIONS.pronunciation,
+    });
+
+    const legacy = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: 0,
+      contentRevision: null,
+      deviceId: "contract-device",
+      studySessionId: "contract-study-session",
+      pronunciationSessionId: "contract-pronunciation-session",
+      practiceContracts: { ...LEGACY_PRACTICE_CONTRACT_VERSIONS },
+    });
+    expect(legacy.currentPracticeContracts).toEqual(CURRENT_PRACTICE_CONTRACT_VERSIONS);
+    expect(legacy.practiceUpdateRequiredModes).toContain("pronunciation");
+    expect(legacy.studyPack).toMatchObject({ status: "cards" });
+    expect(legacy.pronunciationPack).toBeNull();
+
+    const legacyHttp = await localJson("/api/sync/pull", {
+      cursor: 0,
+      contentRevision: null,
+      deviceId: "contract-device",
+      pronunciationSessionId: "contract-pronunciation-session",
+    });
+    expect(legacyHttp.status).toBe(200);
+    await expect(legacyHttp.json()).resolves.toMatchObject({
+      practiceUpdateRequiredModes: ["pronunciation"],
+      pronunciationPack: null,
+    });
+
+    const current = await pullSyncChanges(env.DB, FIXED_OWNER_LEARNER_ID, {
+      cursor: legacy.nextCursor,
+      contentRevision: legacy.currentContentRevision,
+      deviceId: "contract-device",
+      studySessionId: "contract-study-session",
+      pronunciationSessionId: "contract-pronunciation-session",
+      practiceContracts: { ...CURRENT_PRACTICE_CONTRACT_VERSIONS },
+    });
+    expect(current.contentChanged).toBe(false);
+    expect(current.practiceUpdateRequiredModes).toEqual([]);
+    expect(current.pronunciationPack).toMatchObject({
+      status: "cards",
+      practiceContractVersion: CURRENT_PRACTICE_CONTRACT_VERSIONS.pronunciation,
+    });
+    expect(current.pronunciationPack?.cards[0]?.activityType).not.toBe("pronunciation_production");
   });
 });
 
