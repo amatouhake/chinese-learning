@@ -15,7 +15,7 @@ import { normalizeUtcInstant, semanticEventOrderKey, semanticOrderKey } from "..
 import { parseGrammarPracticeMetadata } from "../domain/reading-grammar";
 import { REFLEX_INTERACTION, isReflexActivity, parseReflexAttemptMetadata } from "../domain/reflex";
 import { getPreparedReflexItem } from "./reflex";
-import { getCanonicalPronunciationChoiceIds } from "./pronunciation";
+import { getPronunciationChoiceIdsForAttempt } from "./pronunciation";
 import {
   PRONUNCIATION_AUDIO_SKIP_INTERACTION,
   PRONUNCIATION_AUDIO_SKIP_REASON,
@@ -853,7 +853,11 @@ async function validatePronunciationAttempt(
   }
 
   if (usesCanonicalPresentedChoices(input.activityType)) {
-    const presentedChoiceIds = await getCanonicalPronunciationChoiceIds(db, input.cardId);
+    const presentedChoiceIds = await getPronunciationChoiceIdsForAttempt(
+      db,
+      input.cardId,
+      input.studySessionId,
+    );
     if (!presentedChoiceIds.has(selectedChoiceId)) {
       throw new InvalidInputError(
         "selected pronunciation choice was not in the canonical presented choice set",

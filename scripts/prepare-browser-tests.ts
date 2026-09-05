@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,7 +75,12 @@ for (const importPath of [vocabularyImport, pronunciationImport]) {
 }
 
 console.log(`Prepared isolated browser data under ${browserRoot}`);
-await run([process.execPath, "run", "test:browser:run"]);
+try {
+  await run([process.execPath, "run", "test:browser:run"]);
+} catch (error) {
+  await reportWranglerFailure();
+  throw error;
+}
 
 function parseArguments(arguments_: string[]): {
   vocabularyRoot: string;
@@ -111,6 +116,25 @@ async function run(command: string[], quietOutput = false): Promise<void> {
   });
   const exitCode = await child.exited;
   if (exitCode !== 0) throw new Error(`command failed (${command[0]}) with exit code ${exitCode}`);
+}
+
+async function reportWranglerFailure(): Promise<void> {
+  try {
+    const log = await readFile(join(browserRoot, "wrangler.log"), "utf8");
+    const importantLines = log
+      .split("\n")
+      .filter((line) =>
+        /^(--- .* (error|debug)|✘ \[ERROR\]|Error$|\s{4}at .*ProxyController|\s{4}at .*#handleLoopback|.*Network connection lost)/u.test(
+          line,
+        ),
+      )
+      .slice(-80);
+    if (importantLines.length > 0) {
+      console.error("Wrangler browser-server diagnostic:\n" + importantLines.join("\n"));
+    }
+  } catch {
+    // The Playwright failure remains the primary error when Wrangler did not create a log.
+  }
 }
 
 function usageError(reason?: string): Error {

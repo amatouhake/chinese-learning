@@ -27,10 +27,11 @@ valid same-configuration evidence, but it is not classified with the old 2.5-sec
 
 ## Historical configuration
 
-`study_sessions.context_json` is the immutable prepared-session configuration. Typed mode-specific
-contracts own its fields. Current browser preferences only seed a new session and must never be used
-to explain an existing session. The prepared Quiz card pool and distractor set live in the Reflex
-context so reload and offline use reproduce the same session.
+`study_sessions.context_json` is the immutable prepared-session configuration and, for
+Pronunciation, append-only server evidence of the exact objective choices prepared for each card.
+Typed mode-specific contracts own its fields. Current browser preferences only seed a new session
+and must never be used to explain an existing session. The prepared Quiz card pool and distractor
+set live in the Reflex context so reload and offline use reproduce the same session.
 
 `attempts` and `fsrs_reviews` remain the raw authority. `aggregate_json` is a closure snapshot for
 operational inspection and may be recomputed; learner-facing `PracticeSessionSummary` values are a

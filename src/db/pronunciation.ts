@@ -1,4 +1,9 @@
-import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
+import {
+  ConflictError,
+  InvalidInputError,
+  PracticeContractMismatchError,
+  ReferenceNotFoundError,
+} from "../domain/errors";
 import {
   activitiesForFocus,
   deriveTonePair,
@@ -10,6 +15,11 @@ import {
   type PronunciationFocus,
   type Tone,
 } from "../domain/pronunciation";
+import {
+  currentPracticeContractVersion,
+  isCurrentPracticeContract,
+  legacyPracticeContractVersion,
+} from "../domain/practice-contract";
 import type { CreatePronunciationSessionInput } from "../domain/pronunciation-validation";
 import type {
   LearnerId,
@@ -33,6 +43,9 @@ interface PronunciationSessionRow {
 interface PronunciationSessionContext {
   focus: PronunciationFocus;
   maxItems: number;
+  practiceContractVersion: number;
+  /** Server-generated evidence for the exact objective choices shown to the learner. */
+  presentedChoiceIds: Record<string, string[]>;
 }
 
 interface PronunciationCardRow {
@@ -82,6 +95,7 @@ const PRONUNCIATION_CARD_COLUMNS = `
 
 export interface PronunciationServiceOptions {
   now?: () => number;
+  practiceContractVersion?: number;
 }
 
 export interface CreatePronunciationSessionResult {
@@ -99,11 +113,17 @@ export async function createPronunciationSession(
   const existing = await loadSession(db, learnerId, input.sessionId);
   if (existing) return existingSessionResult(db, existing, input);
 
+  const practiceContractVersion =
+    input.practiceContractVersion ?? currentPracticeContractVersion("pronunciation");
+  requireCurrentContract("pronunciation", practiceContractVersion);
+
   const now = serverTime(options);
   const changeId = `pronunciation-session:start:${input.sessionId}`;
   const contextJson = JSON.stringify({
     focus: input.focus,
     maxItems: input.maxItems,
+    practiceContractVersion,
+    presentedChoiceIds: {},
   } satisfies PronunciationSessionContext);
 
   try {
@@ -141,14 +161,22 @@ export async function getNextPronunciationCard(
   sessionId: string,
   deviceId: string,
   options: PronunciationServiceOptions = {},
+  requestedPracticeContractVersion?: number,
 ): Promise<PronunciationNextResult> {
+  const practiceContractVersion =
+    requestedPracticeContractVersion ?? currentPracticeContractVersion("pronunciation");
+  requireCurrentContract("pronunciation", practiceContractVersion);
   const session = await loadOwnedSession(db, learnerId, sessionId, deviceId);
-  const sessionView = await mapSession(db, session);
+  const sessionView = await mapSession(db, session, practiceContractVersion);
   if (session.ended_at !== null || sessionView.completedItems >= sessionView.maxItems) {
     if (session.ended_at === null) await completeSession(db, session, sessionView, options);
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
+      session: await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId)) ?? session,
+        practiceContractVersion,
+      ),
       card: null,
     };
   }
@@ -164,15 +192,21 @@ export async function getNextPronunciationCard(
     await completeSession(db, session, sessionView, options);
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
+      session: await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId)) ?? session,
+        practiceContractVersion,
+      ),
       card: null,
     };
   }
 
+  const card = await mapCard(db, selected);
+  await recordPresentedChoiceIds(db, learnerId, sessionId, [card]);
   return {
     status: "card",
     session: sessionView,
-    card: await mapCard(db, selected),
+    card,
   };
 }
 
@@ -184,14 +218,22 @@ export async function getOfflinePronunciationPack(
   options: PronunciationServiceOptions = {},
 ): Promise<OfflinePronunciationPack> {
   const session = await loadOwnedSession(db, learnerId, sessionId, deviceId);
-  let sessionView = await mapSession(db, session);
+  const practiceContractVersion =
+    options.practiceContractVersion ?? currentPracticeContractVersion("pronunciation");
+  requireCurrentContract("pronunciation", practiceContractVersion);
+  let sessionView = await mapSession(db, session, practiceContractVersion);
   if (session.ended_at !== null || sessionView.completedItems >= sessionView.maxItems) {
     if (session.ended_at === null) {
       await completeSession(db, session, sessionView, options);
-      sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
+      sessionView = await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId)) ?? session,
+        practiceContractVersion,
+      );
     }
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
+      practiceContractVersion,
       session: sessionView,
       cards: [],
     };
@@ -219,17 +261,25 @@ export async function getOfflinePronunciationPack(
 
   if (rows.length === 0) {
     await completeSession(db, session, sessionView, options);
-    sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
+    sessionView = await mapSession(
+      db,
+      (await loadSession(db, learnerId, sessionId)) ?? session,
+      practiceContractVersion,
+    );
     return {
       status: sessionView.completedItems === 0 ? "empty" : "completed",
+      practiceContractVersion,
       session: sessionView,
       cards: [],
     };
   }
+  const cards = await Promise.all(rows.map((row) => mapCard(db, row)));
+  await recordPresentedChoiceIds(db, learnerId, sessionId, cards);
   return {
     status: "cards",
+    practiceContractVersion,
     session: sessionView,
-    cards: await Promise.all(rows.map((row) => mapCard(db, row))),
+    cards,
   };
 }
 
@@ -261,6 +311,37 @@ export async function getCanonicalPronunciationChoiceIds(
   const meanings = parseReadingMeanings(row.sense_scope);
   const { choices } = await buildChoices(db, row, meanings, syllables);
   return new Set(choices.map(({ id }) => id));
+}
+
+/**
+ * Resolve the choice set that was actually prepared for a delayed attempt.
+ *
+ * New pronunciation sessions keep server-generated presentation evidence in
+ * their existing session context. That evidence remains valid when a later
+ * content import changes the current distractors. Sessions prepared before
+ * this evidence existed deliberately fall back to the canonical set for
+ * historical ingestion compatibility.
+ */
+export async function getPronunciationChoiceIdsForAttempt(
+  db: D1Database,
+  cardId: string,
+  studySessionId: string | undefined,
+): Promise<ReadonlySet<string>> {
+  if (studySessionId !== undefined) {
+    const session = await db
+      .prepare(
+        `SELECT context_json
+         FROM study_sessions
+         WHERE id = ? AND mode = 'pronunciation'`,
+      )
+      .bind(studySessionId)
+      .first<{ context_json: string }>();
+    if (session) {
+      const evidence = parseSessionContext(session.context_json).presentedChoiceIds[cardId];
+      if (evidence !== undefined) return new Set(evidence);
+    }
+  }
+  return getCanonicalPronunciationChoiceIds(db, cardId);
 }
 
 async function selectForFocus(
@@ -422,6 +503,61 @@ async function mapCard(db: D1Database, row: PronunciationCardRow): Promise<Pronu
   };
 }
 
+async function recordPresentedChoiceIds(
+  db: D1Database,
+  learnerId: LearnerId,
+  sessionId: string,
+  cards: readonly PronunciationCard[],
+): Promise<void> {
+  if (cards.length === 0) return;
+  for (let retry = 0; retry < 3; retry += 1) {
+    const current = await db
+      .prepare(
+        `SELECT context_json
+         FROM study_sessions
+         WHERE learner_id = ? AND id = ? AND mode = 'pronunciation'`,
+      )
+      .bind(learnerId, sessionId)
+      .first<{ context_json: string }>();
+    if (!current) throw new ReferenceNotFoundError("pronunciation session", sessionId);
+
+    const value: unknown = JSON.parse(current.context_json);
+    const context = parseSessionContextValue(value);
+    const presentedChoiceIds = { ...context.presentedChoiceIds };
+    let changed = false;
+    for (const card of cards) {
+      const existing = presentedChoiceIds[card.cardId];
+      const next = [...(existing ?? [])];
+      const seen = new Set(next);
+      for (const { id } of card.choices) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        next.push(id);
+      }
+      if (existing === undefined || next.length !== existing.length) {
+        presentedChoiceIds[card.cardId] = next;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+
+    const nextContext = JSON.stringify({
+      ...(value as Record<string, unknown>),
+      presentedChoiceIds,
+    });
+    const result = await db
+      .prepare(
+        `UPDATE study_sessions
+         SET context_json = ?
+         WHERE learner_id = ? AND id = ? AND mode = 'pronunciation' AND context_json = ?`,
+      )
+      .bind(nextContext, learnerId, sessionId, current.context_json)
+      .run();
+    if (result.meta.changes === 1) return;
+  }
+  throw new ConflictError("pronunciation presentation evidence changed during preparation");
+}
+
 async function buildChoices(
   db: D1Database,
   row: PronunciationCardRow,
@@ -531,6 +667,7 @@ async function existingSessionResult(
 async function mapSession(
   db: D1Database,
   row: PronunciationSessionRow,
+  servedPracticeContractVersion?: number,
 ): Promise<PronunciationSessionView> {
   const context = parseSessionContext(row.context_json);
   const completed = await db
@@ -543,6 +680,7 @@ async function mapSession(
   return {
     id: row.id,
     deviceId: row.device_id,
+    practiceContractVersion: servedPracticeContractVersion ?? context.practiceContractVersion,
     focus: context.focus,
     maxItems: context.maxItems,
     completedItems: completed?.count ?? 0,
@@ -585,7 +723,10 @@ async function completeSession(
 }
 
 function parseSessionContext(json: string): PronunciationSessionContext {
-  const value: unknown = JSON.parse(json);
+  return parseSessionContextValue(JSON.parse(json));
+}
+
+function parseSessionContextValue(value: unknown): PronunciationSessionContext {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("persisted pronunciation session context is invalid");
   }
@@ -600,7 +741,40 @@ function parseSessionContext(json: string): PronunciationSessionContext {
   return {
     focus: record.focus as PronunciationFocus,
     maxItems: record.maxItems as number,
+    practiceContractVersion:
+      Number.isSafeInteger(record.practiceContractVersion) &&
+      (record.practiceContractVersion as number) >= 1
+        ? (record.practiceContractVersion as number)
+        : legacyPracticeContractVersion("pronunciation"),
+    presentedChoiceIds: parsePresentedChoiceIds(record.presentedChoiceIds),
   };
+}
+
+function parsePresentedChoiceIds(value: unknown): Record<string, string[]> {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("persisted pronunciation presentation evidence is invalid");
+  }
+  const result: Record<string, string[]> = {};
+  for (const [cardId, choices] of Object.entries(value)) {
+    if (
+      cardId.length === 0 ||
+      !Array.isArray(choices) ||
+      !choices.every((choice) => typeof choice === "string" && choice.length > 0)
+    ) {
+      throw new Error("persisted pronunciation presentation evidence is invalid");
+    }
+    result[cardId] = [...choices];
+  }
+  return result;
+}
+
+function requireCurrentContract(mode: "pronunciation", version: number): void {
+  if (!isCurrentPracticeContract(mode, version)) {
+    throw new PracticeContractMismatchError(
+      `the ${mode} practice format has been updated; reload the app before preparing new cards`,
+    );
+  }
 }
 
 function parseReadingMeanings(json: string | null): string[] {

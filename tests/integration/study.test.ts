@@ -12,6 +12,10 @@ import {
   type V1SourceLexeme,
 } from "../../src/db/v1-import";
 import { DEFAULT_SCHEDULER_CONFIG_ID } from "../../src/domain/fsrs";
+import {
+  CURRENT_PRACTICE_CONTRACT_VERSIONS,
+  LEGACY_PRACTICE_CONTRACT_VERSIONS,
+} from "../../src/domain/practice-contract";
 import type { AttemptInput, PracticeSessionHistory, StudyNextResult } from "../../src/domain/types";
 
 describe("vocabulary study flow", () => {
@@ -192,6 +196,47 @@ describe("vocabulary study flow", () => {
       lexeme: { simplified: "向" },
     });
     await retireLexemes(["向"]);
+  });
+
+  test("keeps an unversioned persisted Study context on the legacy contract", async () => {
+    await applyImport("unversioned-study-context", [lexeme("旧", 1)]);
+    await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId: "unversioned-study-context-session",
+      deviceId: "unversioned-study-context-device",
+      maxCards: 1,
+    });
+
+    const stored = await env.DB.prepare(
+      "SELECT context_json FROM study_sessions WHERE id = ? AND mode = 'study'",
+    )
+      .bind("unversioned-study-context-session")
+      .first<{ context_json: string }>();
+    if (!stored) throw new Error("missing persisted Study context");
+    const context = JSON.parse(stored.context_json) as Record<string, unknown>;
+    delete context.practiceContractVersion;
+    await env.DB.prepare("UPDATE study_sessions SET context_json = ? WHERE id = ?")
+      .bind(JSON.stringify(context), "unversioned-study-context-session")
+      .run();
+
+    const currentVersions = CURRENT_PRACTICE_CONTRACT_VERSIONS as unknown as Record<
+      "study",
+      number
+    >;
+    const currentVersion = currentVersions.study;
+    currentVersions.study = currentVersion + 1;
+    try {
+      const existing = await createStudySession(env.DB, FIXED_OWNER_LEARNER_ID, {
+        sessionId: "unversioned-study-context-session",
+        deviceId: "unversioned-study-context-device",
+        maxCards: 1,
+      });
+      expect(existing.session.practiceContractVersion).toBe(
+        LEGACY_PRACTICE_CONTRACT_VERSIONS.study,
+      );
+    } finally {
+      currentVersions.study = currentVersion;
+    }
+    await retireLexemes(["旧"]);
   });
 
   test("defers a recent lexeme sibling without dropping its due card", async () => {

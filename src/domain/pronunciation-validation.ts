@@ -1,5 +1,6 @@
 import { PRONUNCIATION_FOCUSES, type PronunciationFocus } from "./pronunciation";
 import { InvalidInputError } from "./errors";
+import { parsePracticeContractVersion } from "./practice-contract";
 
 export const DEFAULT_PRONUNCIATION_SESSION_SIZE = 10;
 export const MAX_PRONUNCIATION_SESSION_SIZE = 20;
@@ -9,10 +10,12 @@ export interface CreatePronunciationSessionInput {
   deviceId: string;
   focus: PronunciationFocus;
   maxItems: number;
+  practiceContractVersion?: number;
 }
 
 export interface NextPronunciationCardInput {
   deviceId: string;
+  practiceContractVersion?: number;
 }
 
 export function parseCreatePronunciationSessionInput(
@@ -31,12 +34,22 @@ export function parseCreatePronunciationSessionInput(
       body.maxItems === undefined
         ? DEFAULT_PRONUNCIATION_SESSION_SIZE
         : boundedInteger(body.maxItems, "maxItems", 1, MAX_PRONUNCIATION_SESSION_SIZE),
+    practiceContractVersion: parsePracticeContractVersion(
+      body.practiceContractVersion,
+      "pronunciation",
+    ),
   };
 }
 
 export function parseNextPronunciationCardInput(value: unknown): NextPronunciationCardInput {
   const body = requiredRecord(value, "next pronunciation card body");
-  return { deviceId: boundedText(body.deviceId, "deviceId") };
+  return {
+    deviceId: boundedText(body.deviceId, "deviceId"),
+    practiceContractVersion: parsePracticeContractVersion(
+      body.practiceContractVersion,
+      "pronunciation",
+    ),
+  };
 }
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {

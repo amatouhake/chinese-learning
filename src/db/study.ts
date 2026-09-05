@@ -1,4 +1,14 @@
-import { ConflictError, InvalidInputError, ReferenceNotFoundError } from "../domain/errors";
+import {
+  ConflictError,
+  InvalidInputError,
+  PracticeContractMismatchError,
+  ReferenceNotFoundError,
+} from "../domain/errors";
+import {
+  currentPracticeContractVersion,
+  isCurrentPracticeContract,
+  legacyPracticeContractVersion,
+} from "../domain/practice-contract";
 import type {
   OfflineStudyPack,
   LearnerId,
@@ -52,10 +62,12 @@ interface SchedulerRow {
 interface SessionContext {
   maxCards: number;
   direction: StudyDirection;
+  practiceContractVersion: number;
 }
 
 export interface StudyServiceOptions {
   now?: () => number;
+  practiceContractVersion?: number;
 }
 
 export interface CreateStudySessionResult {
@@ -73,11 +85,20 @@ export async function createStudySession(
   const existing = await loadSession(db, learnerId, input.sessionId);
   if (existing) return existingSessionResult(db, existing, input.deviceId);
 
+  const practiceContractVersion =
+    input.practiceContractVersion ?? currentPracticeContractVersion("study");
+  if (!isCurrentPracticeContract("study", practiceContractVersion)) {
+    throw new PracticeContractMismatchError(
+      "the study practice format is not supported by this server",
+    );
+  }
+
   const now = serverTime(options);
   const changeId = `study-session:start:${input.sessionId}`;
   const contextJson = JSON.stringify({
     maxCards: input.maxCards,
     direction: input.direction ?? "mixed",
+    practiceContractVersion,
   } satisfies SessionContext);
 
   try {
@@ -118,15 +139,23 @@ export async function getNextStudyCard(
   sessionId: string,
   deviceId: string,
   options: StudyServiceOptions = {},
+  requestedPracticeContractVersion?: number,
 ): Promise<StudyNextResult> {
+  const practiceContractVersion =
+    requestedPracticeContractVersion ?? currentPracticeContractVersion("study");
+  requireCurrentContract("study", practiceContractVersion);
   const session = await loadOwnedStudySession(db, learnerId, sessionId, deviceId);
-  const sessionView = await mapSession(db, session);
+  const sessionView = await mapSession(db, session, practiceContractVersion);
 
   if (session.ended_at !== null || sessionView.reviewedCards >= sessionView.maxCards) {
     if (session.ended_at === null) await completeStudySession(db, session, sessionView, options);
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
+      session: await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId)) ?? session,
+        practiceContractVersion,
+      ),
       card: null,
     };
   }
@@ -145,7 +174,11 @@ export async function getNextStudyCard(
     await completeStudySession(db, session, sessionView, { now: () => now });
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
-      session: await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session),
+      session: await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId)) ?? session,
+        practiceContractVersion,
+      ),
       card: null,
     };
   }
@@ -167,14 +200,22 @@ export async function getOfflineStudyPack(
   options: StudyServiceOptions = {},
 ): Promise<OfflineStudyPack> {
   const session = await loadOwnedStudySession(db, learnerId, sessionId, deviceId);
-  let sessionView = await mapSession(db, session);
+  const practiceContractVersion =
+    options.practiceContractVersion ?? currentPracticeContractVersion("study");
+  requireCurrentContract("study", practiceContractVersion);
+  let sessionView = await mapSession(db, session, practiceContractVersion);
   if (session.ended_at !== null || sessionView.reviewedCards >= sessionView.maxCards) {
     if (session.ended_at === null) {
       await completeStudySession(db, session, sessionView, options);
-      sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
+      sessionView = await mapSession(
+        db,
+        (await loadSession(db, learnerId, sessionId)) ?? session,
+        practiceContractVersion,
+      );
     }
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
+      practiceContractVersion,
       session: sessionView,
       cards: [],
     };
@@ -207,14 +248,19 @@ export async function getOfflineStudyPack(
 
   if (cards.length === 0) {
     await completeStudySession(db, session, sessionView, { now: () => now });
-    sessionView = await mapSession(db, (await loadSession(db, learnerId, sessionId)) ?? session);
+    sessionView = await mapSession(
+      db,
+      (await loadSession(db, learnerId, sessionId)) ?? session,
+      practiceContractVersion,
+    );
     return {
       status: sessionView.reviewedCards === 0 ? "empty" : "completed",
+      practiceContractVersion,
       session: sessionView,
       cards,
     };
   }
-  return { status: "cards", session: sessionView, cards };
+  return { status: "cards", practiceContractVersion, session: sessionView, cards };
 }
 
 async function selectStudyCard(
@@ -532,7 +578,11 @@ async function existingSessionResult(
   return { disposition: "existing", session: await mapSession(db, session) };
 }
 
-async function mapSession(db: D1Database, row: StudySessionRow): Promise<StudySessionView> {
+async function mapSession(
+  db: D1Database,
+  row: StudySessionRow,
+  servedPracticeContractVersion?: number,
+): Promise<StudySessionView> {
   const context = parseSessionContext(row.context_json);
   const reviewed = await db
     .prepare(
@@ -545,6 +595,7 @@ async function mapSession(db: D1Database, row: StudySessionRow): Promise<StudySe
   return {
     id: row.id,
     deviceId: row.device_id,
+    practiceContractVersion: servedPracticeContractVersion ?? context.practiceContractVersion,
     maxCards: context.maxCards,
     direction: context.direction,
     reviewedCards: reviewed?.count ?? 0,
@@ -690,7 +741,20 @@ function parseSessionContext(json: string): SessionContext {
   return {
     maxCards: (value as { maxCards: number }).maxCards,
     direction: (direction as StudyDirection | undefined) ?? "mixed",
+    practiceContractVersion:
+      Number.isSafeInteger((value as Record<string, unknown>).practiceContractVersion) &&
+      ((value as Record<string, unknown>).practiceContractVersion as number) >= 1
+        ? ((value as Record<string, unknown>).practiceContractVersion as number)
+        : legacyPracticeContractVersion("study"),
   };
+}
+
+function requireCurrentContract(mode: "study", version: number): void {
+  if (!isCurrentPracticeContract(mode, version)) {
+    throw new PracticeContractMismatchError(
+      `the ${mode} practice format has been updated; reload the app before preparing new cards`,
+    );
+  }
 }
 
 function serverTime(options: StudyServiceOptions): number {

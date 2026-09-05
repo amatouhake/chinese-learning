@@ -1,4 +1,5 @@
 import { InvalidInputError } from "./errors";
+import { parsePracticeContractVersion } from "./practice-contract";
 import type { StudyDirection } from "./types";
 
 export const DEFAULT_STUDY_SESSION_SIZE = 10;
@@ -9,10 +10,12 @@ export interface CreateStudySessionInput {
   deviceId: string;
   maxCards: number;
   direction?: StudyDirection;
+  practiceContractVersion?: number;
 }
 
 export interface NextStudyCardInput {
   deviceId: string;
+  practiceContractVersion?: number;
 }
 
 export function parseCreateStudySessionInput(value: unknown): CreateStudySessionInput {
@@ -27,12 +30,16 @@ export function parseCreateStudySessionInput(value: unknown): CreateStudySession
     deviceId: boundedText(body.deviceId, "deviceId"),
     maxCards,
     direction: studyDirection(body.direction),
+    practiceContractVersion: parsePracticeContractVersion(body.practiceContractVersion, "study"),
   };
 }
 
 export function parseNextStudyCardInput(value: unknown): NextStudyCardInput {
   const body = requiredRecord(value, "next-card body");
-  return { deviceId: boundedText(body.deviceId, "deviceId") };
+  return {
+    deviceId: boundedText(body.deviceId, "deviceId"),
+    practiceContractVersion: parsePracticeContractVersion(body.practiceContractVersion, "study"),
+  };
 }
 
 function requiredRecord(value: unknown, field: string): Record<string, unknown> {

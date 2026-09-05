@@ -1,4 +1,5 @@
 import { InvalidInputError } from "./errors";
+import { parsePracticeContractVersion } from "./practice-contract";
 import type {
   ReflexActivityType,
   ReflexAnswerRecord,
@@ -29,6 +30,7 @@ export interface CreateReflexSessionInput {
   maxItems: number;
   activityType?: QuizActivity;
   choiceCount?: QuizChoiceCount;
+  practiceContractVersion?: number;
 }
 
 export interface ReflexHistoryInput {
@@ -70,6 +72,7 @@ export function parseCreateReflexSessionInput(value: unknown): CreateReflexSessi
         : boundedInteger(body.maxItems, "maxItems", 4, MAX_REFLEX_SESSION_SIZE),
     activityType: quizActivity(body.activityType),
     choiceCount: quizChoiceCount(body.choiceCount),
+    practiceContractVersion: parsePracticeContractVersion(body.practiceContractVersion, "reflex"),
   };
 }
 

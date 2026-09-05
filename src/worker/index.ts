@@ -155,6 +155,8 @@ export function createWorkerApp(options: WorkerAppOptions = {}): Hono<{
         resolveCurrentLearner(),
         context.req.param("sessionId"),
         input.deviceId,
+        {},
+        input.practiceContractVersion,
       );
       return context.json(result);
     } catch (error) {
@@ -200,6 +202,8 @@ export function createWorkerApp(options: WorkerAppOptions = {}): Hono<{
         resolveCurrentLearner(),
         context.req.param("sessionId"),
         input.deviceId,
+        {},
+        input.practiceContractVersion,
       );
       return context.json(result);
     } catch (error) {
@@ -223,13 +227,15 @@ export function createWorkerApp(options: WorkerAppOptions = {}): Hono<{
 
   app.post("/api/reading/sessions/:sessionId/next", async (context) => {
     try {
-      const input = parseNextGuidedCardInput(await readJsonBody(context));
+      const input = parseNextGuidedCardInput(await readJsonBody(context), "reading");
       return context.json(
         await getNextReadingCard(
           context.env.DB,
           resolveCurrentLearner(),
           context.req.param("sessionId"),
           input.deviceId,
+          {},
+          input.practiceContractVersion,
         ),
       );
     } catch (error) {
@@ -253,13 +259,15 @@ export function createWorkerApp(options: WorkerAppOptions = {}): Hono<{
 
   app.post("/api/grammar/sessions/:sessionId/next", async (context) => {
     try {
-      const input = parseNextGuidedCardInput(await readJsonBody(context));
+      const input = parseNextGuidedCardInput(await readJsonBody(context), "grammar");
       return context.json(
         await getNextGrammarCard(
           context.env.DB,
           resolveCurrentLearner(),
           context.req.param("sessionId"),
           input.deviceId,
+          {},
+          input.practiceContractVersion,
         ),
       );
     } catch (error) {

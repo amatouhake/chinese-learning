@@ -1,3 +1,4 @@
+import { PRACTICE_MODES } from "../domain/types";
 import type {
   AttemptInput,
   IngestResult,
@@ -18,6 +19,14 @@ import type {
 import type { PronunciationFocus } from "../domain/pronunciation";
 import { QUIZ_SELECTION_STRATEGY, parseReflexAttemptMetadata } from "../domain/reflex";
 import { parseAttemptInput } from "../domain/validation";
+import {
+  CURRENT_PRACTICE_CONTRACT_VERSIONS,
+  LEGACY_PRACTICE_CONTRACT_VERSIONS,
+  currentPracticeContractVersion,
+  isCurrentPracticeContract,
+  legacyPracticeContractVersion,
+  type PracticeContractVersions,
+} from "../domain/practice-contract";
 import {
   STUDY_STORAGE_LOCK,
   STUDY_STORAGE_KEY,
@@ -61,6 +70,7 @@ interface PersistedMeta {
   dismissedResultSessionIds: string[];
   learnerCursor: number;
   contentRevision: number | null;
+  practiceContractVersions: PracticeContractVersions;
 }
 
 type LegacyMetaFields = {
@@ -75,6 +85,7 @@ export interface PracticeResultPointer {
 
 export interface BrowserOfflineState extends Omit<PersistedMeta, "key" | "version"> {
   pendingCount: number;
+  practiceUpdateRequired: PracticeMode[];
 }
 
 interface CachedStudyCard {
@@ -116,6 +127,7 @@ interface CachedStudySession {
   key: string;
   mode: "study";
   session: StudySessionView;
+  practiceContractVersion: number;
   reviews: StudyReviewRecord[];
 }
 
@@ -136,6 +148,7 @@ interface CachedPronunciationSession {
   key: string;
   mode: "pronunciation";
   session: PronunciationSessionView;
+  practiceContractVersion: number;
   attempts: AttemptInput[];
 }
 
@@ -143,6 +156,7 @@ interface CachedReflexSession {
   key: string;
   mode: "reflex";
   session: ReflexSessionView;
+  practiceContractVersion: number;
   answers: ReflexAnswerRecord[];
 }
 
@@ -150,6 +164,7 @@ interface CachedGuidedSession {
   key: string;
   mode: "reading" | "grammar";
   session: GuidedSessionView;
+  practiceContractVersion: number;
   attempts: AttemptInput[];
 }
 
@@ -315,7 +330,8 @@ export class OfflineLearningStore {
     return this.rememberSession({
       key: sessionKey("study", session.id),
       mode: "study",
-      session,
+      session: normalizeStudySession(session),
+      practiceContractVersion: sessionContractVersion("study", session.practiceContractVersion),
       reviews: [],
     });
   }
@@ -324,7 +340,8 @@ export class OfflineLearningStore {
     return this.rememberSession({
       key: sessionKey("reflex", session.id),
       mode: "reflex",
-      session,
+      session: normalizeCachedReflexSession(session),
+      practiceContractVersion: sessionContractVersion("reflex", session.practiceContractVersion),
       answers: [],
     });
   }
@@ -333,7 +350,11 @@ export class OfflineLearningStore {
     return this.rememberSession({
       key: sessionKey("pronunciation", session.id),
       mode: "pronunciation",
-      session,
+      session: normalizePronunciationSession(session),
+      practiceContractVersion: sessionContractVersion(
+        "pronunciation",
+        session.practiceContractVersion,
+      ),
       attempts: [],
     });
   }
@@ -342,7 +363,11 @@ export class OfflineLearningStore {
     return this.rememberSession({
       key: sessionKey(session.mode, session.id),
       mode: session.mode,
-      session,
+      session: normalizeGuidedSession(session),
+      practiceContractVersion: sessionContractVersion(
+        session.mode,
+        session.practiceContractVersion,
+      ),
       attempts: [],
     });
   }
@@ -486,12 +511,28 @@ export class OfflineLearningStore {
         transaction.abort();
         throw new Error("sync pull cursor moved backward");
       }
+      const nextPracticeContracts: PracticeContractVersions = {
+        ...latest.practiceContractVersions,
+      };
+      if (response.currentPracticeContracts) {
+        for (const mode of PRACTICE_MODES) {
+          const serverVersion = response.currentPracticeContracts[mode];
+          if (
+            Number.isSafeInteger(serverVersion) &&
+            serverVersion >= 1 &&
+            serverVersion !== currentPracticeContractVersion(mode)
+          ) {
+            nextPracticeContracts[mode] = serverVersion;
+          }
+        }
+      }
       for (const change of response.learnerChanges) {
         if (change.entityType === "card_state") {
           transaction.objectStore(CARD_STATE_STORE).put(change.cardState);
         }
       }
-      if (response.studyPack) {
+      if (response.studyPack && isApplicablePack("study", response.studyPack)) {
+        const practiceContractVersion = preparedPackContractVersion("study", response.studyPack);
         const pendingCardIds = new Set(
           pendingAttempts
             .filter((attempt) => attempt.studySessionId === response.studyPack?.session.id)
@@ -501,16 +542,37 @@ export class OfflineLearningStore {
           transaction,
           response.studyPack.session,
           response.studyPack.cards.filter((card) => !pendingCardIds.has(card.cardId)),
+          practiceContractVersion,
         );
+        nextPracticeContracts.study = practiceContractVersion;
+      } else if (response.studyPack) {
+        nextPracticeContracts.study = preparedPackContractVersion("study", response.studyPack);
       }
-      if (response.reflexPack) {
+      if (response.reflexPack && isApplicablePack("reflex", response.reflexPack)) {
+        const practiceContractVersion = preparedPackContractVersion("reflex", response.reflexPack);
+        const pendingCardIds = new Set(
+          pendingAttempts
+            .filter((attempt) => attempt.studySessionId === response.reflexPack?.session.id)
+            .map((attempt) => attempt.cardId),
+        );
         await replaceReflexPack(
           transaction,
           response.reflexPack.session,
-          response.reflexPack.cards,
+          response.reflexPack.cards.filter((card) => !pendingCardIds.has(card.cardId)),
+          practiceContractVersion,
         );
+        nextPracticeContracts.reflex = practiceContractVersion;
+      } else if (response.reflexPack) {
+        nextPracticeContracts.reflex = preparedPackContractVersion("reflex", response.reflexPack);
       }
-      if (response.pronunciationPack) {
+      if (
+        response.pronunciationPack &&
+        isApplicablePack("pronunciation", response.pronunciationPack)
+      ) {
+        const practiceContractVersion = preparedPackContractVersion(
+          "pronunciation",
+          response.pronunciationPack,
+        );
         const pendingCardIds = new Set(
           pendingAttempts
             .filter((attempt) => attempt.studySessionId === response.pronunciationPack?.session.id)
@@ -520,9 +582,20 @@ export class OfflineLearningStore {
           transaction,
           response.pronunciationPack.session,
           response.pronunciationPack.cards.filter((card) => !pendingCardIds.has(card.cardId)),
+          practiceContractVersion,
+        );
+        nextPracticeContracts.pronunciation = practiceContractVersion;
+      } else if (response.pronunciationPack) {
+        nextPracticeContracts.pronunciation = preparedPackContractVersion(
+          "pronunciation",
+          response.pronunciationPack,
         );
       }
-      if (response.readingPack) {
+      if (response.readingPack && isApplicablePack("reading", response.readingPack)) {
+        const practiceContractVersion = preparedPackContractVersion(
+          "reading",
+          response.readingPack,
+        );
         const pendingCardIds = new Set(
           pendingAttempts
             .filter((attempt) => attempt.studySessionId === response.readingPack?.session.id)
@@ -532,9 +605,20 @@ export class OfflineLearningStore {
           transaction,
           response.readingPack.session,
           response.readingPack.cards.filter((card) => !pendingCardIds.has(card.cardId)),
+          practiceContractVersion,
+        );
+        nextPracticeContracts.reading = practiceContractVersion;
+      } else if (response.readingPack) {
+        nextPracticeContracts.reading = preparedPackContractVersion(
+          "reading",
+          response.readingPack,
         );
       }
-      if (response.grammarPack) {
+      if (response.grammarPack && isApplicablePack("grammar", response.grammarPack)) {
+        const practiceContractVersion = preparedPackContractVersion(
+          "grammar",
+          response.grammarPack,
+        );
         const pendingCardIds = new Set(
           pendingAttempts
             .filter((attempt) => attempt.studySessionId === response.grammarPack?.session.id)
@@ -544,13 +628,31 @@ export class OfflineLearningStore {
           transaction,
           response.grammarPack.session,
           response.grammarPack.cards.filter((card) => !pendingCardIds.has(card.cardId)),
+          practiceContractVersion,
         );
+        nextPracticeContracts.grammar = practiceContractVersion;
+      } else if (response.grammarPack) {
+        nextPracticeContracts.grammar = preparedPackContractVersion(
+          "grammar",
+          response.grammarPack,
+        );
+      }
+      for (const mode of response.practiceUpdateRequiredModes ?? []) {
+        const serverVersion = response.currentPracticeContracts?.[mode];
+        nextPracticeContracts[mode] =
+          typeof serverVersion === "number" &&
+          Number.isSafeInteger(serverVersion) &&
+          serverVersion >= 1 &&
+          serverVersion !== currentPracticeContractVersion(mode)
+            ? serverVersion
+            : legacyPracticeContractVersion(mode);
       }
       const next: PersistedMeta = {
         ...latest,
         revision: latest.revision + 1,
         learnerCursor: response.nextCursor,
         contentRevision: response.currentContentRevision,
+        practiceContractVersions: nextPracticeContracts,
       };
       metaStore.put(next);
       persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
@@ -615,7 +717,7 @@ export class OfflineLearningStore {
 
   getPronunciationSession(sessionId: string): Promise<PronunciationSessionView | null> {
     return this.getCachedSession<CachedPronunciationSession>("pronunciation", sessionId).then(
-      (value) => value?.session ?? null,
+      (value) => (value ? normalizePronunciationSession(value.session) : null),
     );
   }
 
@@ -623,7 +725,13 @@ export class OfflineLearningStore {
     sessionId: string,
   ): Promise<{ session: PronunciationSessionView; attempts: AttemptInput[] } | null> {
     return this.getCachedSession<CachedPronunciationSession>("pronunciation", sessionId).then(
-      (value) => (value ? { session: value.session, attempts: value.attempts ?? [] } : null),
+      (value) =>
+        value
+          ? {
+              session: normalizePronunciationSession(value.session),
+              attempts: value.attempts ?? [],
+            }
+          : null,
     );
   }
 
@@ -641,8 +749,8 @@ export class OfflineLearningStore {
   }
 
   getReadingSession(sessionId: string): Promise<GuidedSessionView | null> {
-    return this.getCachedSession<CachedGuidedSession>("reading", sessionId).then(
-      (value) => value?.session ?? null,
+    return this.getCachedSession<CachedGuidedSession>("reading", sessionId).then((value) =>
+      value ? normalizeGuidedSession(value.session) : null,
     );
   }
 
@@ -651,13 +759,15 @@ export class OfflineLearningStore {
     sessionId: string,
   ): Promise<{ session: GuidedSessionView; attempts: AttemptInput[] } | null> {
     return this.getCachedSession<CachedGuidedSession>(mode, sessionId).then((value) =>
-      value ? { session: value.session, attempts: value.attempts ?? [] } : null,
+      value
+        ? { session: normalizeGuidedSession(value.session), attempts: value.attempts ?? [] }
+        : null,
     );
   }
 
   getGrammarSession(sessionId: string): Promise<GuidedSessionView | null> {
-    return this.getCachedSession<CachedGuidedSession>("grammar", sessionId).then(
-      (value) => value?.session ?? null,
+    return this.getCachedSession<CachedGuidedSession>("grammar", sessionId).then((value) =>
+      value ? normalizeGuidedSession(value.session) : null,
     );
   }
 
@@ -683,6 +793,7 @@ export class OfflineLearningStore {
         existing.activeGrammarTopicId === undefined ||
         existing.presentedResult === undefined ||
         existing.dismissedResultSessionIds === undefined ||
+        existing.practiceContractVersions === undefined ||
         hasLegacyFields
       ) {
         const legacyDismissed = legacy.dismissedStudySessionId
@@ -706,6 +817,10 @@ export class OfflineLearningStore {
             existing.dismissedResultSessionIds === undefined
               ? legacyDismissed
               : existing.dismissedResultSessionIds,
+          practiceContractVersions: normalizePracticeContractVersions(
+            existing.practiceContractVersions,
+            LEGACY_PRACTICE_CONTRACT_VERSIONS,
+          ),
         } as PersistedMeta & LegacyMetaFields;
         delete migrated.lastCompletedStudySessionId;
         delete migrated.dismissedStudySessionId;
@@ -713,6 +828,7 @@ export class OfflineLearningStore {
         transaction.objectStore(META_STORE).put(migrated satisfies PersistedMeta);
         await transactionDone(transaction);
       }
+      await this.normalizePracticeContractsUnderLock();
       await this.reconcileLegacyStateUnderLock();
       return;
     }
@@ -736,6 +852,59 @@ export class OfflineLearningStore {
     await transactionDone(transaction);
     persistLegacyBridge(this.storage, migrated.meta);
     persistIdentityMirror(this.storage, migrated.meta);
+    await this.normalizePracticeContractsUnderLock();
+  }
+
+  private async normalizePracticeContractsUnderLock(): Promise<void> {
+    const transaction = this.db.transaction(
+      [META_STORE, STUDY_CARD_STORE, PRONUNCIATION_CARD_STORE, SESSION_STORE],
+      "readwrite",
+    );
+    const metaStore = transaction.objectStore(META_STORE);
+    const latest = await requiredMeta(metaStore);
+    const records = (await request(transaction.objectStore(SESSION_STORE).getAll())) as Array<
+      Partial<CachedSession> & { mode?: PracticeMode; key?: string; session?: { id?: string } }
+    >;
+    const nextPracticeContracts = { ...latest.practiceContractVersions };
+    let metaChanged = false;
+
+    for (const raw of records) {
+      if (!raw.key || !raw.mode || !raw.session?.id) continue;
+      const session = normalizeCachedSessionRecord(raw);
+      const oldVersion = raw.practiceContractVersion;
+      const oldSessionVersion = (raw.session as { practiceContractVersion?: unknown })
+        .practiceContractVersion;
+      if (
+        oldVersion !== session.practiceContractVersion ||
+        oldSessionVersion !== session.practiceContractVersion
+      ) {
+        transaction.objectStore(SESSION_STORE).put(session);
+      }
+
+      if (
+        activeSessionId(latest, session.mode) === session.session.id &&
+        isUnfinishedSession(session)
+      ) {
+        if (nextPracticeContracts[session.mode] !== session.practiceContractVersion) {
+          nextPracticeContracts[session.mode] = session.practiceContractVersion;
+          metaChanged = true;
+        }
+      }
+    }
+
+    if (metaChanged) {
+      const next: PersistedMeta = {
+        ...latest,
+        revision: latest.revision + 1,
+        practiceContractVersions: nextPracticeContracts,
+      };
+      metaStore.put(next);
+      persistLegacyBridgeBeforeCommit(this.storage, next, transaction);
+      await transactionDone(transaction);
+      persistIdentityMirror(this.storage, next);
+      return;
+    }
+    await transactionDone(transaction);
   }
 
   private async readMeta(): Promise<PersistedMeta | null> {
@@ -941,42 +1110,57 @@ async function replaceStudyPack(
   transaction: IDBTransaction,
   session: StudySessionView,
   cards: StudyCard[],
+  practiceContractVersion: number,
 ): Promise<void> {
   const store = transaction.objectStore(STUDY_CARD_STORE);
   await deleteSessionCards(store, session.id);
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
   });
-  await putMergedSession(transaction.objectStore(SESSION_STORE), {
-    key: sessionKey("study", session.id),
-    mode: "study",
-    session,
-    reviews: [],
-  } satisfies CachedStudySession);
+  const normalizedSession = normalizeStudySession({ ...session, practiceContractVersion });
+  await putMergedSession(
+    transaction.objectStore(SESSION_STORE),
+    {
+      key: sessionKey("study", session.id),
+      mode: "study",
+      session: normalizedSession,
+      practiceContractVersion,
+      reviews: [],
+    } satisfies CachedStudySession,
+    { allowContractUpgrade: true },
+  );
 }
 
 async function replacePronunciationPack(
   transaction: IDBTransaction,
   session: PronunciationSessionView,
   cards: PronunciationCard[],
+  practiceContractVersion: number,
 ): Promise<void> {
   const store = transaction.objectStore(PRONUNCIATION_CARD_STORE);
   await deleteSessionCards(store, session.id);
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
   });
-  await putMergedSession(transaction.objectStore(SESSION_STORE), {
-    key: sessionKey("pronunciation", session.id),
-    mode: "pronunciation",
-    session,
-    attempts: [],
-  } satisfies CachedPronunciationSession);
+  const normalizedSession = normalizePronunciationSession({ ...session, practiceContractVersion });
+  await putMergedSession(
+    transaction.objectStore(SESSION_STORE),
+    {
+      key: sessionKey("pronunciation", session.id),
+      mode: "pronunciation",
+      session: normalizedSession,
+      practiceContractVersion,
+      attempts: [],
+    } satisfies CachedPronunciationSession,
+    { allowContractUpgrade: true },
+  );
 }
 
 async function replaceReflexPack(
   transaction: IDBTransaction,
   session: ReflexSessionView,
   cards: ReflexCard[],
+  practiceContractVersion: number,
 ): Promise<void> {
   const store = transaction.objectStore(PRONUNCIATION_CARD_STORE);
   await enrichLegacyReflexAnswers(transaction, session.id);
@@ -984,34 +1168,52 @@ async function replaceReflexPack(
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
   });
-  await putMergedSession(transaction.objectStore(SESSION_STORE), {
-    key: sessionKey("reflex", session.id),
-    mode: "reflex",
-    session,
-    answers: [],
-  } satisfies CachedReflexSession);
+  const normalizedSession = normalizeCachedReflexSession({ ...session, practiceContractVersion });
+  await putMergedSession(
+    transaction.objectStore(SESSION_STORE),
+    {
+      key: sessionKey("reflex", session.id),
+      mode: "reflex",
+      session: normalizedSession,
+      practiceContractVersion,
+      answers: [],
+    } satisfies CachedReflexSession,
+    { allowContractUpgrade: true },
+  );
 }
 
 async function replaceGuidedPack(
   transaction: IDBTransaction,
   session: GuidedSessionView,
   cards: ReadingCard[] | GrammarCard[],
+  practiceContractVersion: number,
 ): Promise<void> {
   const store = transaction.objectStore(PRONUNCIATION_CARD_STORE);
   await deleteSessionCards(store, session.id);
   cards.forEach((card, position) => {
     store.put({ key: cardKey(session.id, card.cardId), sessionId: session.id, position, card });
   });
-  await putMergedSession(transaction.objectStore(SESSION_STORE), {
-    key: sessionKey(session.mode, session.id),
-    mode: session.mode,
-    session,
-    attempts: [],
-  } satisfies CachedGuidedSession);
+  const normalizedSession = normalizeGuidedSession({ ...session, practiceContractVersion });
+  await putMergedSession(
+    transaction.objectStore(SESSION_STORE),
+    {
+      key: sessionKey(session.mode, session.id),
+      mode: session.mode,
+      session: normalizedSession,
+      practiceContractVersion,
+      attempts: [],
+    } satisfies CachedGuidedSession,
+    { allowContractUpgrade: true },
+  );
 }
 
-async function putMergedSession(store: IDBObjectStore, incoming: CachedSession): Promise<void> {
-  const existing = (await request(store.get(incoming.key))) as CachedSession | undefined;
+async function putMergedSession(
+  store: IDBObjectStore,
+  incoming: CachedSession,
+  options: { allowContractUpgrade?: boolean } = {},
+): Promise<void> {
+  const existingValue = (await request(store.get(incoming.key))) as CachedSession | undefined;
+  const existing = existingValue ? normalizeCachedSessionRecord(existingValue) : undefined;
   if (!existing) {
     store.put(incoming);
     return;
@@ -1019,14 +1221,23 @@ async function putMergedSession(store: IDBObjectStore, incoming: CachedSession):
   if (existing.mode !== incoming.mode) {
     throw new Error("cached learning session mode changed unexpectedly");
   }
+  const contractVersion = options.allowContractUpgrade
+    ? incoming.practiceContractVersion
+    : existing.practiceContractVersion;
+  const mergedIncoming = {
+    ...incoming,
+    practiceContractVersion: contractVersion,
+    session: { ...incoming.session, practiceContractVersion: contractVersion },
+  } as CachedSession;
   if (incoming.mode === "study") {
     const previous = existing as CachedStudySession;
+    const next = mergedIncoming as CachedStudySession;
     store.put({
-      ...incoming,
+      ...next,
       session: {
-        ...incoming.session,
-        reviewedCards: Math.max(incoming.session.reviewedCards, previous.session.reviewedCards),
-        endedAt: incoming.session.endedAt ?? previous.session.endedAt,
+        ...next.session,
+        reviewedCards: Math.max(next.session.reviewedCards, previous.session.reviewedCards),
+        endedAt: next.session.endedAt ?? previous.session.endedAt,
       },
       reviews: previous.reviews ?? [],
     } satisfies CachedStudySession);
@@ -1034,24 +1245,26 @@ async function putMergedSession(store: IDBObjectStore, incoming: CachedSession):
   }
   if (incoming.mode === "reflex") {
     const previous = existing as CachedReflexSession;
+    const next = mergedIncoming as CachedReflexSession;
     store.put({
-      ...incoming,
+      ...next,
       session: {
-        ...incoming.session,
-        completedItems: Math.max(incoming.session.completedItems, previous.session.completedItems),
-        endedAt: incoming.session.endedAt ?? previous.session.endedAt,
+        ...next.session,
+        completedItems: Math.max(next.session.completedItems, previous.session.completedItems),
+        endedAt: next.session.endedAt ?? previous.session.endedAt,
       },
       answers: previous.answers,
     } satisfies CachedReflexSession);
     return;
   }
   const previous = existing as CachedPronunciationSession | CachedGuidedSession;
+  const next = mergedIncoming as CachedPronunciationSession | CachedGuidedSession;
   store.put({
-    ...incoming,
+    ...next,
     session: {
-      ...incoming.session,
-      completedItems: Math.max(incoming.session.completedItems, previous.session.completedItems),
-      endedAt: incoming.session.endedAt ?? previous.session.endedAt,
+      ...next.session,
+      completedItems: Math.max(next.session.completedItems, previous.session.completedItems),
+      endedAt: next.session.endedAt ?? previous.session.endedAt,
     },
     attempts: previous.attempts ?? [],
   });
@@ -1219,10 +1432,121 @@ function normalizeReflexAnswer(answer: ReflexAnswerRecord): ReflexAnswerRecord {
 export function normalizeCachedReflexSession(session: ReflexSessionView): ReflexSessionView {
   return {
     ...session,
+    practiceContractVersion: sessionContractVersion("reflex", session.practiceContractVersion),
     activityType: session.activityType ?? "mixed",
     choiceCount: session.choiceCount ?? 4,
     selectionStrategy: session.selectionStrategy ?? QUIZ_SELECTION_STRATEGY,
   };
+}
+
+function sessionContractVersion(mode: PracticeMode, value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 1
+    ? (value as number)
+    : legacyPracticeContractVersion(mode);
+}
+
+function normalizePracticeContractVersions(
+  value: unknown,
+  fallback: PracticeContractVersions,
+): PracticeContractVersions {
+  const record = isRecord(value) ? value : {};
+  return Object.fromEntries(
+    PRACTICE_MODES.map((mode) => [
+      mode,
+      sessionContractVersion(mode, record[mode] ?? fallback[mode]),
+    ]),
+  ) as PracticeContractVersions;
+}
+
+function normalizeCachedSessionRecord(
+  raw: Partial<CachedSession> & { mode?: PracticeMode; key?: string; session?: { id?: string } },
+): CachedSession {
+  if (!raw.key || !raw.mode || !raw.session?.id) {
+    throw new Error("cached learning session is missing its identity");
+  }
+  const mode = raw.mode;
+  const practiceContractVersion = sessionContractVersion(
+    mode,
+    raw.practiceContractVersion ?? raw.session.practiceContractVersion,
+  );
+  if (mode === "study") {
+    const session = normalizeStudySession({
+      ...(raw.session as StudySessionView),
+      practiceContractVersion,
+    });
+    return {
+      key: raw.key,
+      mode,
+      session,
+      practiceContractVersion,
+      reviews: (raw as Partial<CachedStudySession>).reviews ?? [],
+    };
+  }
+  if (mode === "reflex") {
+    const session = normalizeCachedReflexSession({
+      ...(raw.session as ReflexSessionView),
+      practiceContractVersion,
+    });
+    return {
+      key: raw.key,
+      mode,
+      session,
+      practiceContractVersion,
+      answers: (raw as Partial<CachedReflexSession>).answers ?? [],
+    };
+  }
+  if (mode === "pronunciation") {
+    const session = normalizePronunciationSession({
+      ...(raw.session as PronunciationSessionView),
+      practiceContractVersion,
+    });
+    return {
+      key: raw.key,
+      mode,
+      session,
+      practiceContractVersion,
+      attempts: (raw as Partial<CachedPronunciationSession>).attempts ?? [],
+    };
+  }
+  const session = normalizeGuidedSession({
+    ...(raw.session as GuidedSessionView),
+    practiceContractVersion,
+  });
+  return {
+    key: raw.key,
+    mode,
+    session,
+    practiceContractVersion,
+    attempts: (raw as Partial<CachedGuidedSession>).attempts ?? [],
+  };
+}
+
+function isUnfinishedSession(session: CachedSession): boolean {
+  if (session.mode === "study") {
+    return (
+      session.session.endedAt === null && session.session.reviewedCards < session.session.maxCards
+    );
+  }
+  return (
+    session.session.endedAt === null && session.session.completedItems < session.session.maxItems
+  );
+}
+
+function preparedPackContractVersion(
+  mode: PracticeMode,
+  pack: { practiceContractVersion?: number; session: { practiceContractVersion?: number } },
+): number {
+  return sessionContractVersion(
+    mode,
+    pack.practiceContractVersion ?? pack.session.practiceContractVersion,
+  );
+}
+
+function isApplicablePack(
+  mode: PracticeMode,
+  pack: { practiceContractVersion?: number; session: { practiceContractVersion?: number } },
+): boolean {
+  return isCurrentPracticeContract(mode, preparedPackContractVersion(mode, pack));
 }
 
 function reflexAnswerDisplay(
@@ -1294,6 +1618,7 @@ function migrateMeta(
       dismissedResultSessionIds: [],
       learnerCursor: 0,
       contentRevision: null,
+      practiceContractVersions: { ...CURRENT_PRACTICE_CONTRACT_VERSIONS },
     },
     pendingAttempt: legacy?.pendingAttempt ?? null,
   };
@@ -1355,9 +1680,30 @@ function stableJson(value: unknown): string {
 }
 
 function normalizeStudySession(session: StudySessionView): StudySessionView {
+  const practiceContractVersion = sessionContractVersion("study", session.practiceContractVersion);
   return {
     ...session,
+    practiceContractVersion,
     direction: session.direction ?? "mixed",
+  };
+}
+
+function normalizePronunciationSession(
+  session: PronunciationSessionView,
+): PronunciationSessionView {
+  return {
+    ...session,
+    practiceContractVersion: sessionContractVersion(
+      "pronunciation",
+      session.practiceContractVersion,
+    ),
+  };
+}
+
+function normalizeGuidedSession(session: GuidedSessionView): GuidedSessionView {
+  return {
+    ...session,
+    practiceContractVersion: sessionContractVersion(session.mode, session.practiceContractVersion),
   };
 }
 
@@ -1460,7 +1806,11 @@ function mapState(meta: PersistedMeta, pendingCount: number): BrowserOfflineStat
     dismissedResultSessionIds: meta.dismissedResultSessionIds,
     learnerCursor: meta.learnerCursor,
     contentRevision: meta.contentRevision,
+    practiceContractVersions: { ...meta.practiceContractVersions },
     pendingCount,
+    practiceUpdateRequired: PRACTICE_MODES.filter(
+      (mode) => !isCurrentPracticeContract(mode, meta.practiceContractVersions[mode]),
+    ),
   };
 }
 
@@ -1539,11 +1889,16 @@ async function requiredMeta(store: IDBObjectStore): Promise<PersistedMeta> {
   return {
     ...value,
     activeReflexSessionId: value.activeReflexSessionId ?? null,
+    activePronunciationSessionId: value.activePronunciationSessionId ?? null,
     activeReadingSessionId: value.activeReadingSessionId ?? null,
     activeGrammarSessionId: value.activeGrammarSessionId ?? null,
     activeGrammarTopicId: value.activeGrammarTopicId ?? null,
     presentedResult: value.presentedResult === undefined ? legacyPresented : value.presentedResult,
     dismissedResultSessionIds: value.dismissedResultSessionIds ?? legacyDismissed,
+    practiceContractVersions: normalizePracticeContractVersions(
+      value.practiceContractVersions,
+      LEGACY_PRACTICE_CONTRACT_VERSIONS,
+    ),
   } as PersistedMeta;
 }
 

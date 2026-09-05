@@ -9,6 +9,7 @@
     type PresentedReflexQuestion,
   } from "../domain/reflex";
   import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import { currentPracticeContractVersion } from "../domain/practice-contract";
   import type {
     QuizActivity,
     QuizChoiceCount,
@@ -30,6 +31,7 @@
   import { localQuizSummary } from "./local-session-summary";
   import { cachePracticeSummary } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
+  import PracticeUpdateRequired from "./PracticeUpdateRequired.svelte";
   import {
     readQuizPreferences,
     writeQuizPreferences,
@@ -37,7 +39,15 @@
     type QuizSessionSize,
   } from "./quiz-preferences";
 
-  type Phase = "loading" | "choose" | "prompt" | "feedback" | "empty" | "completed" | "error";
+  type Phase =
+    | "loading"
+    | "choose"
+    | "prompt"
+    | "feedback"
+    | "empty"
+    | "completed"
+    | "update-required"
+    | "error";
 
   let phase: Phase = "loading";
   let store: OfflineLearningStore | null = null;
@@ -174,6 +184,7 @@
       maxItems,
       activityType: selected.activityType,
       choiceCount: selected.choiceCount,
+      practiceContractVersion: currentPracticeContractVersion("reflex"),
     });
     if (!store) throw new Error("オフライン保存を準備できませんでした。");
     session = result.session;
@@ -183,6 +194,11 @@
   async function loadNextQuestion(): Promise<void> {
     if (!store || !browserState?.activeReflexSessionId) {
       phase = "choose";
+      return;
+    }
+    if (browserState.practiceUpdateRequired.includes("reflex")) {
+      question = null;
+      phase = "update-required";
       return;
     }
     const sessionId = browserState.activeReflexSessionId;
@@ -296,6 +312,11 @@
     const result = await synchronizeLearning(store);
     browserState = result.state;
     isOffline = browserOffline || result.networkUnavailable;
+    if (browserState.practiceUpdateRequired.includes("reflex")) {
+      question = null;
+      phase = "update-required";
+      return;
+    }
     if (result.error) {
       syncMessage = `${result.pending}件を同期待ちにしています`;
     } else {
@@ -458,6 +479,11 @@
       size: completed.maxItems === 8 || completed.maxItems === 20 ? completed.maxItems : 12,
     });
   }
+
+  function responseTimingLabel(responseMs: number | null): string {
+    if (responseMs === null) return "計測対象外";
+    return responseMs >= REFLEX_SLOW_RESPONSE_MS ? "ゆっくり" : "テンポよく";
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -534,6 +560,12 @@
       >
       <p class="boundary-note">回答中はキーボードの1〜9、または選択肢をタップできます。</p>
     </div>
+  {:else if phase === "update-required"}
+    <PracticeUpdateRequired
+      offline={browserOffline || isOffline}
+      pendingCount={browserState?.pendingCount ?? 0}
+      onRetry={() => void initializeReflex()}
+    />
   {:else if (phase === "prompt" || phase === "feedback") && question && session}
     <article
       class="study-card reflex-card"
@@ -603,11 +635,7 @@
           class:slow={phase === "feedback" &&
             selectedResponseMs !== null &&
             selectedResponseMs >= REFLEX_SLOW_RESPONSE_MS}
-          >{phase === "feedback"
-            ? selectedResponseMs === null
-              ? "計測対象外"
-              : `${selectedResponseMs} ms`
-            : "—"}</span
+          >{phase === "feedback" ? responseTimingLabel(selectedResponseMs) : "—"}</span
         >
         <button
           class="secondary-button"

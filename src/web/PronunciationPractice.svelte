@@ -10,6 +10,7 @@
     type Tone,
   } from "../domain/pronunciation";
   import { PRACTICE_CATALOG } from "../domain/practice-catalog";
+  import { currentPracticeContractVersion } from "../domain/practice-contract";
   import type {
     PronunciationCard,
     PronunciationSessionSummary,
@@ -29,9 +30,18 @@
   import { hasCompletedLocalResult, localPronunciationSummary } from "./local-session-summary";
   import { cachePracticeSummary } from "./practice-history-cache";
   import PracticeResult from "./PracticeResult.svelte";
+  import PracticeUpdateRequired from "./PracticeUpdateRequired.svelte";
 
   type Phase =
-    "loading" | "choose" | "prompt" | "revealed" | "advancing" | "empty" | "completed" | "error";
+    | "loading"
+    | "choose"
+    | "prompt"
+    | "revealed"
+    | "advancing"
+    | "empty"
+    | "completed"
+    | "update-required"
+    | "error";
   const focuses: Array<{ id: PronunciationFocus; label: string; hint: string }> = [
     {
       id: "mixed",
@@ -145,7 +155,13 @@
   ): Promise<void> {
     const result = await postJson<{ session: PronunciationSessionView }>(
       "/api/pronunciation/sessions",
-      { sessionId, deviceId, focus, maxItems: 10 },
+      {
+        sessionId,
+        deviceId,
+        focus,
+        maxItems: 10,
+        practiceContractVersion: currentPracticeContractVersion("pronunciation"),
+      },
     );
     session = result.session;
     if (!store) throw new Error("オフライン保存を準備できませんでした。");
@@ -155,6 +171,11 @@
   async function loadNextCard(showLoading = true): Promise<void> {
     if (!store || !browserState?.activePronunciationSessionId) {
       throw new Error("発音セッションがありません。");
+    }
+    if (browserState.practiceUpdateRequired.includes("pronunciation")) {
+      card = null;
+      phase = "update-required";
+      return;
     }
     phase = showLoading ? "loading" : "advancing";
     const sessionId = browserState.activePronunciationSessionId;
@@ -338,6 +359,11 @@
     const result = await synchronizeLearning(store);
     browserState = result.state;
     isOffline = browserOffline || result.networkUnavailable;
+    if (browserState.practiceUpdateRequired.includes("pronunciation")) {
+      card = null;
+      phase = "update-required";
+      return;
+    }
     if (result.error) {
       syncMessage = `${result.pending}件を同期待ちにしています`;
       return;
@@ -536,6 +562,12 @@
       {/each}
     </div>
   </section>
+{:else if phase === "update-required"}
+  <PracticeUpdateRequired
+    offline={browserOffline || isOffline}
+    pendingCount={browserState?.pendingCount ?? 0}
+    onRetry={() => void initializePronunciation()}
+  />
 {:else if phase === "error"}
   <section class="status-panel error-panel" role="alert">
     <p class="status-kicker">練習を一時停止しました</p>

@@ -137,6 +137,11 @@ learner/content changes. The browser keeps durable device identity separate from
 canonical ingestion attaches learner ownership from trusted Worker context rather than an offline
 event payload.
 
+Offline prepared-card compatibility is versioned independently from imported `contentRevision`.
+The per-mode legacy/current contract map, stale-cache replacement rules, immutable pronunciation
+presentation evidence, pending-event ordering, and old-running-tab rollout boundary are documented
+in [Offline practice contract compatibility](docs/offline-practice-contracts.md).
+
 The checked-in `.dev.vars.example` enables `LOCAL_STUDY_BYPASS=true`. That bypass is accepted only
 when the binding is explicitly `true`, the request URL uses a loopback hostname, and the browser
 sends a same-origin JSON request (safe GET/HEAD requests are allowed for local health/MCP checks).
