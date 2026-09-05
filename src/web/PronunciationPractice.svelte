@@ -4,7 +4,10 @@
   import {
     PRONUNCIATION_AUDIO_SKIP_INTERACTION,
     PRONUNCIATION_AUDIO_SKIP_REASON,
+    PRONUNCIATION_PRODUCTION_INTERACTION,
+    TONES,
     type PronunciationFocus,
+    type Tone,
   } from "../domain/pronunciation";
   import { PRACTICE_CATALOG } from "../domain/practice-catalog";
   import type {
@@ -33,7 +36,7 @@
     {
       id: "mixed",
       label: pronunciationFocusLabel("mixed"),
-      hint: "ピンイン・声調・聞き取り・発話",
+      hint: "ピンイン・声調・聞き取り",
     },
     { id: "pinyin", label: pronunciationFocusLabel("pinyin"), hint: "正確な読みを見分ける" },
     { id: "tones", label: pronunciationFocusLabel("tones"), hint: "単音節と二音節の声調" },
@@ -45,15 +48,9 @@
     {
       id: "speaking",
       label: pronunciationFocusLabel("speaking"),
-      hint: "声に出して比べ、自己評価する",
+      hint: "声に出して答えと比べる",
     },
   ];
-  const selfRatings = [
-    { value: 1, label: "もう一度", hint: "声調・音節を外した" },
-    { value: 2, label: "だいたい", hint: "通じるが不安定" },
-    { value: 3, label: "できた", hint: "おおむね一致" },
-    { value: 4, label: "明瞭", hint: "自信を持って発音" },
-  ] as const;
 
   let phase: Phase = "loading";
   let store: OfflineLearningStore | null = null;
@@ -65,6 +62,8 @@
   let promptStartedAt = 0;
   let answerSaved = false;
   let wasCorrect: boolean | null = null;
+  let tonePairStage: 0 | 1 = 0;
+  let tonePairFirst: Tone | null = null;
   let browserOffline = !navigator.onLine;
   let isOffline = browserOffline;
   let audioAvailableOffline = true;
@@ -175,6 +174,8 @@
     card = cachedCard;
     answerSaved = false;
     wasCorrect = null;
+    tonePairStage = 0;
+    tonePairFirst = null;
     audioError = "";
     if (cachedCard) {
       audioAvailableOffline = await isPronunciationAudioCached(cachedCard);
@@ -219,10 +220,20 @@
     phase = "choose";
   }
 
-  function revealRecall(): void {
+  async function revealRecall(): Promise<void> {
     if (phase !== "prompt" || !card) return;
     prepareSound();
-    phase = "revealed";
+    if (card.activityType === "pronunciation_production") {
+      await saveAttempt({
+        metadata: {
+          interaction: PRONUNCIATION_PRODUCTION_INTERACTION,
+          readingId: card.readingId,
+        },
+      });
+      if (!answerSaved) return;
+    } else {
+      phase = "revealed";
+    }
     if (card.media && !shouldAutoplayOnPrompt(card.activityType)) void autoplayCardAudio();
   }
 
@@ -234,6 +245,32 @@
     await saveAttempt({
       correct,
       metadata: { interaction: "choice", selectedChoiceId: choiceId, readingId: card.readingId },
+    });
+    wasCorrect = correct;
+    if (card.media && !shouldAutoplayOnPrompt(card.activityType)) void autoplayCardAudio();
+  }
+
+  async function selectTonePairTone(tone: Tone): Promise<void> {
+    if (phase !== "prompt" || card?.activityType !== "tone_pair_identification" || answerInFlight)
+      return;
+    if (tonePairStage === 0) {
+      tonePairFirst = tone;
+      tonePairStage = 1;
+      return;
+    }
+    if (tonePairFirst === null || !card.answerChoiceId) return;
+    const selectedTonePair = `${tonePairFirst}-${tone}`;
+    const correct = card.answerChoiceId === `tone-pair:${selectedTonePair}`;
+    prepareSound();
+    playAnswerFeedback(correct ? "correct" : "incorrect");
+    await saveAttempt({
+      correct,
+      metadata: {
+        interaction: "choice",
+        selectedChoiceId: `tone-pair:${selectedTonePair}`,
+        selectedTonePair,
+        readingId: card.readingId,
+      },
     });
     wasCorrect = correct;
     if (card.media && !shouldAutoplayOnPrompt(card.activityType)) void autoplayCardAudio();
@@ -252,20 +289,6 @@
       metadata: { interaction: "reveal-and-self-check", readingId: card.readingId },
     });
     wasCorrect = correct;
-  }
-
-  async function saveProduction(selfRating: number): Promise<void> {
-    if (
-      phase !== "revealed" ||
-      answerSaved ||
-      answerInFlight ||
-      card?.activityType !== "pronunciation_production"
-    )
-      return;
-    await saveAttempt({
-      selfRating,
-      metadata: { interaction: "speak-compare-self-rate", readingId: card.readingId },
-    });
   }
 
   async function saveAttempt(
@@ -451,10 +474,14 @@
       case "tone_identification":
         return "辞書の声調を選ぶ";
       case "tone_pair_identification":
-        return "辞書の声調の組み合わせを選ぶ";
+        return "1音節目、2音節目の順に声調を選ぶ";
       case "pronunciation_production":
         return "声に出してから、答えと比べる";
     }
+  }
+
+  function toneLabel(tone: Tone): string {
+    return tone === 5 ? "Tone 5（軽声）" : `Tone ${tone}`;
   }
 
   function showError(error: unknown): void {
@@ -577,9 +604,6 @@
         >
           {card.reading.untonedPinyin}
         </p>{/if}
-      {#if card.activityType === "pronunciation_production"}<p class="production-pinyin">
-          {card.reading.pinyin}
-        </p>{/if}
       {#if !card.activityType.startsWith("audio_to_") && card.lexeme.meanings[0]}<p
           class="sense-hint"
         >
@@ -588,14 +612,36 @@
       {#if audioError}<p class="audio-error" role="status">{audioError}</p>{/if}
     </div>
 
-    {#if phase === "prompt" && card.choices.length > 0}
-      <div class:pair-grid={card.activityType === "tone_pair_identification"} class="choice-grid">
+    {#if phase === "prompt" && card.activityType === "tone_pair_identification"}
+      <div class="tone-pair-stage" data-tone-pair-stage={tonePairStage + 1}>
+        <p class="tone-pair-instruction">
+          {tonePairStage === 0 ? "1音節目の声調を選ぶ" : "2音節目の声調を選ぶ"}
+        </p>
+        {#if tonePairStage === 1 && tonePairFirst !== null}<p
+            class="tone-pair-selected"
+            aria-live="polite"
+          >
+            1音節目: {toneLabel(tonePairFirst)}
+          </p>{/if}
+        <div class="choice-grid tone-pair-choices">
+          {#each TONES as tone}
+            {#if tonePairStage === 0}<button
+                aria-pressed={tonePairFirst === tone}
+                onclick={() => void selectTonePairTone(tone)}>{toneLabel(tone)}</button
+              >{:else}<button onclick={() => void selectTonePairTone(tone)}
+                >{toneLabel(tone)}</button
+              >{/if}
+          {/each}
+        </div>
+      </div>
+    {:else if phase === "prompt" && card.choices.length > 0}
+      <div class="choice-grid">
         {#each card.choices as choice}<button onclick={() => void selectChoice(choice.id)}
             >{choice.label}</button
           >{/each}
       </div>
     {:else if phase === "prompt"}
-      <button class="reveal-button" onclick={revealRecall}
+      <button class="reveal-button" onclick={() => void revealRecall()}
         ><span
           >{card.activityType === "pronunciation_production"
             ? "発音した — 答えと比べる"
@@ -636,12 +682,6 @@
         <div class="binary-grid">
           <button class="missed" onclick={() => void saveRecall(false)}>思い出せなかった</button
           ><button class="got-it" onclick={() => void saveRecall(true)}>思い出せた</button>
-        </div>
-      {:else if !answerSaved && card.activityType === "pronunciation_production"}
-        <div class="production-ratings">
-          {#each selfRatings as rating}<button onclick={() => void saveProduction(rating.value)}
-              ><strong>{rating.label}</strong><span>{rating.hint}</span></button
-            >{/each}
         </div>
       {:else if answerSaved}
         <button class="primary-button continue-button" onclick={() => void loadNextCard(false)}

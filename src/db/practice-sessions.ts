@@ -7,6 +7,7 @@ import type {
   LearnerId,
   PracticeAttentionItem,
   PracticeCorrectnessEvidence,
+  PracticeRecallEvidence,
   PracticeMode,
   PracticeRatingEvidence,
   PracticeSessionHistory,
@@ -270,7 +271,12 @@ function summarizePronunciation(
     const activity = attempt.activity_type as PronunciationActivityType;
     activities[activity] = (activities[activity] ?? 0) + 1;
   }
-  const correctnessRows = attempts.filter(({ correct }) => correct !== null);
+  const correctnessRows = attempts.filter(
+    ({ activity_type, correct }) => activity_type !== "hanzi_to_pinyin" && correct !== null,
+  );
+  const recallRows = attempts.filter(
+    ({ activity_type, correct }) => activity_type === "hanzi_to_pinyin" && correct !== null,
+  );
   const selfRatingRows = attempts.filter(({ self_rating }) => self_rating !== null);
   return {
     ...baseSummary(session, attempts, requestedItems, "pronunciation"),
@@ -280,6 +286,7 @@ function summarizePronunciation(
     evidence: {
       activities,
       correctness: correctnessRows.length > 0 ? correctnessEvidence(correctnessRows) : null,
+      selfReportedRecall: recallRows.length > 0 ? recallEvidence(recallRows) : null,
       selfRatings:
         selfRatingRows.length > 0
           ? ratingEvidence(selfRatingRows.map(({ self_rating }) => self_rating))
@@ -290,8 +297,11 @@ function summarizePronunciation(
       ),
     },
     attentionItems: attentionItems(attempts, (attempt) => {
+      if (attempt.activity_type === "hanzi_to_pinyin" && attempt.correct === 0) {
+        return "自己申告で思い出せなかった";
+      }
       if (attempt.correct === 0) return "誤答";
-      if (attempt.self_rating !== null && attempt.self_rating <= 2) return "要練習";
+      if (attempt.self_rating !== null && attempt.self_rating <= 2) return "過去の自己評価が低い";
       return null;
     }),
   };
@@ -310,11 +320,11 @@ function summarizeReading(
     practice: "reading",
     configuration: { requestedItems },
     evidence: {
-      comprehension: ratingEvidence(attempts.map(({ self_rating }) => self_rating)),
+      comprehension: optionalRatingEvidence(attempts.map(({ self_rating }) => self_rating)),
       grammarTopics: encounteredTopics(attempts, topicTitles),
     },
     attentionItems: attentionItems(attempts, (attempt) =>
-      attempt.self_rating !== null && attempt.self_rating <= 2 ? "読み直す" : null,
+      attempt.self_rating !== null && attempt.self_rating <= 2 ? "過去の理解度評価が低い" : null,
     ),
   };
 }
@@ -336,12 +346,14 @@ function summarizeGrammar(
     },
     evidence: {
       correctness: correctnessEvidence(attempts),
-      confidence: ratingEvidence(attempts.map(({ self_rating }) => self_rating)),
+      confidence: optionalRatingEvidence(attempts.map(({ self_rating }) => self_rating)),
       grammarTopics: encounteredTopics(attempts, topicTitles),
     },
     attentionItems: attentionItems(attempts, (attempt) => {
       if (attempt.correct === 0) return "誤答";
-      if (attempt.self_rating !== null && attempt.self_rating <= 2) return "要確認";
+      if (attempt.self_rating !== null && attempt.self_rating <= 2) {
+        return "過去の自信度評価が低い";
+      }
       return null;
     }),
   };
@@ -410,6 +422,14 @@ function correctnessEvidence(attempts: readonly AttemptRow[]): PracticeCorrectne
   };
 }
 
+function recallEvidence(attempts: readonly AttemptRow[]): PracticeRecallEvidence {
+  const responses = attempts.filter(({ correct }) => correct !== null);
+  return {
+    responses: responses.length,
+    remembered: count(responses, ({ correct }) => correct === 1),
+  };
+}
+
 function ratingEvidence(values: readonly (number | null)[]): PracticeRatingEvidence {
   const distribution: Record<FsrsRating, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   for (const value of values) {
@@ -419,6 +439,11 @@ function ratingEvidence(values: readonly (number | null)[]): PracticeRatingEvide
     responses: Object.values(distribution).reduce((total, value) => total + value, 0),
     distribution,
   };
+}
+
+function optionalRatingEvidence(values: readonly (number | null)[]): PracticeRatingEvidence | null {
+  const evidence = ratingEvidence(values);
+  return evidence.responses === 0 ? null : evidence;
 }
 
 function attentionItems(

@@ -1,5 +1,6 @@
 import { expect, test, type Response } from "@playwright/test";
 
+import type { AttemptInput } from "../../src/domain/types";
 import { seedLegacyCompletedSession } from "./offline-fixtures";
 
 interface ObservedCard {
@@ -7,6 +8,7 @@ interface ObservedCard {
   simplified: string;
   pinyin: string;
   mediaUrl: string | null;
+  answerChoiceId: string | null;
 }
 
 const EXPECTED_MIXED_ACTIVITIES = new Set([
@@ -15,8 +17,6 @@ const EXPECTED_MIXED_ACTIVITIES = new Set([
   "audio_to_hanzi",
   "audio_to_meaning",
   "tone_identification",
-  "tone_pair_identification",
-  "pronunciation_production",
 ]);
 
 test.describe("pronunciation dogfood", () => {
@@ -53,8 +53,7 @@ test.describe("pronunciation dogfood", () => {
       if ((await choices.count()) > 0) {
         await choices.first().click();
       } else if (activity === "発音して確認") {
-        await page.getByRole("button", { name: "発音した — 答えと比べる" }).click();
-        await page.getByRole("button", { name: /できた/ }).click();
+        throw new Error("default mixed pronunciation unexpectedly included production");
       } else {
         await page.getByRole("button", { name: "ピンインを見る" }).click();
         await page.getByRole("button", { name: "思い出せた" }).click();
@@ -91,10 +90,13 @@ test.describe("pronunciation dogfood", () => {
     );
   });
 
-  test("desktop tone practice exposes the complete tone-pair grid and reference", async ({
+  test("tone-pair practice uses two bounded five-choice stages on a phone", async ({
     page,
+    context,
   }) => {
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const observedCards: ObservedCard[] = [];
+    page.on("response", (response) => void recordCards(response, observedCards));
     await page.goto("/#pronunciation");
     await page.getByRole("button", { name: /^声調/ }).click();
 
@@ -104,12 +106,86 @@ test.describe("pronunciation dogfood", () => {
     await page.locator(".choice-grid button").first().click();
     await page.getByRole("button", { name: "次へ" }).click();
     await expect(page.getByText("声調の組み合わせ", { exact: true })).toBeVisible();
-    await expect(page.locator(".pair-grid button")).toHaveCount(25);
+    await expect
+      .poll(() =>
+        observedCards.some(({ activityType }) => activityType === "tone_pair_identification"),
+      )
+      .toBe(true);
+    const pairCard = observedCards.find(
+      ({ activityType }) => activityType === "tone_pair_identification",
+    );
+    if (!pairCard?.answerChoiceId?.startsWith("tone-pair:")) {
+      throw new Error("tone-pair card has no canonical answer identity");
+    }
+    const [firstTone, secondTone] = pairCard.answerChoiceId.split(":")[1]!.split("-");
+    await context.setOffline(true);
+    await expect(page.locator(".tone-pair-choices button")).toHaveCount(5);
+    await expect(page.locator(".pair-grid button")).toHaveCount(0);
+    await page
+      .locator(".tone-pair-choices button")
+      .filter({ hasText: `Tone ${firstTone}` })
+      .click();
+    await expect(page.locator(".tone-pair-stage")).toHaveAttribute("data-tone-pair-stage", "2");
+    await expect(page.locator(".tone-pair-choices button")).toHaveCount(5);
+    await expect(page.locator(".tone-pair-selected")).toHaveText(
+      new RegExp(`1音節目: Tone ${firstTone}`),
+    );
+    expect(
+      await page
+        .locator(".tone-pair-choices button")
+        .evaluateAll((buttons) => buttons.every((button) => !button.hasAttribute("aria-pressed"))),
+    ).toBe(true);
+    await page
+      .locator(".tone-pair-choices button")
+      .filter({ hasText: `Tone ${secondTone}` })
+      .click();
+    await expect(page.getByText("正解", { exact: true })).toBeVisible();
+    const queued = await readOutbox(page);
+    const pairAttempt = queued.find(
+      ({ activityType }) => activityType === "tone_pair_identification",
+    );
+    expect(pairAttempt).toMatchObject({
+      correct: true,
+      metadata: {
+        selectedChoiceId: `tone-pair:${firstTone}-${secondTone}`,
+        selectedTonePair: `${firstTone}-${secondTone}`,
+      },
+    });
     await page.getByText("ピンインと声調の早見表").click();
     await expect(page.getByRole("heading", { name: "声母" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
+  });
+
+  test("focused production reveals the target only for ungraded speak-compare", async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/#pronunciation");
+    await page.getByRole("button", { name: /^発話/ }).click();
+
+    await expect(page.getByText("発音して確認", { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.locator(".pronunciation-prompt .pinyin")).toHaveCount(0);
+    await expect(page.locator(".pronunciation-answer")).toHaveCount(0);
+    await expect(page.locator(".production-ratings")).toHaveCount(0);
+
+    await context.setOffline(true);
+    await page.getByRole("button", { name: "発音した — 答えと比べる" }).click();
+    await expect(page.locator(".pronunciation-answer .pinyin")).toBeVisible();
+    await expect(page.locator(".production-ratings")).toHaveCount(0);
+    const queued = await readOutbox(page);
+    const productionAttempt = queued.find(
+      ({ activityType }) => activityType === "pronunciation_production",
+    );
+    expect(productionAttempt).toMatchObject({
+      metadata: { interaction: "speak-compare" },
+    });
+    expect(productionAttempt?.correct).toBeUndefined();
+    expect(productionAttempt?.selfRating).toBeUndefined();
   });
 
   test("session creation retry preserves the selected pronunciation focus", async ({ page }) => {
@@ -180,6 +256,9 @@ test.describe("pronunciation dogfood", () => {
 });
 
 async function recordCards(response: Response, cards: ObservedCard[]): Promise<void> {
+  if (!response.url().endsWith("/api/sync/pull") || response.request().method() !== "POST") {
+    return;
+  }
   const payload = (await response.json()) as {
     pronunciationPack: null | {
       cards: Array<{
@@ -187,6 +266,7 @@ async function recordCards(response: Response, cards: ObservedCard[]): Promise<v
         lexeme: { simplified: string };
         reading: { pinyin: string };
         media: null | { url: string };
+        answerChoiceId: string | null;
       }>;
     };
   };
@@ -197,6 +277,24 @@ async function recordCards(response: Response, cards: ObservedCard[]): Promise<v
       simplified: card.lexeme.simplified,
       pinyin: card.reading.pinyin,
       mediaUrl: card.media?.url ?? null,
+      answerChoiceId: card.answerChoiceId,
     })),
   );
+}
+
+function readOutbox(page: import("@playwright/test").Page): Promise<AttemptInput[]> {
+  return page.evaluate(() => {
+    return new Promise<AttemptInput[]>((resolve, reject) => {
+      const open = indexedDB.open("chinese-learning.offline.v1", 1);
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const request = open.result
+          .transaction("outbox", "readonly")
+          .objectStore("outbox")
+          .getAll();
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result as AttemptInput[]);
+      };
+    });
+  });
 }

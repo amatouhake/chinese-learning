@@ -10,7 +10,7 @@ pinyin, meaning, and a linked grammar explanation in that order. The first gramm
 high-value beginner patterns with real examples and a short checked practice interaction. The
 pronunciation surface covers pinyin recognition and recall, dictionary-tone identification,
 two-syllable tone pairs, source-audio perception where the recording can be mapped safely, and
-speak–compare–self-rate production. Vocabulary separates scheduled free-recall Review from
+speak–compare production. Vocabulary separates scheduled free-recall Review from
 configurable 4- or 9-choice Quiz practice over introduced material. Quiz adapts only within and
 between prepared sessions and never changes vocabulary scheduling. Record combines learner-scoped
 recent session summaries with a separate canonical long-term Progress snapshot. See the
@@ -107,9 +107,9 @@ the pool allows it; the completed session keeps a local review recap. Answers ar
 IndexedDB and synchronize in the background, so cached practice does not pause on a network round
 trip. Vocabulary Quiz lets the learner choose mixed or one of four directions, 4 or 9 choices, and
 8, 12, or 20 questions once enough introduced material can supply honest distractors. Reading starts Chinese-first, then
-reveals vocabulary, pinyin, meaning, and grammar before accepting a 1–4 comprehension rating. Its
-Grammar path teaches one linked pattern, reveals the example only on request, then checks one
-bounded completion exercise and records explicit confidence. Pronunciation starts from a
+reveals vocabulary, pinyin, meaning, and grammar before recording completion. Its Grammar path
+teaches one linked pattern, reveals the example only on request, then checks one bounded completion
+exercise and records objective correctness. Pronunciation starts from a
 low-friction focus chooser and offers repeatable audio plus a compact sound-system reference. `bun
 run dev` serves only the Vite frontend, so use `bun run dev:worker` for the real D1-backed flow and
 staged media.
@@ -430,8 +430,8 @@ Pronunciation events, reload offline, retry a partial push, reconnect, and verif
 local D1. Phone and desktop coverage also checks the Chinese-first reveal order, the systematic
 grammar path, offline Reading and Grammar attempts, reload, and reconnect. The suite additionally
 covers multi-tab sequence allocation, legacy-state migration, cached versus uncached audio, a
-late-arriving review, a mixed ten-item phone session, the polyphonic `的`, and the tone-pair
-reference. Quiz dogfood covers phone and desktop layouts, keyboard and touch answers,
+late-arriving review, a mixed ten-item phone session, the polyphonic `的`, and the two-stage
+tone-pair interaction. Quiz dogfood covers phone and desktop layouts, keyboard and touch answers,
 correct/incorrect/slow responses, adaptive repeats, option-position rotation, session restart,
 offline reload/reconnect, duplicate retry, and the absence of scheduler projection changes.
 
@@ -494,13 +494,16 @@ and one server-checked multiple-choice completion. It reinforces the same senten
 introducing a parallel textbook or authoring system.
 
 Reading and Grammar both use the existing non-scheduled `sentence_reading` activity. Reading records
-the exact staged reveal order and an explicit 1–4 comprehension rating. Grammar records the selected
-choice, server-derived correctness, and an explicit 1–4 confidence rating. Both append immutable
+the exact staged reveal order and completion, without a comprehension rating. Grammar records the
+selected choice and server-derived correctness, without a confidence question. Both append immutable
 `attempts` through `POST /api/attempts`; neither creates an `fsrs_reviews` row nor mutates vocabulary
 `card_state`. Each Grammar attempt carries the immutable practice-version identity presented in its
 cached card, so a delayed offline answer is validated against that historical choice set even after
 new teaching content is imported. Grammar additionally materializes the existing
-`grammar_topic_state` projection as `introduced`, `learning`, or `comfortable`. Late-arriving events
+`grammar_topic_state` projection as `introduced`, `learning`, or `comfortable`; new objective practice
+does not manufacture a confidence value. Raw confidence-era state remains readable for historical
+compatibility, while current Progress treats it as practiced/introduced evidence rather than current
+objective mastery. Late-arriving events
 remain immutable, while that durable projection follows canonical semantic event order rather than
 network receive order.
 
@@ -536,8 +539,11 @@ keeping future R2 hosting outside learning identity.
 Every pronunciation activity in this milestone is ordinary, non-FSRS practice:
 `hanzi_to_pinyin`, `pinyin_to_hanzi`, `tone_identification`, `tone_pair_identification`,
 `audio_to_hanzi`, `audio_to_meaning`, and `pronunciation_production`. Objective activities persist
-binary correctness separately from the chosen answer; production persists only a 1–4 self-rating.
-None creates an FSRS review or mutates `card_state`. The existing vocabulary directions remain the
+binary correctness separately from the chosen answer. `hanzi_to_pinyin` persists a separate
+self-reported remembered/not-remembered recall fact. New production uses a speak–compare reveal and
+persists no correctness or self-rating; old production self-ratings remain historical evidence.
+The default mixed focus excludes tone pairs and production, while focused Tone practice presents the
+two tone decisions sequentially. None creates an FSRS review or mutates `card_state`. The existing vocabulary directions remain the
 only scheduled activities and continue to use Again/Hard/Good/Easy solely as FSRS ratings.
 Ordinary attempt history still provides lightweight rotation: least-practiced cards come first,
 then the oldest practice, HSK level, and frequency. Non-audio cards retain the single-reading
@@ -599,8 +605,10 @@ canonical closure or delete History.
 `POST /api/practice-sessions/recent` returns a bounded learner-scoped list and
 `POST /api/practice-sessions/:id/summary` reopens one completed session. Quiz trends require the same
 activity setting, choice count, and requested set size. Review ratings are not converted to a score;
-Reading does not invent accuracy; Pronunciation keeps objective answers, self-ratings, and skips
-separate. `getProgressSnapshot()` remains the distinct accumulated learner-state projection.
+Reading records completion without accuracy or a replacement rating; Pronunciation keeps objective
+answers, self-reported recall, historical self-ratings, and skips separate. Grammar keeps objective
+correctness primary and retains historical confidence separately. `getProgressSnapshot()` remains the
+distinct accumulated learner-state projection.
 
 ## Vocabulary study flow
 
@@ -676,12 +684,14 @@ The version-1 snapshot includes:
 - rolling 7/30-day attempt, answer, scheduled-review, active-day, session, and per-mode volume;
 - current scheduled vocabulary counts plus recent FSRS ratings and cards with recent Again/Hard or
   lifetime lapse evidence;
-- pronunciation results per activated activity, keeping objective correctness, production
-  self-ratings, and non-answer audio skips separate;
-- sentence-reading volume and comprehension self-ratings without inferred correctness;
-- grammar topic state, objective practice correctness, and confidence as separate measures;
+- pronunciation results per activated activity, keeping objective correctness, self-reported recall,
+  historical production self-ratings, and non-answer audio skips separate;
+- sentence-reading completion volume without inferred correctness or a replacement rating;
+- grammar objective practice correctness plus practiced/introduced topic evidence, with raw
+  confidence-era state and historical confidence kept separate;
 - Quiz correctness and valid uninterrupted latency/slow-response evidence without feeding FSRS; and
-- a deterministic, bounded cross-mode trouble list whose reasons and source activity remain visible.
+- a deterministic, bounded cross-mode trouble list whose reasons and source activity remain visible;
+  retired subjective ratings do not create current trouble candidates.
 
 Rolling activity windows are selected by `attempts.occurred_at`. Active calendar days are formatted
 in the configured learner IANA timezone (`Asia/Tokyo` by default). Freshness/data-through metadata

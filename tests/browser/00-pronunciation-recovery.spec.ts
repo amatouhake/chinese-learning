@@ -23,10 +23,10 @@ test("uses recovered exact-reading audio without borrowing its sibling", async (
   );
   expect(recoveredCards).toHaveLength(1);
   expect(recoveredCards[0]).toMatchObject({
-    activityType: "audio_to_hanzi",
     reading: { numericPinyin: "de5" },
     media: { url: expect.stringContaining("/media/audio-cmn/") },
   });
+  expect(["audio_to_hanzi", "audio_to_meaning"]).toContain(recoveredCards[0]?.activityType);
   await expect(page.locator(".pronunciation-card")).toHaveAttribute("data-phase", "prompt");
   await expect(page.getByRole("button", { name: "単語の音声を再生・聞き直す" })).toBeEnabled();
 

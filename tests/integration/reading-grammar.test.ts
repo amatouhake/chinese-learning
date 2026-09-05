@@ -175,7 +175,6 @@ describe("reading and grammar foundation", () => {
       studySessionId: readingSessionId,
       mode: "reading",
       activityType: "sentence_reading",
-      selfRating: 3,
       responseMs: 8_000,
       metadata: {
         interaction: "staged-sentence-reading",
@@ -193,7 +192,6 @@ describe("reading and grammar foundation", () => {
       mode: "grammar",
       activityType: "sentence_reading",
       correct: true,
-      selfRating: 3,
       responseMs: 6_000,
       metadata: {
         interaction: "grammar-choice",
@@ -226,10 +224,10 @@ describe("reading and grammar foundation", () => {
         .bind(grammarCard.topicId)
         .first(),
     ).toEqual({
-      status: "learning",
+      status: "introduced",
       introduced_at: Date.parse("2026-08-30T01:02:00Z"),
       last_studied_at: Date.parse("2026-08-30T01:02:00Z"),
-      self_confidence: 0.75,
+      self_confidence: null,
       version: 1,
     });
 
@@ -245,8 +243,8 @@ describe("reading and grammar foundation", () => {
         entityType: "grammar_topic_state",
         state: expect.objectContaining({
           grammarTopicId: grammarCard.topicId,
-          status: "learning",
-          selfConfidence: 0.75,
+          status: "introduced",
+          selfConfidence: null,
         }),
       }),
     );
@@ -258,7 +256,7 @@ describe("reading and grammar foundation", () => {
       practice: "reading",
       completedItems: 1,
       configuration: { requestedItems: 1 },
-      evidence: { comprehension: { distribution: { 3: 1 } } },
+      evidence: { comprehension: null },
     });
     await expect(
       getPracticeSessionSummary(env.DB, FIXED_OWNER_LEARNER_ID, grammarSessionId),
@@ -271,8 +269,45 @@ describe("reading and grammar foundation", () => {
       },
       evidence: {
         correctness: { correct: 1, responses: 1 },
-        confidence: { distribution: { 3: 1 } },
+        confidence: null,
       },
+    });
+  });
+
+  test("keeps a historical Reading comprehension rating readable", async () => {
+    const deviceId = "reading-historical-device";
+    const sessionId = "reading-historical-session";
+    await createReadingSession(env.DB, FIXED_OWNER_LEARNER_ID, {
+      sessionId,
+      deviceId,
+      maxItems: 1,
+    });
+    const card = required(
+      (await getOfflineReadingPack(env.DB, FIXED_OWNER_LEARNER_ID, sessionId, deviceId)).cards[0],
+    );
+    await ingestAttempt(env.DB, FIXED_OWNER_LEARNER_ID, {
+      eventId: "reading-historical-event",
+      deviceId,
+      deviceSeq: 1,
+      occurredAt: "2026-08-30T01:30:00Z",
+      cardId: card.cardId,
+      studySessionId: sessionId,
+      mode: "reading",
+      activityType: "sentence_reading",
+      selfRating: 2,
+      metadata: {
+        interaction: "staged-sentence-reading",
+        sentenceId: card.sentenceId,
+        revealOrder: ["vocabulary", "pinyin", "meaning", "grammar"],
+      },
+    });
+    await getOfflineReadingPack(env.DB, FIXED_OWNER_LEARNER_ID, sessionId, deviceId);
+
+    await expect(
+      getPracticeSessionSummary(env.DB, FIXED_OWNER_LEARNER_ID, sessionId),
+    ).resolves.toMatchObject({
+      practice: "reading",
+      evidence: { comprehension: { responses: 1, distribution: { 2: 1 } } },
     });
   });
 

@@ -4,7 +4,9 @@ import type {
   FsrsRating,
   GrammarSessionSummary,
   GuidedSessionView,
+  PracticeAttentionItem,
   PracticeCorrectnessEvidence,
+  PracticeRecallEvidence,
   PracticeRatingEvidence,
   PracticeSessionSummary,
   PronunciationSessionSummary,
@@ -126,7 +128,12 @@ export function localPronunciationSummary(
     const activity = attempt.activityType as PronunciationActivityType;
     activities[activity] = (activities[activity] ?? 0) + 1;
   }
-  const objective = attempts.flatMap(({ correct }) => (correct === undefined ? [] : [correct]));
+  const objective = attempts.flatMap(({ activityType, correct }) =>
+    activityType === "hanzi_to_pinyin" || correct === undefined ? [] : [correct],
+  );
+  const recall = attempts.flatMap(({ activityType, correct }) =>
+    activityType === "hanzi_to_pinyin" && correct !== undefined ? [correct] : [],
+  );
   const selfRatings = attempts.flatMap(({ selfRating }) =>
     selfRating === undefined ? [] : [selfRating],
   );
@@ -147,11 +154,12 @@ export function localPronunciationSummary(
     evidence: {
       activities,
       correctness: objective.length > 0 ? correctness(objective) : null,
+      selfReportedRecall: recall.length > 0 ? recallEvidence(recall) : null,
       selfRatings: selfRatings.length > 0 ? ratingEvidence(selfRatings) : null,
       skipped: attempts.filter(({ metadata }) => metadata?.interaction === "skip-uncached-audio")
         .length,
     },
-    attentionItems: localAttention(attempts),
+    attentionItems: localPronunciationAttention(attempts),
   };
 }
 
@@ -175,10 +183,10 @@ export function localGuidedSummary(
       practice: "reading",
       configuration: { requestedItems: session.maxItems },
       evidence: {
-        comprehension: ratingEvidence(attempts.map(({ selfRating }) => selfRating ?? null)),
+        comprehension: optionalRatingEvidence(attempts.map(({ selfRating }) => selfRating ?? null)),
         grammarTopics: localTopics(attempts),
       },
-      attentionItems: localAttention(attempts),
+      attentionItems: localAttention(attempts, "過去の理解度評価が低い"),
     };
   }
   return {
@@ -199,10 +207,10 @@ export function localGuidedSummary(
       correctness: correctness(
         attempts.flatMap(({ correct }) => (correct === undefined ? [] : [correct])),
       ),
-      confidence: ratingEvidence(attempts.map(({ selfRating }) => selfRating ?? null)),
+      confidence: optionalRatingEvidence(attempts.map(({ selfRating }) => selfRating ?? null)),
       grammarTopics: localTopics(attempts),
     },
-    attentionItems: localAttention(attempts),
+    attentionItems: localAttention(attempts, "過去の自信度評価が低い"),
   };
 }
 
@@ -246,6 +254,13 @@ function correctness(values: readonly boolean[]): PracticeCorrectnessEvidence {
   };
 }
 
+function recallEvidence(values: readonly boolean[]): PracticeRecallEvidence {
+  return {
+    responses: values.length,
+    remembered: values.filter(Boolean).length,
+  };
+}
+
 function ratingEvidence(values: readonly (number | null)[]): PracticeRatingEvidence {
   const distribution: Record<FsrsRating, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   for (const value of values)
@@ -256,7 +271,40 @@ function ratingEvidence(values: readonly (number | null)[]): PracticeRatingEvide
   };
 }
 
-function localAttention(attempts: readonly AttemptInput[]) {
+function optionalRatingEvidence(values: readonly (number | null)[]): PracticeRatingEvidence | null {
+  const evidence = ratingEvidence(values);
+  return evidence.responses === 0 ? null : evidence;
+}
+
+function localPronunciationAttention(attempts: readonly AttemptInput[]): PracticeAttentionItem[] {
+  return attempts
+    .flatMap((attempt) => {
+      const reason =
+        attempt.activityType === "hanzi_to_pinyin" && attempt.correct === false
+          ? "自己申告で思い出せなかった"
+          : attempt.correct === false
+            ? "誤答"
+            : attempt.selfRating !== undefined && attempt.selfRating <= 2
+              ? "過去の自己評価が低い"
+              : null;
+      return reason ? [{ attempt, reason }] : [];
+    })
+    .map(({ attempt, reason }) => ({
+      cardId: attempt.cardId,
+      label:
+        typeof attempt.metadata?.itemLabel === "string"
+          ? attempt.metadata.itemLabel
+          : attempt.cardId,
+      detail: typeof attempt.metadata?.itemDetail === "string" ? attempt.metadata.itemDetail : null,
+      reasons: [reason],
+    }))
+    .filter(
+      (item, index, items) => items.findIndex(({ cardId }) => cardId === item.cardId) === index,
+    )
+    .slice(0, 5);
+}
+
+function localAttention(attempts: readonly AttemptInput[], historicalRatingReason: string) {
   return attempts
     .filter(
       ({ correct, selfRating }) =>
@@ -269,7 +317,7 @@ function localAttention(attempts: readonly AttemptInput[]) {
           ? attempt.metadata.itemLabel
           : attempt.cardId,
       detail: typeof attempt.metadata?.itemDetail === "string" ? attempt.metadata.itemDetail : null,
-      reasons: [attempt.correct === false ? "誤答" : "要確認"],
+      reasons: [attempt.correct === false ? "誤答" : historicalRatingReason],
     }))
     .filter(
       (item, index, items) => items.findIndex(({ cardId }) => cardId === item.cardId) === index,

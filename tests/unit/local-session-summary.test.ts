@@ -47,8 +47,44 @@ describe("local session summaries", () => {
       expect(summary.evidenceCoverage).toEqual({ status: "partial", recordedItems: 4 });
     }
     expect(pronunciation.evidence.selfRatings?.responses).toBe(4);
-    expect(reading.practice === "reading" && reading.evidence.comprehension.responses).toBe(4);
+    expect(reading.practice === "reading" && reading.evidence.comprehension?.responses).toBe(4);
     expect(grammar.practice === "grammar" && grammar.evidence.correctness.responses).toBe(4);
+  });
+
+  test("keeps current ungraded practice distinct from historical ratings", () => {
+    const pronunciation = localPronunciationSummary(pronunciationSession(1, 1), [
+      {
+        ...attempts("pronunciation", 1)[0]!,
+        selfRating: undefined,
+        metadata: { interaction: "speak-compare" },
+      },
+    ]);
+    const reading = localGuidedSummary(guidedSession("reading", 1, 1), [
+      { ...attempts("reading", 1)[0]!, selfRating: undefined },
+    ]);
+    const grammar = localGuidedSummary(guidedSession("grammar", 1, 1), [
+      { ...attempts("grammar", 1)[0]!, selfRating: undefined },
+    ]);
+
+    expect(pronunciation.evidence).toMatchObject({
+      correctness: null,
+      selfReportedRecall: null,
+      selfRatings: null,
+    });
+    expect(reading.practice === "reading" && reading.evidence.comprehension).toBeNull();
+    expect(grammar.practice === "grammar" && grammar.evidence.confidence).toBeNull();
+  });
+
+  test("keeps Hanzi-to-Pinyin recall out of pronunciation accuracy", () => {
+    const base = attempts("pronunciation", 2);
+    const summary = localPronunciationSummary(pronunciationSession(2, 2), [
+      { ...base[0]!, activityType: "hanzi_to_pinyin", correct: true, selfRating: undefined },
+      { ...base[1]!, activityType: "hanzi_to_pinyin", correct: false, selfRating: undefined },
+    ]);
+
+    expect(summary.evidence.correctness).toBeNull();
+    expect(summary.evidence.selfReportedRecall).toEqual({ responses: 2, remembered: 1 });
+    expect(summary.attentionItems[0]?.reasons).toEqual(["自己申告で思い出せなかった"]);
   });
 
   test("canonical history replaces a partial local projection", () => {

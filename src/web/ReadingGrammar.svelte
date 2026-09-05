@@ -5,6 +5,7 @@
   import type {
     GrammarCard,
     GrammarSessionSummary,
+    GrammarTopicStateView,
     GuidedSessionView,
     ReadingCard,
     ReadingSessionSummary,
@@ -28,13 +29,6 @@
     | "empty"
     | "completed"
     | "error";
-
-  const confidenceRatings = [
-    { value: 1, label: "忘れた", hint: "もう一度説明を見る" },
-    { value: 2, label: "手がかりあり", hint: "ヒントで進めた" },
-    { value: 3, label: "だいたい", hint: "構造が見えてきた" },
-    { value: 4, label: "理解した", hint: "パターンを説明できる" },
-  ] as const;
 
   let mode: SurfaceMode = "reading";
   let store: OfflineLearningStore | null = null;
@@ -240,7 +234,7 @@
       `.reading-card [data-reveal-stage="${stage}"]`,
     );
     const nextAction = document.querySelector<HTMLElement>(
-      stage === 4 ? ".reading-card .rating-area" : ".reading-card .staged-reveal",
+      stage === 4 ? ".reading-card .staged-completion" : ".reading-card .staged-reveal",
     );
     if (nextAction && !isComfortablyVisible(nextAction)) {
       nextAction.scrollIntoView({ behavior: revealScrollBehavior(), block: "nearest" });
@@ -264,7 +258,7 @@
     return reducedMotion ? "auto" : "smooth";
   }
 
-  async function saveReading(selfRating: number): Promise<void> {
+  async function completeReading(): Promise<void> {
     if (
       readingPhase !== "prompt" ||
       revealStage !== 4 ||
@@ -281,7 +275,6 @@
         studySessionId: sessionId,
         mode: "reading",
         activityType: "sentence_reading",
-        selfRating,
         responseMs: elapsedPromptTime(),
         metadata: {
           interaction: "staged-sentence-reading",
@@ -313,7 +306,7 @@
     grammarPhase = "feedback";
   }
 
-  async function saveGrammar(selfRating: number): Promise<void> {
+  async function saveGrammar(): Promise<void> {
     if (
       grammarPhase !== "feedback" ||
       !grammarCard ||
@@ -336,7 +329,6 @@
         mode: "grammar",
         activityType: "sentence_reading",
         correct: grammarCorrect,
-        selfRating,
         responseMs: elapsedPromptTime(),
         metadata: {
           interaction: "grammar-choice",
@@ -413,6 +405,19 @@
   function setLoading(showLoading = true): void {
     if (mode === "reading") readingPhase = showLoading ? "loading" : "advancing";
     else grammarPhase = showLoading ? "loading" : "advancing";
+  }
+
+  function grammarStateLabel(state: GrammarTopicStateView | null): string {
+    if (!state || state.status === null) return "新しい項目";
+    if (state.selfConfidence !== null) return "過去評価あり";
+    switch (state.status) {
+      case "introduced":
+        return "導入済み";
+      case "learning":
+        return "学習中";
+      case "comfortable":
+        return "定着";
+    }
   }
 
   function missingCacheError(kind: SurfaceMode): Error {
@@ -617,19 +622,13 @@
         ><small>{revealStage + 1} / 4</small>
       </button>
     {:else}
-      <div class="rating-area">
-        <p>どのくらい理解できましたか？</p>
-        <div class="rating-grid guided-ratings">
-          {#each confidenceRatings as rating}
-            <button
-              class={`rating rating-${rating.value}`}
-              disabled={readingPhase === "advancing"}
-              onclick={() => void saveReading(rating.value)}
-            >
-              <strong>{rating.label}</strong><span>{rating.hint}</span>
-            </button>
-          {/each}
-        </div>
+      <div class="guided-completion staged-completion">
+        <p>段階的な手がかりを確認しました。</p>
+        <button
+          class="primary-button continue-button"
+          disabled={readingPhase === "advancing"}
+          onclick={() => void completeReading()}>この文を完了</button
+        >
       </div>
     {/if}
   </section>
@@ -637,7 +636,7 @@
   <section class="study-card grammar-card" aria-live="polite">
     <div class="card-meta">
       <span class="queue-badge grammar-badge">文法 {grammarCard.topic.sequence}</span>
-      <span>{grammarCard.topic.state?.status ?? "新しい項目"}</span>
+      <span>{grammarStateLabel(grammarCard.topic.state)}</span>
     </div>
     <div class="grammar-heading">
       <h2>{grammarCard.topic.title}</h2>
@@ -683,18 +682,11 @@
         <p class="practice-answer">{completedPracticeSentence(grammarCard)}</p>
         <p>{grammarCard.topic.practice.explanationJa}</p>
       </div>
-      <div class="rating-area">
-        <p>この文法をどのくらい理解できましたか？</p>
-        <div class="rating-grid guided-ratings">
-          {#each confidenceRatings as rating}
-            <button
-              class={`rating rating-${rating.value}`}
-              onclick={() => void saveGrammar(rating.value)}
-            >
-              <strong>{rating.label}</strong><span>{rating.hint}</span>
-            </button>
-          {/each}
-        </div>
+      <div class="guided-completion grammar-completion">
+        <p>正誤と解説を確認しました。</p>
+        <button class="primary-button continue-button" onclick={() => void saveGrammar()}
+          >この問題を完了</button
+        >
       </div>
     {:else if grammarPhase === "advancing"}
       <div class="advancing-note" role="status">次の項目を準備しています…</div>

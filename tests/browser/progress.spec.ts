@@ -55,9 +55,13 @@ test.describe("local progress dashboard dogfood", () => {
     await expect(page.getByRole("heading", { name: "長期の進捗" })).toBeVisible();
     await expect(page.getByText("復習 3 · 新規 17", { exact: true })).toBeVisible();
     await expect(page.getByText("正答率 50%", { exact: true })).toHaveCount(1);
-    await expect(page.getByText("自己評価 2.8 / 4", { exact: true })).toBeVisible();
-    await expect(page.getByText(/正誤は判定しません/)).toBeVisible();
-    await expect(page.getByText(/選択問題の記録です/)).toBeVisible();
+    await expect(page.getByText("自己申告 5 / 6", { exact: true })).toBeVisible();
+    await expect(page.getByText("過去の自己評価 2.8 / 4", { exact: true })).toBeVisible();
+    await expect(page.getByText(/正答率は記録しません/)).toBeVisible();
+    await expect(page.getByText(/客観的な選択問題の記録/)).toBeVisible();
+    await expect(page.getByText("4 実施済み", { exact: true })).toBeVisible();
+    await expect(page.getByText(/旧式評価のある項目 3/)).toBeVisible();
+    await expect(page.getByText("定着", { exact: true })).toHaveCount(0);
     await expect(page.getByText("好", { exact: true })).toBeVisible();
     await expect(page.getByText(/2.5秒以上/)).toBeVisible();
     await expect(page.getByText(/集計は実際に練習した時刻/)).toBeVisible();
@@ -144,16 +148,16 @@ test.describe("local progress dashboard dogfood", () => {
     await page.locator(".session-history-list button").filter({ hasText: "発音" }).click();
     await expect(page.getByText("フォーカス: 声調", { exact: true })).toBeVisible();
     await expect(page.getByText("7 / 9", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("自己評価の内訳")).toContainText("明瞭");
+    await expect(page.getByLabel("過去の発話自己評価")).toContainText("明瞭");
     await expect(page.getByText(/内訳はこの端末に残る 12 \/ 15件分/)).toBeVisible();
     await page.getByRole("button", { name: "最近の記録へ戻る" }).click();
     await page.getByRole("button", { name: /読解 5文$/ }).click();
     await expect(page.getByRole("heading", { name: "5文完了" })).toBeVisible();
-    await expect(page.getByLabel("理解度の内訳")).toContainText("理解した");
+    await expect(page.getByLabel("過去の理解度評価の内訳")).toContainText("理解した");
     await page.getByRole("button", { name: "最近の記録へ戻る" }).click();
     await page.getByRole("button", { name: /読解・文法 8問$/ }).click();
     await expect(page.getByText("5 / 8", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("理解度の内訳")).toContainText("手がかり");
+    await expect(page.getByLabel("過去の文法自信度の内訳")).toContainText("手がかり");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
@@ -327,7 +331,7 @@ const snapshot: ProgressSnapshot = {
     recentSkips: 1,
     byActivity: [
       pronunciationActivity("hanzi_to_pinyin", 6, {
-        correctness: { responses: 6, correct: 5, rate: 0.833 },
+        selfReportedRecall: { responses: 6, remembered: 5 },
       }),
       pronunciationActivity("pinyin_to_hanzi"),
       pronunciationActivity("audio_to_hanzi", 2, {
@@ -361,7 +365,15 @@ const snapshot: ProgressSnapshot = {
     difficultSentences: [],
   },
   grammar: {
-    topicCounts: { total: 5, notIntroduced: 1, introduced: 1, learning: 2, comfortable: 1 },
+    topicCounts: {
+      total: 5,
+      notIntroduced: 1,
+      practiced: 4,
+      introduced: 1,
+      learning: 0,
+      comfortable: 0,
+      historicalConfidence: 3,
+    },
     topics: [
       {
         id: "grammar:fixture",
@@ -416,18 +428,6 @@ const snapshot: ProgressSnapshot = {
       reasons: ["1 incorrect response recently", "1 response at or above 2.5s"],
       evidence: { errors: 1, slowResponses: 1, averageResponseMs: 2_650 },
     },
-    {
-      id: "reading:fixture-sentence",
-      cardId: "fixture-sentence",
-      mode: "reading",
-      activityType: "sentence_reading",
-      label: "你好吗？",
-      detail: "Nǐ hǎo ma?",
-      recentAttempts: 2,
-      lastPracticedAt: Date.parse("2026-08-30T10:00:00Z"),
-      reasons: ["2 low comprehension ratings"],
-      evidence: { selfRatings: 2, averageSelfRating: 1.5 },
-    },
   ],
 };
 
@@ -442,6 +442,7 @@ function pronunciationActivity(
     skips: 0,
     distinctItems: responses,
     correctness: null,
+    selfReportedRecall: null,
     selfRatings: null,
     averageResponseMs: responses === 0 ? null : 1_400,
     lastPracticedAt: responses === 0 ? null : Date.parse("2026-08-31T10:00:00Z"),

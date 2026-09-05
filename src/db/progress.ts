@@ -6,6 +6,7 @@ import type {
   LearnerId,
   PracticeMode,
   ProgressCorrectness,
+  ProgressSelfReportedRecall,
   ProgressSelfRatings,
   ProgressSnapshot,
   ProgressTroubleItem,
@@ -90,12 +91,10 @@ interface TroubleRow {
   detail: string | null;
   recent_attempts: number;
   errors: number;
+  self_reported_recall_misses: number;
   slow_responses: number;
   response_time_responses: number;
   average_response_ms: number | null;
-  self_ratings: number;
-  average_self_rating: number | null;
-  low_self_ratings: number;
   fsrs_1: number;
   fsrs_2: number;
   fsrs_3: number;
@@ -259,12 +258,10 @@ export async function getProgressSnapshot(
              ORDER BY reading.id LIMIT 1) AS detail,
            COUNT(a.event_id) AS recent_attempts,
            0 AS errors,
+           0 AS self_reported_recall_misses,
            0 AS slow_responses,
            SUM(CASE WHEN a.response_ms IS NOT NULL THEN 1 ELSE 0 END) AS response_time_responses,
            AVG(a.response_ms) AS average_response_ms,
-           0 AS self_ratings,
-           NULL AS average_self_rating,
-           0 AS low_self_ratings,
            SUM(CASE WHEN review.rating = 1 THEN 1 ELSE 0 END) AS fsrs_1,
            SUM(CASE WHEN review.rating = 2 THEN 1 ELSE 0 END) AS fsrs_2,
            SUM(CASE WHEN review.rating = 3 THEN 1 ELSE 0 END) AS fsrs_3,
@@ -322,7 +319,20 @@ export async function getProgressSnapshot(
              WHEN 'grammar_topic' THEN grammar.level
            END AS detail,
            COUNT(*) AS recent_attempts,
-           SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END) AS errors,
+           SUM(CASE
+             WHEN a.correct = 0
+               AND NOT (
+                 a.mode = 'pronunciation'
+                 AND a.activity_type = 'hanzi_to_pinyin'
+               )
+             THEN 1 ELSE 0 END
+           ) AS errors,
+           SUM(CASE
+             WHEN a.mode = 'pronunciation'
+               AND a.activity_type = 'hanzi_to_pinyin'
+               AND a.correct = 0
+             THEN 1 ELSE 0 END
+           ) AS self_reported_recall_misses,
            SUM(CASE
              WHEN a.mode = 'reflex'
                AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
@@ -330,9 +340,6 @@ export async function getProgressSnapshot(
            END) AS slow_responses,
            SUM(CASE WHEN a.response_ms IS NOT NULL THEN 1 ELSE 0 END) AS response_time_responses,
            AVG(a.response_ms) AS average_response_ms,
-           SUM(CASE WHEN a.self_rating IS NOT NULL THEN 1 ELSE 0 END) AS self_ratings,
-           AVG(a.self_rating) AS average_self_rating,
-           SUM(CASE WHEN a.self_rating IN (1, 2) THEN 1 ELSE 0 END) AS low_self_ratings,
            0 AS fsrs_1,
            0 AS fsrs_2,
            0 AS fsrs_3,
@@ -340,8 +347,19 @@ export async function getProgressSnapshot(
            0 AS lapses,
            NULL AS due_at,
            MAX(a.occurred_at) AS last_practiced_at,
-           (SUM(CASE WHEN a.correct = 0 THEN 4 ELSE 0 END)
-             + SUM(CASE WHEN a.self_rating IN (1, 2) THEN 3 ELSE 0 END)
+           (SUM(CASE
+             WHEN a.correct = 0
+               AND NOT (
+                 a.mode = 'pronunciation'
+                 AND a.activity_type = 'hanzi_to_pinyin'
+               )
+             THEN 4 ELSE 0 END
+           )
+             + SUM(CASE
+               WHEN a.mode = 'pronunciation'
+                 AND a.activity_type = 'hanzi_to_pinyin'
+                 AND a.correct = 0 THEN 3 ELSE 0 END
+             )
              + SUM(CASE
                WHEN a.mode = 'reflex'
                  AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
@@ -361,8 +379,20 @@ export async function getProgressSnapshot(
              AND json_extract(a.metadata_json, '$.interaction') = 'skip-uncached-audio'
            )
          GROUP BY c.id, a.mode, a.activity_type, quiz_choice_count, label, detail
-         HAVING SUM(CASE WHEN a.correct = 0 THEN 1 ELSE 0 END) > 0
-           OR SUM(CASE WHEN a.self_rating IN (1, 2) THEN 1 ELSE 0 END) > 0
+         HAVING SUM(CASE
+             WHEN a.correct = 0
+               AND NOT (
+                 a.mode = 'pronunciation'
+                 AND a.activity_type = 'hanzi_to_pinyin'
+               )
+             THEN 1 ELSE 0 END
+           ) > 0
+           OR SUM(CASE
+             WHEN a.mode = 'pronunciation'
+               AND a.activity_type = 'hanzi_to_pinyin'
+               AND a.correct = 0
+             THEN 1 ELSE 0 END
+           ) > 0
            OR SUM(CASE
              WHEN a.mode = 'reflex'
                AND COALESCE(json_extract(a.metadata_json, '$.choiceCount'), 4) = 4
@@ -463,7 +493,10 @@ export async function getProgressSnapshot(
           responses: summary ? summary.attempts - summary.skips : 0,
           skips: summary?.skips ?? 0,
           distinctItems: summary?.distinct_items ?? 0,
-          correctness: summary ? optionalCorrectness(summary) : null,
+          correctness:
+            activityType === "hanzi_to_pinyin" || !summary ? null : optionalCorrectness(summary),
+          selfReportedRecall:
+            activityType === "hanzi_to_pinyin" && summary ? optionalRecall(summary) : null,
           selfRatings: summary ? optionalSelfRatings(summary) : null,
           averageResponseMs: roundNullable(summary?.average_response_ms ?? null, 0),
           lastPracticedAt: summary?.last_practiced_at ?? null,
@@ -474,7 +507,7 @@ export async function getProgressSnapshot(
     reading: {
       recentResponses: readingSummary.attempts,
       recentSentences: readingSummary.distinctItems,
-      comprehension: selfRatings(readingSummary),
+      comprehension: optionalCombinedSelfRatings(readingSummary),
       lastPracticedAt: readingSummary.lastPracticedAt,
       difficultSentences: troubleForMode(rankedTrouble, "reading"),
     },
@@ -489,7 +522,7 @@ export async function getProgressSnapshot(
       })),
       recentResponses: grammarSummary.attempts,
       correctness: correctness(grammarSummary),
-      confidence: selfRatings(grammarSummary),
+      confidence: optionalCombinedSelfRatings(grammarSummary),
       lastPracticedAt: grammarSummary.lastPracticedAt,
       troublesomeTopics: troubleForMode(rankedTrouble, "grammar"),
     },
@@ -606,12 +639,18 @@ function buildWindow(
 function grammarTopicCounts(
   topics: readonly GrammarTopicRow[],
 ): ProgressSnapshot["grammar"]["topicCounts"] {
+  // A non-null confidence marks a row whose status came from the old
+  // confidence-era interaction. Keep that raw state readable, but do not
+  // project it as current objective-era mastery.
+  const currentObjectiveTopics = topics.filter(({ self_confidence }) => self_confidence === null);
   return {
     total: topics.length,
     notIntroduced: topics.filter(({ status }) => status === null).length,
-    introduced: topics.filter(({ status }) => status === "introduced").length,
-    learning: topics.filter(({ status }) => status === "learning").length,
-    comfortable: topics.filter(({ status }) => status === "comfortable").length,
+    practiced: topics.filter(({ status }) => status !== null).length,
+    introduced: currentObjectiveTopics.filter(({ status }) => status === "introduced").length,
+    learning: currentObjectiveTopics.filter(({ status }) => status === "learning").length,
+    comfortable: currentObjectiveTopics.filter(({ status }) => status === "comfortable").length,
+    historicalConfidence: topics.filter(({ self_confidence }) => self_confidence !== null).length,
   };
 }
 
@@ -635,6 +674,14 @@ function optionalCorrectness(summary: ModeSummaryRow): ProgressCorrectness | nul
   };
 }
 
+function optionalRecall(summary: ModeSummaryRow): ProgressSelfReportedRecall | null {
+  if (summary.correctness_responses === 0) return null;
+  return {
+    responses: summary.correctness_responses,
+    remembered: summary.correct_answers,
+  };
+}
+
 function selfRatings(summary: CombinedSummary): ProgressSelfRatings {
   return {
     responses: summary.selfRatingResponses,
@@ -645,6 +692,10 @@ function selfRatings(summary: CombinedSummary): ProgressSelfRatings {
     low: summary.selfDistribution[1] + summary.selfDistribution[2],
     distribution: { ...summary.selfDistribution },
   };
+}
+
+function optionalCombinedSelfRatings(summary: CombinedSummary): ProgressSelfRatings | null {
+  return summary.selfRatingResponses === 0 ? null : selfRatings(summary);
 }
 
 function optionalSelfRatings(summary: ModeSummaryRow): ProgressSelfRatings | null {
@@ -705,22 +756,18 @@ function rankPracticeTrouble(row: TroubleRow): RankedTroubleItem {
       : null;
   if (row.errors > 0)
     reasons.push(`${row.errors} incorrect response${plural(row.errors)} recently`);
+  if (row.self_reported_recall_misses > 0) {
+    reasons.push(
+      `${row.self_reported_recall_misses} self-reported recall miss${plural(row.self_reported_recall_misses)} recently`,
+    );
+  }
   if (row.mode === "reflex" && row.slow_responses > 0) {
     reasons.push(
       `${row.slow_responses} response${plural(row.slow_responses)} at or above ${REFLEX_SLOW_RESPONSE_MS / 1_000}s`,
     );
   }
-  if (row.low_self_ratings > 0) {
-    const kind =
-      row.mode === "reading"
-        ? "low comprehension rating"
-        : row.mode === "grammar"
-          ? "low confidence rating"
-          : "low self-rating";
-    reasons.push(`${row.low_self_ratings} ${kind}${plural(row.low_self_ratings)}`);
-  }
   return {
-    priority: row.errors * 4 + row.slow_responses * 2 + row.low_self_ratings * 3,
+    priority: row.errors * 4 + row.self_reported_recall_misses * 3 + row.slow_responses * 2,
     item: {
       id: `${row.mode}:${row.card_id}${choiceCount === null ? "" : `:${choiceCount}`}`,
       cardId: row.card_id,
@@ -734,15 +781,12 @@ function rankPracticeTrouble(row: TroubleRow): RankedTroubleItem {
       reasons,
       evidence: {
         ...(row.errors > 0 ? { errors: row.errors } : {}),
+        ...(row.self_reported_recall_misses > 0
+          ? { selfReportedRecallMisses: row.self_reported_recall_misses }
+          : {}),
         ...(row.slow_responses > 0 ? { slowResponses: row.slow_responses } : {}),
         ...(row.response_time_responses > 0
           ? { averageResponseMs: roundNullable(row.average_response_ms, 0) }
-          : {}),
-        ...(row.self_ratings > 0
-          ? {
-              selfRatings: row.self_ratings,
-              averageSelfRating: roundNullable(row.average_self_rating, 2),
-            }
           : {}),
       },
     },
